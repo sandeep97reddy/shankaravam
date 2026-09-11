@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -78,21 +80,9 @@ fun DonationListScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            androidx.compose.material3.CenterAlignedTopAppBar(
-                title = { Text("Donations (${state.donations.size})") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
-                        )
-                    }
-                },
-                colors = androidx.compose.material3.TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = com.shankaravam.festival.core.theme.DeepMaroon,
-                    titleContentColor = com.shankaravam.festival.core.theme.TempleGold,
-                    navigationIconContentColor = com.shankaravam.festival.core.theme.TempleGold
-                )
+            com.shankaravam.festival.presentation.common.TempleAppBar(
+                title = "Donations (${state.donations.size})",
+                onBack = onBack
             )
         }
     ) { padding ->
@@ -102,9 +92,10 @@ fun DonationListScreen(
             OutlinedTextField(
                 value = state.query,
                 onValueChange = { viewModel.setQuery(it) },
-                label = { Text("Search donor / item") },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                placeholder = { Text("Search donor or item…") },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = com.shankaravam.festival.core.theme.TempleSaffron) },
                 singleLine = true,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
             )
             Row(
@@ -243,8 +234,15 @@ fun DonationCard(
     modifier: Modifier = Modifier,
     onClick: () -> Unit = {}
 ) {
-    Card(onClick = onClick, modifier = modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Card(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        border = CardDefaults.outlinedCardBorder()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -253,7 +251,7 @@ fun DonationCard(
                 Text(
                     donation.donorName,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
                 )
                 Text(
@@ -263,13 +261,43 @@ fun DonationCard(
                         formatInr(donation.amount)
                     },
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.ExtraBold,
+                    color = if (!donation.isNonCash) com.shankaravam.festival.core.theme.EmeraldGreen else MaterialTheme.colorScheme.onSurface
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+
+            if (donation.addedBy.isNotBlank()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        "Collector: ${donation.addedBy}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 StatusBadge(donation.status)
                 if (donation.isNonCash) {
-                    AssistChip(onClick = {}, label = { Text("non-cash") })
+                    AssistChip(
+                        onClick = {},
+                        label = { Text("non-cash") },
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
+                    )
                 }
                 Spacer(Modifier.weight(1f))
                 SyncIcon(donation.syncStatus)

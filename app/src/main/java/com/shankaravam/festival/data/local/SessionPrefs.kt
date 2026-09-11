@@ -20,9 +20,22 @@ class SessionPrefs(context: Context) {
     private val _currentEventId = MutableStateFlow(prefs.getString(KEY_EVENT, null))
     val currentEventId: StateFlow<String?> = _currentEventId.asStateFlow()
 
+    private val _appLanguage = MutableStateFlow(prefs.getString(KEY_APP_LANG, LANG_ENGLISH) ?: LANG_ENGLISH)
+    val appLanguage: StateFlow<String> = _appLanguage.asStateFlow()
+
     fun setCurrentEventId(id: String?) {
         prefs.edit().apply { if (id == null) remove(KEY_EVENT) else putString(KEY_EVENT, id) }.apply()
         _currentEventId.value = id
+    }
+
+    fun setAppLanguage(lang: String) {
+        prefs.edit().putString(KEY_APP_LANG, lang).apply()
+        _appLanguage.value = lang
+    }
+
+    fun toggleAppLanguage() {
+        val next = if (_appLanguage.value == LANG_TELUGU) LANG_ENGLISH else LANG_TELUGU
+        setAppLanguage(next)
     }
 
     var donationSort: String
@@ -106,6 +119,7 @@ class SessionPrefs(context: Context) {
     companion object {
         private const val FILE = "shankaravam_prefs"
         private const val KEY_EVENT = "current_event_id"
+        private const val KEY_APP_LANG = "app_language"
         private const val KEY_SORT = "donation_sort"
         private const val KEY_STATUS_FILTER = "donation_status_filter"
         private const val KEY_QUEUE_GAP = "queue_gap_seconds"

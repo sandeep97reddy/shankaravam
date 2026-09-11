@@ -257,18 +257,9 @@ fun CloudSyncScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text("Cloud sync") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = DeepMaroon,
-                    titleContentColor = TempleGold,
-                    navigationIconContentColor = TempleGold
-                )
+            com.shankaravam.festival.presentation.common.TempleAppBar(
+                title = "Cloud Sync",
+                onBack = onBack
             )
         }
     ) { padding ->

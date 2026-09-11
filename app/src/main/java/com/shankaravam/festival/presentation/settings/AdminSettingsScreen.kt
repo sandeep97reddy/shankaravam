@@ -93,6 +93,9 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UiState())
 
+    val appLanguage: StateFlow<String> = container.sessionPrefs.appLanguage
+    fun setLanguage(lang: String) = container.sessionPrefs.setAppLanguage(lang)
+
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice.asStateFlow()
 
@@ -169,6 +172,7 @@ fun AdminSettingsScreen(
     viewModel: AdminSettingsViewModel = containerViewModel { AdminSettingsViewModel(it) }
 ) {
     val state by viewModel.uiState.collectAsState()
+    val currentLang by viewModel.appLanguage.collectAsState()
     val notice by viewModel.notice.collectAsState()
     val busy by viewModel.busy.collectAsState()
     var showCloseConfirm by remember { mutableStateOf(false) }
@@ -176,18 +180,9 @@ fun AdminSettingsScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text("Voice & admin") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = DeepMaroon,
-                    titleContentColor = TempleGold,
-                    navigationIconContentColor = TempleGold
-                )
+            com.shankaravam.festival.presentation.common.TempleAppBar(
+                title = "Settings & Voice",
+                onBack = onBack
             )
         }
     ) { padding ->
@@ -199,12 +194,37 @@ fun AdminSettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Language Selection Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("App Language / యాప్ భాష", fontWeight = FontWeight.Bold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        FilterChip(
+                            selected = currentLang == com.shankaravam.festival.data.local.SessionPrefs.LANG_ENGLISH,
+                            onClick = { viewModel.setLanguage(com.shankaravam.festival.data.local.SessionPrefs.LANG_ENGLISH) },
+                            label = { Text("English", fontWeight = FontWeight.SemiBold) }
+                        )
+                        FilterChip(
+                            selected = currentLang == com.shankaravam.festival.data.local.SessionPrefs.LANG_TELUGU,
+                            onClick = { viewModel.setLanguage(com.shankaravam.festival.data.local.SessionPrefs.LANG_TELUGU) },
+                            label = { Text("తెలుగు (Telugu)", fontWeight = FontWeight.SemiBold) }
+                        )
+                    }
+                }
+            }
+
             val event = state.event
             if (event == null) {
                 Text("Select or create an event first.", style = MaterialTheme.typography.bodyLarge)
                 return@Column
             }
-            Card(modifier = Modifier.fillMaxWidth()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
+            ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Your role: ${state.role.name.lowercase().replace('_', ' ')}", fontWeight = FontWeight.Bold)
                     Text(

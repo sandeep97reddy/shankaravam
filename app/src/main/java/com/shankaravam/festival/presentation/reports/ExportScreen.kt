@@ -104,18 +104,9 @@ fun ExportScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text("Reports & sharing") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = DeepMaroon,
-                    titleContentColor = TempleGold,
-                    navigationIconContentColor = TempleGold
-                )
+            com.shankaravam.festival.presentation.common.TempleAppBar(
+                title = "Reports & Sharing",
+                onBack = onBack
             )
         }
     ) { padding ->

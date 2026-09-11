@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
@@ -84,18 +85,9 @@ fun ExpenseListScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            androidx.compose.material3.CenterAlignedTopAppBar(
-                title = { Text("Expenses (${state.expenses.size})") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                colors = androidx.compose.material3.TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = DeepMaroon,
-                    titleContentColor = TempleGold,
-                    navigationIconContentColor = TempleGold
-                )
+            com.shankaravam.festival.presentation.common.TempleAppBar(
+                title = "Expenses (${state.expenses.size})",
+                onBack = onBack
             )
         },
         floatingActionButton = {
@@ -221,8 +213,14 @@ private fun ExpenseCard(
     onCancel: () -> Unit
 ) {
     val cancelled = expense.status == ExpenseStatus.CANCELLED
-    Card(modifier = modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        border = CardDefaults.outlinedCardBorder()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -231,13 +229,14 @@ private fun ExpenseCard(
                 Text(
                     expense.description,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
                 )
                 Text(
                     formatInr(expense.amount),
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.ExtraBold,
+                    color = com.shankaravam.festival.core.theme.CrimsonRose
                 )
             }
             Row(

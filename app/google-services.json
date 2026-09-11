@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "388252927025",
+    "project_id": "shankaravam-bcec6",
+    "storage_bucket": "shankaravam-bcec6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:388252927025:android:3d42c013039dd152484110",
+        "android_client_info": {
+          "package_name": "com.shankaravam.festival"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "388252927025-lqbhche57rp0du700pil4u9grlg8i5pd.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.shankaravam.festival",
+            "certificate_hash": "677f1c10c30eb2ae603192a5d02207fbaeb46344"
+          }
+        },
+        {
+          "client_id": "388252927025-uongndp3ighmm687bfjhg1vk9fe6e0jj.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAG2PSPjw4P2LO2nzNFkejH9ZDhvsZF2vM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "388252927025-uongndp3ighmm687bfjhg1vk9fe6e0jj.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

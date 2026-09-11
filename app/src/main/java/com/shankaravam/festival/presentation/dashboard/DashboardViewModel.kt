@@ -44,6 +44,10 @@ class DashboardViewModel(container: AppContainer) : ViewModel() {
     private val _unsynced = MutableStateFlow(0)
     val unsyncedCount: StateFlow<Int> = _unsynced
 
+    fun toggleLanguage() {
+        prefs.toggleAppLanguage()
+    }
+
     /** One-shot pending-upload count for the offline badge (G6 clears it via sync). */
     fun refreshUnsynced() {
         viewModelScope.launch {

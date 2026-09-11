@@ -27,36 +27,38 @@ class AndroidTtsClient(context: Context) : TextToSpeech.OnInitListener {
     private val pending = ConcurrentHashMap<String, Pending>()
 
     init {
-        tts = TextToSpeech(context.applicationContext, this)
+        tts = runCatching { TextToSpeech(context.applicationContext, this) }.getOrNull()
     }
 
     override fun onInit(status: Int) {
         val engine = tts ?: return
         if (status != TextToSpeech.SUCCESS) return
-        engine.setAudioAttributes(
-            AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                .build()
-        )
-        val result = engine.setLanguage(Locale.Builder().setLanguage("te").setRegion("IN").build())
-        _ready.value = result != TextToSpeech.LANG_MISSING_DATA &&
-            result != TextToSpeech.LANG_NOT_SUPPORTED
-        engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) = Unit
-            override fun onDone(utteranceId: String?) {
-                utteranceId?.let { pending.remove(it)?.onDone?.invoke() }
-            }
+        runCatching {
+            engine.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            val result = engine.setLanguage(Locale.Builder().setLanguage("te").setRegion("IN").build())
+            _ready.value = result != TextToSpeech.LANG_MISSING_DATA &&
+                result != TextToSpeech.LANG_NOT_SUPPORTED
+            engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) = Unit
+                override fun onDone(utteranceId: String?) {
+                    utteranceId?.let { pending.remove(it)?.onDone?.invoke() }
+                }
 
-            @Deprecated("Legacy callback")
-            override fun onError(utteranceId: String?) {
-                utteranceId?.let { pending.remove(it)?.onError?.invoke() }
-            }
+                @Deprecated("Legacy callback")
+                override fun onError(utteranceId: String?) {
+                    utteranceId?.let { pending.remove(it)?.onError?.invoke() }
+                }
 
-            override fun onError(utteranceId: String?, errorCode: Int) {
-                onError(utteranceId)
-            }
-        })
+                override fun onError(utteranceId: String?, errorCode: Int) {
+                    onError(utteranceId)
+                }
+            })
+        }
     }
 
     /** Fire-and-forget speak. Returns false when offline TTS is unavailable. */

@@ -41,7 +41,9 @@ class AudioRouteDetector(context: Context) {
     }
 
     fun start() {
-        audioManager.registerAudioDeviceCallback(callback, Handler(Looper.getMainLooper()))
+        runCatching {
+            audioManager.registerAudioDeviceCallback(callback, Handler(Looper.getMainLooper()))
+        }
         _route.value = currentRoute()
     }
 
@@ -50,12 +52,14 @@ class AudioRouteDetector(context: Context) {
     }
 
     private fun currentRoute(): AudioRoute {
-        val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { it.type }
-        return when {
-            outputs.any { it in BLUETOOTH_TYPES } -> AudioRoute.BLUETOOTH
-            outputs.any { it in WIRED_TYPES } -> AudioRoute.WIRED
-            else -> AudioRoute.SPEAKER
-        }
+        return runCatching {
+            val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { it.type }
+            when {
+                outputs.any { it in BLUETOOTH_TYPES } -> AudioRoute.BLUETOOTH
+                outputs.any { it in WIRED_TYPES } -> AudioRoute.WIRED
+                else -> AudioRoute.SPEAKER
+            }
+        }.getOrDefault(AudioRoute.SPEAKER)
     }
 
     companion object {

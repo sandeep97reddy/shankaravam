@@ -13,25 +13,42 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CurrencyRupee
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Notes
+import androidx.compose.material.icons.filled.Payment
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.filled.Store
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -48,18 +65,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.shankaravam.festival.core.export.ReportContent
+import com.shankaravam.festival.core.i18n.appStrings
+import com.shankaravam.festival.core.theme.CrimsonRose
 import com.shankaravam.festival.core.theme.DeepMaroon
-import com.shankaravam.festival.core.theme.TempleGold
+import com.shankaravam.festival.presentation.common.ModernTextField
+import com.shankaravam.festival.presentation.common.TempleAppBar
 import com.shankaravam.festival.presentation.common.containerViewModel
 import com.shankaravam.festival.presentation.donation.PAYMENT_METHODS
 import java.util.Calendar
 
 /**
- * Expense form (plan §18). Receipt images compress to ~100KB WebP in the
- * background; the save itself commits to Room instantly with a haptic.
+ * Modernized Expense entry screen:
+ * - ModernTextField with leading icons and highlighted red star mark (*)
+ * - Category chips with clear layout
+ * - Clean date selector
+ * - Fast background receipt compression
+ * - Instant Room commit (<10ms) with haptic feedback
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -72,6 +98,7 @@ fun ExpenseEntryScreen(
     val eventId by viewModel.currentEventId.collectAsState()
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
+    val strings = appStrings()
 
     val receiptPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -92,18 +119,9 @@ fun ExpenseEntryScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            androidx.compose.material3.CenterAlignedTopAppBar(
-                title = { Text("New expense") },
-                navigationIcon = {
-                    IconButton(onClick = onDone) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                colors = androidx.compose.material3.TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = DeepMaroon,
-                    titleContentColor = TempleGold,
-                    navigationIconContentColor = TempleGold
-                )
+            TempleAppBar(
+                title = strings.newExpenseTitle,
+                onBack = onDone
             )
         },
         snackbarHost = { SnackbarHost(snackbar) }
@@ -114,170 +132,273 @@ fun ExpenseEntryScreen(
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("Select or create an event first.", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    strings.noEventYet,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             return@Scaffold
         }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            OutlinedTextField(
+            // 1. Amount ₹ (Required *)
+            ModernTextField(
                 value = form.amountText,
                 onValueChange = { v ->
                     if (v.all { c -> c.isDigit() || c == '.' }) {
                         viewModel.update { it.copy(amountText = v) }
                     }
                 },
-                label = { Text("Amount ₹ *") },
-                prefix = { Text("₹") },
+                label = strings.expenseAmountLabel,
+                isRequired = true,
+                prefix = { Text("₹ ", fontWeight = FontWeight.Bold, color = CrimsonRose) },
+                leadingIcon = Icons.Filled.CurrencyRupee,
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.fillMaxWidth()
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
             )
-            OutlinedTextField(
+
+            // 2. Description (Required *)
+            ModernTextField(
                 value = form.description,
                 onValueChange = { v -> viewModel.update { it.copy(description = v) } },
-                label = { Text("Description *") },
-                placeholder = { Text("Marigold garlands") },
-                modifier = Modifier.fillMaxWidth()
+                label = strings.expenseDescriptionLabel,
+                isRequired = true,
+                placeholder = if (strings.languageCode == "te") "ఉదా: పూజా సామాగ్రి, మైక్ సెట్, లైటింగ్" else "e.g. Pooja items, Flowers, Sound System",
+                leadingIcon = Icons.Filled.Description,
+                singleLine = true
             )
-            Text("Category", style = MaterialTheme.typography.labelLarge)
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+
+            // 3. Category Chips
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = CardDefaults.outlinedCardBorder()
             ) {
-                EXPENSE_CATEGORIES.forEach { category ->
-                    FilterChip(
-                        selected = form.category == category && form.customCategory.isBlank(),
-                        onClick = { viewModel.update { it.copy(category = category, customCategory = "") } },
-                        label = { Text(category, maxLines = 1) }
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(Icons.Filled.Category, contentDescription = null, tint = CrimsonRose, modifier = Modifier.size(18.dp))
+                        Text(strings.categoryLabel, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    }
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        EXPENSE_CATEGORIES.forEach { category ->
+                            val isSelected = form.category == category && form.customCategory.isBlank()
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { viewModel.update { it.copy(category = category, customCategory = "") } },
+                                label = { Text(category, fontSize = 12.sp, maxLines = 1) },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = CrimsonRose.copy(alpha = 0.15f),
+                                    selectedLabelColor = CrimsonRose
+                                )
+                            )
+                        }
+                    }
+
+                    ModernTextField(
+                        value = form.customCategory,
+                        onValueChange = { v -> viewModel.update { it.copy(customCategory = v) } },
+                        label = strings.customCategoryLabel,
+                        singleLine = true
                     )
                 }
             }
-            OutlinedTextField(
-                value = form.customCategory,
-                onValueChange = { v -> viewModel.update { it.copy(customCategory = v) } },
-                label = { Text("Or custom category") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            DateRow(form.dateMillis) { picked ->
+
+            // 4. Date Row
+            DateModernRow(form.dateMillis, label = strings.dateLabel) { picked ->
                 viewModel.update { it.copy(dateMillis = picked) }
             }
-            var methodExpanded by remember { mutableStateOf(false) }
-            ExposedDropdownMenuBox(
-                expanded = methodExpanded,
-                onExpandedChange = { methodExpanded = !methodExpanded }
+
+            // 5. Payment Method & Paid By
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedTextField(
-                    value = form.paymentMethod, onValueChange = {},
-                    readOnly = true, label = { Text("Paid via") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(methodExpanded) },
-                    modifier = Modifier.fillMaxWidth()
-                        .menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable)
-                )
-                ExposedDropdownMenu(
+                var methodExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
                     expanded = methodExpanded,
-                    onDismissRequest = { methodExpanded = false }
+                    onExpandedChange = { methodExpanded = !methodExpanded },
+                    modifier = Modifier.weight(1f)
                 ) {
-                    PAYMENT_METHODS.forEach { method ->
-                        DropdownMenuItem(
-                            text = { Text(method) },
-                            onClick = {
-                                viewModel.update { it.copy(paymentMethod = method) }
-                                methodExpanded = false
-                            }
+                    OutlinedTextField(
+                        value = form.paymentMethod,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text(strings.paidViaLabel) },
+                        leadingIcon = { Icon(Icons.Filled.Payment, contentDescription = null, tint = CrimsonRose) },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(methodExpanded) },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                            focusedBorderColor = CrimsonRose,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
                         )
+                    )
+                    ExposedDropdownMenu(
+                        expanded = methodExpanded,
+                        onDismissRequest = { methodExpanded = false }
+                    ) {
+                        PAYMENT_METHODS.forEach { method ->
+                            DropdownMenuItem(
+                                text = { Text(method) },
+                                onClick = {
+                                    viewModel.update { it.copy(paymentMethod = method) }
+                                    methodExpanded = false
+                                }
+                            )
+                        }
                     }
                 }
+
+                ModernTextField(
+                    value = form.paidBy,
+                    onValueChange = { v -> viewModel.update { it.copy(paidBy = v) } },
+                    label = strings.paidByLabel,
+                    leadingIcon = Icons.Filled.Person,
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
             }
-            OutlinedTextField(
-                value = form.paidBy,
-                onValueChange = { v -> viewModel.update { it.copy(paidBy = v) } },
-                label = { Text("Paid by") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
+
+            // 6. Vendor / Shop
+            ModernTextField(
                 value = form.vendor,
                 onValueChange = { v -> viewModel.update { it.copy(vendor = v) } },
-                label = { Text("Vendor / shop") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+                label = strings.vendorLabel,
+                leadingIcon = Icons.Filled.Store,
+                singleLine = true
             )
-            when (val receipt = form.receiptState) {
-                is ReceiptState.None, is ReceiptState.Error -> {
-                    OutlinedButton(
-                        onClick = { receiptPicker.launch("image/*") },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Filled.AttachFile, contentDescription = null)
-                        Text("Attach receipt photo")
-                    }
-                    if (receipt is ReceiptState.Error) {
-                        Text(receipt.message, color = MaterialTheme.colorScheme.error)
-                    }
-                }
-                is ReceiptState.Attaching -> {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.padding(end = 8.dp)
-                        )
-                        Text("Compressing receipt…")
-                    }
-                }
-                is ReceiptState.Attached -> {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            "🧾 ${receipt.fileName} (~${receipt.sizeKb} KB)",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(onClick = { viewModel.clearReceipt() }) {
-                            Icon(Icons.Filled.Close, contentDescription = "Remove receipt")
+
+            // 7. Receipt Attachment Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = CardDefaults.outlinedCardBorder()
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    when (val receipt = form.receiptState) {
+                        is ReceiptState.None, is ReceiptState.Error -> {
+                            OutlinedButton(
+                                onClick = { receiptPicker.launch("image/*") },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Filled.AttachFile, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.size(6.dp))
+                                Text(strings.attachReceiptAction)
+                            }
+                            if (receipt is ReceiptState.Error) {
+                                Text(receipt.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        is ReceiptState.Attaching -> {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(8.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(20.dp).padding(end = 8.dp)
+                                )
+                                Text("Compressing receipt (WebP ~100KB)…", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        is ReceiptState.Attached -> {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Filled.ReceiptLong, contentDescription = null, tint = CrimsonRose)
+                                    Text(
+                                        "${receipt.fileName} (~${receipt.sizeKb} KB)",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                                IconButton(onClick = { viewModel.clearReceipt() }) {
+                                    Icon(Icons.Filled.Close, contentDescription = "Remove receipt")
+                                }
+                            }
                         }
                     }
                 }
             }
-            OutlinedTextField(
+
+            // 8. Notes
+            ModernTextField(
                 value = form.notes,
                 onValueChange = { v -> viewModel.update { it.copy(notes = v) } },
-                label = { Text("Notes") },
-                modifier = Modifier.fillMaxWidth(),
+                label = strings.notesLabel,
+                leadingIcon = Icons.Filled.Notes,
+                singleLine = false,
                 minLines = 2
             )
+
             Spacer(Modifier.height(4.dp))
+
+            // 9. Large Prominent Save Button
             Button(
                 onClick = { viewModel.save() },
                 enabled = form.canSave,
-                modifier = Modifier.fillMaxWidth().height(52.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(54.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = DeepMaroon),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
             ) {
                 if (form.saveState == ExpenseSaveState.Saving) {
                     CircularProgressIndicator(
                         strokeWidth = 2.dp,
-                        modifier = Modifier.padding(end = 8.dp)
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(20.dp).padding(end = 8.dp)
                     )
                 }
-                Text("Save expense")
+                Icon(Icons.Filled.ReceiptLong, contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    text = strings.saveExpenseAction,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }
 }
 
 @Composable
-private fun DateRow(currentMillis: Long, onPick: (Long) -> Unit) {
+private fun DateModernRow(
+    currentMillis: Long,
+    label: String,
+    onPick: (Long) -> Unit
+) {
     val context = LocalContext.current
-    OutlinedButton(
+    OutlinedCard(
         onClick = {
             val cal = Calendar.getInstance().apply { timeInMillis = currentMillis }
             DatePickerDialog(
@@ -294,8 +415,33 @@ private fun DateRow(currentMillis: Long, onPick: (Long) -> Unit) {
                 cal.get(Calendar.DAY_OF_MONTH)
             ).show()
         },
+        shape = RoundedCornerShape(14.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Text("Date: ${ReportContent.formatTime(currentMillis).substring(0, 10)}")
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Filled.CalendarMonth, contentDescription = null, tint = CrimsonRose)
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            Text(
+                text = ReportContent.formatTime(currentMillis).substring(0, 10),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
     }
 }
