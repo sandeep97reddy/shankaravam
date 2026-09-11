@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.durgamma.festival"
+    namespace = "com.shankaravam.festival"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.durgamma.festival"
+        applicationId = "com.shankaravam.festival"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

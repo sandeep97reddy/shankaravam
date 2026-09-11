@@ -789,7 +789,7 @@ events/{eventId}/imports/{importId}
 
 ### GROUP G1 — Foundation Shell (Session 1, start here)
 **Phases:**
-- P1: Project scaffold — Gradle (Kotlin 2.0+, AGP, KSP, Room 2.6+, Compose BOM, Navigation, WorkManager, Hilt/manual DI), `libs.versions.toml`, `AndroidManifest.xml`, `MainActivity.kt`, `NavGraph.kt`, package `com.durgamma.festival`, light/dark `Theme.kt`.
+- P1: Project scaffold — Gradle (Kotlin 2.0+, AGP, KSP, Room 2.6+, Compose BOM, Navigation, WorkManager, Hilt/manual DI), `libs.versions.toml`, `AndroidManifest.xml`, `MainActivity.kt`, `NavGraph.kt`, package `com.shankaravam.festival`, light/dark `Theme.kt`.
 - P2: Temple visual identity — color tokens (`DeepMaroon/TempleSaffron/TempleGold/DivineAmber/WarmIvory/SacredCharcoal`), `Type.kt`, `Shape.kt`, `TempleAppBar`, `ChakraLoader`, `CurrencyTextField`, `VishnuChakraSplashScreen` (<1.5s, vector rotation + aura), splash → placeholder dashboard navigation.
 
 **Files (create):** `build.gradle.kts`, `libs.versions.toml`, `AndroidManifest.xml`, `MainActivity.kt`, `core/theme/*`, `presentation/splash/*`, `presentation/common/*`, `presentation/navigation/*`, `ic_sudarshana_chakra.xml`.

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- DeepMaroon launch background avoids white flash before Compose splash. -->
-    <style name="Theme.Durgamma" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.ShankaRavam" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">#FF4A0E17</item>
         <item name="android:statusBarColor">#FF4A0E17</item>
         <item name="android:navigationBarColor">#FF1A120B</item>

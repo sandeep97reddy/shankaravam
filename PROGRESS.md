@@ -1,4 +1,4 @@
-# PROGRESS — Durgamma Festival App Build Tracker
+# PROGRESS — ShankaRavam App Build Tracker
 
 > Single source of truth for build progress. Update this file at the END of every Group session, in the same task as the code changes. Stale rows mislead the next session.
 

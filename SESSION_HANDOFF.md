@@ -5,10 +5,10 @@
 ## 1. Where We Are
 - **Last completed:** `G6 — Optional Cloud Sync + Admin + Hardening` ✅ — `assembleDebug` + 42/42 tests green, zero warnings, APK 25.1 MB, v1.0.0-g6. **ALL GROUPS DONE — BUILD COMPLETE.**
 - **Next up:** nothing scheduled. To go live with teams: create Firebase (Spark) project → drop in `google-services.json` → `firebase deploy --only firestore:rules` → sign in via Settings → enable sync. No code changes needed.
-- **Current branch/status:** shippable festival app (offline-first + optional cloud); uncommitted work in progress (commit + tag on your word)
+- **Current branch/status:** shippable festival app (offline-first + optional cloud); committed as `ecc4e74` + tag `v1.0.0-g6` (not pushed — say the word for `git push origin master --tags`)
 
 ## 2. Key Decisions (carry forward, do not re-litigate)
-- Package: `com.durgamma.festival`, Kotlin 2.0+, Compose BOM + Material3, Room 2.6+ w/ KSP, `StateFlow` + `WhileSubscribed(5000)`
+- Package: `com.shankaravam.festival`, Kotlin 2.0+, Compose BOM + Material3, Room 2.6+ w/ KSP, `StateFlow` + `WhileSubscribed(5000)`
 - Audio cache path fixed: `cacheDir/audio/donation_{id}.mp3` — never Firebase Storage
 - Ledger: `Cancelled` flag, never DELETE; corrections = new row with delta + reason
 - Cloud is G6-only; G1–G5 must never import Firebase/WorkManager-network code
@@ -19,12 +19,12 @@
 - `PROGRESS.md` — created (status table + pointer); G1 marked ✅
 - `SESSION_HANDOFF.md` — this file (created, updated post-G1)
 - G1 scaffold: `settings.gradle.kts`, `build.gradle.kts`, `gradle.properties`, `gradle/libs.versions.toml`, `gradlew`/`gradlew.bat` + `gradle/wrapper/*`, `local.properties`, `app/build.gradle.kts`, `app/proguard-rules.pro`, `.gitignore`, `app/.gitignore`
-- G1 app code: `MainActivity.kt`, `DurgammaApp.kt`, `core/theme/{Color,Type,Shape,Theme}.kt`, `presentation/{navigation/NavGraph,splash/SplashScreen,dashboard/DashboardScreen,common/{ChakraLoader,TempleAppBar,CurrencyTextField}}.kt`
+- G1 app code: `MainActivity.kt`, `ShankaRavamApp.kt`, `core/theme/{Color,Type,Shape,Theme}.kt`, `presentation/{navigation/NavGraph,splash/SplashScreen,dashboard/DashboardScreen,common/{ChakraLoader,TempleAppBar,CurrencyTextField}}.kt`
 - G1 res: `AndroidManifest.xml`, `res/{values/{strings,themes,colors},drawable/{ic_sudarshana_chakra,ic_launcher_foreground},mipmap-anydpi-v26/{ic_launcher,ic_launcher_round}}.xml`
 - G2 gradle: Room 2.6.1 + KSP applied, `room-runtime/ktx/compiler`, junit + kotlin-test + coroutines-test(1.8.1); versionName `0.2.0-g2`
 - G2 data: `data/local/{Event,Donation,Expense,Correction,Activity}Entity.kt`, `Converters.kt` (char-31 separator), `{Event,Donation,Expense,Correction,Activity}Dao.kt`, `AppDatabase.kt` (v1, exportSchema=false), `EntityMappers.kt`
 - G2 domain: `domain/model/{Enums,Event,Donation,Expense,Correction,Activity}.kt`, `domain/repository/Repositories.kt`, `domain/usecase/{SaveDonation,SaveExpense,RecordCorrection,CalculateBalance (BalanceSnapshot),ObserveEventTotals}UseCase.kt`
-- G2 di/app: `di/AppContainer.kt`, `DurgammaApp` owns container; `core/util/{Outcome,Formatters,AppIds}.kt`
+- G2 di/app: `di/AppContainer.kt`, `ShankaRavamApp` owns container; `core/util/{Outcome,Formatters,AppIds}.kt`
 - G2 tests (14 green): `ConvertersTest`, `CalculateBalanceTest`, `SaveDonationUseCaseTest`, `RecordCorrectionUseCaseTest` (fakes included)
 - G3 data/di: `data/local/SessionPrefs.kt` (current event + saved sort/status filter), `AppContainer.sessionPrefs`
 - G3 shared UI: `presentation/common/{ViewModels.kt (containerViewModel+factory), Derived.kt (keyed derivedTotal)}`, nav routes `DONATION_ENTRY` + `DONATIONS`

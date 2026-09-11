@@ -1,6 +1,6 @@
 # AGENTS.md — Guidelines for AI Coding Agents
 
-Welcome! You are working on **Durgamma / Festival Organizer App**, a high-performance, fluid Native Android application built for Indian temples and festival committees (Vinayaka Chavithi, Sri Rama Navami, Dasara, Hanuman Jayanthi, etc.).
+Welcome! You are working on **ShankaRavam / Festival Organizer App**, a high-performance, fluid Native Android application built for Indian temples and festival committees (Vinayaka Chavithi, Sri Rama Navami, Dasara, Hanuman Jayanthi, etc.).
 
 Organizers, collectors, and volunteers use this app in high-stress, noisy environments (temple counters, festival pandals) to record cash and material donations, broadcast Telugu announcements through Bluetooth horn speakers/amplifiers, track expenses, and view real-time balances.
 
@@ -93,7 +93,7 @@ val SacredCharcoal = Color(0xFF1A120B)// Surface Dark
 ## 6. Project Directory Layout
 
 ```text
-app/src/main/java/com/durgamma/festival/
+app/src/main/java/com/shankaravam/festival/
 ├── core/
 │   ├── audio/        # AudioFocusManager, AudioRouteDetector
 │   ├── database/     # Room AppDatabase, TypeConverters

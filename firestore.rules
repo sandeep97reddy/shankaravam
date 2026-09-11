@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// Durgamma Festival — Spark Free Tier rules (plan §13, §22).
+// ShankaRavam — Spark Free Tier rules (plan §13, §22).
 // Deploy with: firebase deploy --only firestore:rules
 // Money collections are delta-synced from Room; audio NEVER goes here.
 service cloud.firestore {
