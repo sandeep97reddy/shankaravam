@@ -8,6 +8,10 @@ import com.durgamma.festival.presentation.announcement.AnnouncementQueueScreen
 import com.durgamma.festival.presentation.dashboard.DashboardScreen
 import com.durgamma.festival.presentation.donation.DonationEntryScreen
 import com.durgamma.festival.presentation.donation.DonationListScreen
+import com.durgamma.festival.presentation.expense.ExpenseEntryScreen
+import com.durgamma.festival.presentation.expense.ExpenseListScreen
+import com.durgamma.festival.presentation.history.ActivityFeedScreen
+import com.durgamma.festival.presentation.reports.ExportScreen
 import com.durgamma.festival.presentation.splash.SplashScreen
 
 object DurgammaRoutes {
@@ -16,6 +20,10 @@ object DurgammaRoutes {
     const val DONATION_ENTRY = "donation_entry"
     const val DONATIONS = "donations"
     const val ANNOUNCEMENTS = "announcements"
+    const val EXPENSES = "expenses"
+    const val EXPENSE_ENTRY = "expense_entry"
+    const val HISTORY = "history"
+    const val REPORTS = "reports"
 }
 
 @Composable
@@ -38,7 +46,10 @@ fun DurgammaNavGraph() {
             DashboardScreen(
                 onAddDonation = { navController.navigate(DurgammaRoutes.DONATION_ENTRY) },
                 onViewDonations = { navController.navigate(DurgammaRoutes.DONATIONS) },
-                onAnnounce = { navController.navigate(DurgammaRoutes.ANNOUNCEMENTS) }
+                onAnnounce = { navController.navigate(DurgammaRoutes.ANNOUNCEMENTS) },
+                onExpenses = { navController.navigate(DurgammaRoutes.EXPENSES) },
+                onHistory = { navController.navigate(DurgammaRoutes.HISTORY) },
+                onReports = { navController.navigate(DurgammaRoutes.REPORTS) }
             )
         }
         composable(DurgammaRoutes.DONATION_ENTRY) {
@@ -49,6 +60,21 @@ fun DurgammaNavGraph() {
         }
         composable(DurgammaRoutes.ANNOUNCEMENTS) {
             AnnouncementQueueScreen(onBack = { navController.popBackStack() })
+        }
+        composable(DurgammaRoutes.EXPENSES) {
+            ExpenseListScreen(
+                onBack = { navController.popBackStack() },
+                onAddExpense = { navController.navigate(DurgammaRoutes.EXPENSE_ENTRY) }
+            )
+        }
+        composable(DurgammaRoutes.EXPENSE_ENTRY) {
+            ExpenseEntryScreen(onDone = { navController.popBackStack() })
+        }
+        composable(DurgammaRoutes.HISTORY) {
+            ActivityFeedScreen(onBack = { navController.popBackStack() })
+        }
+        composable(DurgammaRoutes.REPORTS) {
+            ExportScreen(onBack = { navController.popBackStack() })
         }
     }
 }

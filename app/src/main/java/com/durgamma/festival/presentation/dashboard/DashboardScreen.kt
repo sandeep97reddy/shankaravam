@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AssistChip
@@ -44,6 +45,9 @@ fun DashboardScreen(
     onAddDonation: () -> Unit,
     onViewDonations: () -> Unit,
     onAnnounce: () -> Unit,
+    onExpenses: () -> Unit,
+    onHistory: () -> Unit,
+    onReports: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: DashboardViewModel = containerViewModel { DashboardViewModel(it) }
 ) {
@@ -114,8 +118,20 @@ fun DashboardScreen(
                     Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null)
                     Text("Announce donations")
                 }
-                OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
-                    Text("Expenses (G5)")
+                Button(onClick = onExpenses, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null)
+                    Text("Expenses")
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(onClick = onHistory, modifier = Modifier.weight(1f)) {
+                        Text("History")
+                    }
+                    OutlinedButton(onClick = onReports, modifier = Modifier.weight(1f)) {
+                        Text("Reports")
+                    }
                 }
             }
         }

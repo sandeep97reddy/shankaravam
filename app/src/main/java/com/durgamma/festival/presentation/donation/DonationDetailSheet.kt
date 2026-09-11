@@ -21,6 +21,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -31,6 +32,7 @@ import com.durgamma.festival.data.local.SessionPrefs
 import com.durgamma.festival.domain.model.Donation
 import com.durgamma.festival.presentation.common.containerViewModel
 import com.durgamma.festival.presentation.common.rememberContainer
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -105,11 +107,54 @@ fun DonationDetailSheet(
 
             SinglePlayButton(donation = donation, eventName = eventName)
 
-            OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
-                Text("Correct entry (G5)")
-            }
+            CorrectEntryButton(donation = donation)
             Spacer(Modifier.height(4.dp))
         }
+    }
+}
+
+/**
+ * Amount fix through the shared correction flow: direct edit inside the
+ * 5-minute window, appended Correction with mandatory reason after it.
+ */
+@Composable
+private fun CorrectEntryButton(donation: Donation) {
+    // CANCELLED rows are terminal — no further edits.
+    if (donation.status == com.durgamma.festival.domain.model.DonationStatus.CANCELLED) return
+    var showDialog by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val viewModel: DonationDetailViewModel =
+        containerViewModel { DonationDetailViewModel(it, donation.id) }
+
+    error?.let {
+        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+    }
+    OutlinedButton(onClick = { showDialog = true }, modifier = Modifier.fillMaxWidth()) {
+        Text("Fix amount")
+    }
+    if (showDialog) {
+        com.durgamma.festival.presentation.correction.CorrectDialog(
+            title = "Fix donation",
+            originalAmount = donation.amount,
+            addedTimeMillis = donation.addedTime,
+            onDismiss = { showDialog = false; error = null },
+            onConfirm = { newAmount, reason ->
+                scope.launch {
+                    when (
+                        val result = viewModel.correct(donation, newAmount, reason)
+                    ) {
+                        is com.durgamma.festival.core.util.Outcome.Ok -> {
+                            showDialog = false
+                            error = null
+                        }
+                        is com.durgamma.festival.core.util.Outcome.Err -> {
+                            error = result.message
+                        }
+                    }
+                }
+            }
+        )
     }
 }
 

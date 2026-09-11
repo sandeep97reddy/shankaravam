@@ -17,7 +17,9 @@ import com.durgamma.festival.domain.repository.ActivityRepository
 import com.durgamma.festival.domain.repository.CorrectionRepository
 import com.durgamma.festival.domain.repository.DonationRepository
 import com.durgamma.festival.domain.repository.EventRepository
+import com.durgamma.festival.core.export.ReportExporter
 import com.durgamma.festival.domain.repository.ExpenseRepository
+import com.durgamma.festival.domain.usecase.CorrectRecordUseCase
 import com.durgamma.festival.domain.usecase.ObserveEventTotalsUseCase
 import com.durgamma.festival.domain.usecase.RecordCorrectionUseCase
 import com.durgamma.festival.domain.usecase.SaveDonationUseCase
@@ -28,7 +30,7 @@ import com.durgamma.festival.domain.usecase.SaveExpenseUseCase
  * surprises beyond KSP+Room). G3 ViewModels take what they need from here.
  */
 class AppContainer(context: Context) {
-    private val appContext = context.applicationContext
+    val appContext: Context = context.applicationContext
 
     val database: AppDatabase by lazy { AppDatabase.build(appContext) }
 
@@ -58,6 +60,12 @@ class AppContainer(context: Context) {
     }
     val recordCorrection: RecordCorrectionUseCase by lazy {
         RecordCorrectionUseCase(correctionRepository, activityRepository)
+    }
+    val correctRecord: CorrectRecordUseCase by lazy {
+        CorrectRecordUseCase(recordCorrection)
+    }
+    val reportExporter: ReportExporter by lazy {
+        ReportExporter(appContext)
     }
     val observeEventTotals: ObserveEventTotalsUseCase by lazy {
         ObserveEventTotalsUseCase(donationRepository, expenseRepository)

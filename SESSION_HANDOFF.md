@@ -3,9 +3,9 @@
 > Copy-paste starter + context bridge. Update ALL sections at the end of every Group session. The next session starts by reading this file + `PROGRESS.md` + plan §24 + `AGENTS.md`.
 
 ## 1. Where We Are
-- **Last completed:** `G4 — Telugu Voice + Announcement Queue` ✅ — `assembleDebug` + 23/23 tests green, zero warnings
-- **Next up:** `G5 — Expenses + Ledger Safety + Reports` (plan §24: P9 expense entry/list + receipts + corrections UI + activity feed, P10 PDF/CSV/WhatsApp export)
-- **Current branch/status:** full money-in + voice app (donations → Telugu/English announcements over phone/BT speaker, cloud-voice prefetch, single-play in detail sheet); no expense UI yet
+- **Last completed:** `G5 — Expenses + Ledger Safety + Reports` ✅ — `assembleDebug` + 31/31 tests green, zero warnings. **100% offline app is FEATURE-COMPLETE.**
+- **Next up:** `G6 — Optional Cloud Sync + Admin + Hardening` (plan §24: P11 Google Sign-In + QR join + Firestore delta via WorkManager + key sync, P12 admin screens + polish). OPTIONAL — G1–G5 already shippable.
+- **Current branch/status:** full festival app offline (events, donations+corrections, expenses+receipts, Telugu/EN announcements, history, PDF/CSV/WhatsApp); Firebase/WorkManager absent
 
 ## 2. Key Decisions (carry forward, do not re-litigate)
 - Package: `com.durgamma.festival`, Kotlin 2.0+, Compose BOM + Material3, Room 2.6+ w/ KSP, `StateFlow` + `WhileSubscribed(5000)`
@@ -36,25 +36,31 @@
 - G4 wiring: `DonationDao.updateAudioStatus` (no version/sync bump — local artifact), `DonationRepository.updateAudioStatus`, `SessionPrefs` += queueGap/queueSort/queueLanguage/sarvamApiKey/sarvamSpeaker, `AppContainer.{audioFocus, routeDetector, ttsEngine}`
 - G4 UI: `presentation/announcement/{AnnouncementQueueViewModel (single-job transport, background prefetch, pledged toggle), AnnouncementQueueScreen (route badge + test, key/speaker/language cards, transport, tappable queue)}`, nav `ANNOUNCEMENTS`, dashboard Announce button live
 - G4 tests (23 green): + `TeluguNumberFormatterTest` (plan byte-exact examples), `AnnouncementTemplatesTest` (TE/EN/BI/material)
+- G5 domain: `CorrectRecordUseCase` (5-min grace direct-edit vs appended Correction, original never touched outside window); `AppContainer.{correctRecord, reportExporter}`, public `appContext`; versionName `0.3.0-g5`
+- G5 money-out: `presentation/expense/{ExpenseEntryViewModel (receipt attach state), ExpenseEntryScreen (category chips+custom, DatePickerDialog, payment dropdown, WebP attach), ExpenseListViewModel (search/category/cancel/correct), ExpenseListScreen (badges, confirm-cancel, correct dialog)}`
+- G5 safety: `presentation/correction/CorrectDialog.kt` (grace hint vs mandatory reason), donation `DonationDetailViewModel.correct` + Fix button, expense cancel keeps row + logs RECORD_CANCELLED
+- G5 local files: `core/export/{ReceiptCompressor (~100KB WEBP_LOSSY/R), ReportContent (pure CSV/WhatsApp/line builders), ReportExporter (PdfDocument A4 + FileProvider share)}`, `res/xml/file_provider_paths.xml`, manifest FileProvider
+- G5 screens: `presentation/history/ActivityFeedScreen.kt` (VM folded in), `presentation/reports/ExportScreen.kt` (PDF/CSV/WhatsApp + last-file), nav `EXPENSES/EXPENSE_ENTRY/HISTORY/REPORTS`, dashboard Expenses/History/Reports buttons live
+- G5 tests (31 green): + `CorrectRecordUseCaseTest` (grace/correction/reject paths), `ReportContentTest` (CSV quoting, bilingual summary)
 
 ## 4. Gotchas For Next Session
-- Deps cached — G4 verify ~4s incremental; use `.\gradlew.bat` or dist binary at `Temp/opencode/gradle-dist/gradle-8.11.1`
-- Room v1 STILL frozen (no migrations) — G5 must NOT change entities either; expense/correction/activity tables already exist, receipt = local path string in `receiptPath`
-- Toolchain lesson: `kotlinx.coroutines.flow.combine` wider than 3 flows does NOT resolve here — G5 must use only ≤3-flow combines (see AnnouncementQueueViewModel nesting pattern); also add explicit OkHttp dep for any new Square lib
-- Sarvam key lives in plain SessionPrefs as DEV holder — G6 migrates to EncryptedSharedPreferences; G5 must not build on it
-- Prefetch runs inside AnnouncementQueueViewModel init (collects uiState on IO) — G5 queue-adjacent work must not duplicate prefetch loops
-- TTS singletons live in AppContainer (ttsEngine/routeDetector/audioFocus); detector.start() is owned by the queue VM — don't double-start
-- G5 needs: camera/gallery picker (ActivityResultContracts, no new dep), Bitmap→WebP compress (~100KB) via `Bitmap.compress(WEBP_LOSSY)`, PDF via framework `PdfDocument` (no dep), CSV via plain file IO, share via ACTION_SEND intent (WhatsApp text). Zero new Gradle deps expected
-- Load skill `jetpack-compose-performance` in G5 (expense list perf); no TTS skill needed
+- Deps cached — G5 verify ~11s incremental; use `.\gradlew.bat` or dist binary at `Temp/opencode/gradle-dist/gradle-8.11.1`
+- Room v1 STILL frozen (no migrations, exportSchema=false) — G6 sync must map Firestore docs onto EXISTING entities; no column changes. First schema change (if ever) ships with a migration + exportSchema=true post-G6 decision
+- `combine` wider than 3 flows does NOT resolve here — only ≤3-flow combines (ExpenseListViewModel chains member `.combine` calls; queue VM nests). Keep this pattern in G6 workers/observers
+- Api quirks hit: `PdfDocument.PageInfo.Builder.create()` (not build()); `Icons.AutoMirrored.Filled.ReceiptLong` IS the current one (Add is the exception with no mirrored variant)
+- Sarvam key still in plain SessionPrefs (`sarvamApiKey`) — G6 MUST migrate to EncryptedSharedPreferences (needs `androidx.security:security-crypto` dep) + `/config/tts_settings` Firestore sync (head-write/member-read rules)
+- Receipts at `filesDir/receipts/*.webp`, reports staged at `cacheDir/reports/*`, audio at `cacheDir/audio/*` — G6 uploads receipts only (~100KB), NEVER audio
+- Sync design pointers: `pendingSync()` one-shots already exist on donation/expense DAOs; corrections/activity are append-only (upload + never update); conflicts → NEEDS_REVIEW/CONFLICT status, never last-write-wins on money; WorkManager needs `androidx.work:work-runtime-ktx` + Auth (`firebase-auth`, `firebase-firestore`, Google Sign-In via Credential Manager) — all G6-only deps
+- No TTS/audio skill needed in G6; `jetpack-compose-performance` only if lists jank
 
-## 5. Paste This To Start The Next Session (G5)
+## 5. Paste This To Start The Next Session (G6 — LAST, OPTIONAL)
 ```
 Read AGENTS.md, PROGRESS.md, SESSION_HANDOFF.md, and "festival organizer app plan.md" §24.
-Load skill: jetpack-compose-performance (lists + derivedStateOf sections).
+No skill load required (Firebase/WorkManager greenfield wiring).
 
-Execute ONLY GROUP G5 — Expenses + Ledger Safety + Reports (P9 ExpenseEntry/List + WebP receipt + grace-window edit vs RecordCorrection flow + cancel (never delete) + ActivityFeed; P10 local PDF summary + CSV export + WhatsApp share text + non-cash dashboard breakdown).
-Consume SaveExpenseUseCase + RecordCorrectionUseCase + existing Correction/Activity repos; framework PdfDocument + ACTION_SEND only, no new deps; only ≤3-flow combines.
-End with assembleDebug + testDebugUnitTest passing (add receipt-compress + export-format unit tests where JVM-feasible). Then update PROGRESS.md + SESSION_HANDOFF.md §1/§3 and stop.
+Execute ONLY GROUP G6 — Optional Cloud Sync + Admin (P11 lazy Google Sign-In in Settings only + event QR/share-code join + approval + Firestore DELTA sync via WorkManager exponential backoff + Sarvam key migration to EncryptedSharedPreferences ↔ /config/tts_settings with head-write/member-read firestore.rules; P12 role gating global_head/organizer/member + sensitive-action re-auth + close-event + 120Hz jank pass + cold-start re-check).
+HARD RULES: fresh install works with zero login (Rule #1 untouched); Room stays UI source of truth; audio never leaves the device; receipts ≤100KB only; no entity changes without a migration; only ≤3-flow combines.
+End with assembleDebug + testDebugUnitTest passing + full AGENTS.md §7 checklist. Then update PROGRESS.md + SESSION_HANDOFF.md §1/§3, tag release, and stop.
 ```
 
 ## 6. Template For Future Handoffs (overwrite §1/§3/§4/§5 each session)
