@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -42,6 +43,7 @@ import com.durgamma.festival.presentation.event.CurrentEventBanner
 fun DashboardScreen(
     onAddDonation: () -> Unit,
     onViewDonations: () -> Unit,
+    onAnnounce: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: DashboardViewModel = containerViewModel { DashboardViewModel(it) }
 ) {
@@ -108,8 +110,12 @@ fun DashboardScreen(
                     Icon(Icons.AutoMirrored.Filled.List, contentDescription = null)
                     Text("View donations")
                 }
+                Button(onClick = onAnnounce, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null)
+                    Text("Announce donations")
+                }
                 OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
-                    Text("Announcements (G4)  •  Expenses (G5)")
+                    Text("Expenses (G5)")
                 }
             }
         }

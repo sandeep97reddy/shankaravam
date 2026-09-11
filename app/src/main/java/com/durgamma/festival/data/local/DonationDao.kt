@@ -25,5 +25,12 @@ interface DonationDao {
     @Query("UPDATE donations SET status = :status, updatedAt = :now, version = version + 1, syncStatus = 'PENDING_UPLOAD' WHERE id = :id")
     suspend fun updateStatus(id: String, status: String, now: Long)
 
+    /**
+     * G4 audio-cache bookkeeping. Deliberately bumps neither version nor
+     * syncStatus — cached audio is a local derived artifact, not ledger content.
+     */
+    @Query("UPDATE donations SET audioStatus = :status, updatedAt = :now WHERE id = :id")
+    suspend fun updateAudioStatus(id: String, status: String, now: Long)
+
     // No @Delete: voided rows are flagged CANCELLED, never removed (plan §16).
 }

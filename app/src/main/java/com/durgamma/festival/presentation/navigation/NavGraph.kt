@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.durgamma.festival.presentation.announcement.AnnouncementQueueScreen
 import com.durgamma.festival.presentation.dashboard.DashboardScreen
 import com.durgamma.festival.presentation.donation.DonationEntryScreen
 import com.durgamma.festival.presentation.donation.DonationListScreen
@@ -14,6 +15,7 @@ object DurgammaRoutes {
     const val DASHBOARD = "dashboard"
     const val DONATION_ENTRY = "donation_entry"
     const val DONATIONS = "donations"
+    const val ANNOUNCEMENTS = "announcements"
 }
 
 @Composable
@@ -35,7 +37,8 @@ fun DurgammaNavGraph() {
         composable(DurgammaRoutes.DASHBOARD) {
             DashboardScreen(
                 onAddDonation = { navController.navigate(DurgammaRoutes.DONATION_ENTRY) },
-                onViewDonations = { navController.navigate(DurgammaRoutes.DONATIONS) }
+                onViewDonations = { navController.navigate(DurgammaRoutes.DONATIONS) },
+                onAnnounce = { navController.navigate(DurgammaRoutes.ANNOUNCEMENTS) }
             )
         }
         composable(DurgammaRoutes.DONATION_ENTRY) {
@@ -43,6 +46,9 @@ fun DurgammaNavGraph() {
         }
         composable(DurgammaRoutes.DONATIONS) {
             DonationListScreen(onBack = { navController.popBackStack() })
+        }
+        composable(DurgammaRoutes.ANNOUNCEMENTS) {
+            AnnouncementQueueScreen(onBack = { navController.popBackStack() })
         }
     }
 }

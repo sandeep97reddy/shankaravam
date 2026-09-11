@@ -3,9 +3,9 @@
 > Copy-paste starter + context bridge. Update ALL sections at the end of every Group session. The next session starts by reading this file + `PROGRESS.md` + plan §24 + `AGENTS.md`.
 
 ## 1. Where We Are
-- **Last completed:** `G3 — Events + Donations + Dashboard` ✅ — `assembleDebug` + 14/14 tests green, zero warnings; money-in loop fully offline
-- **Next up:** `G4 — Telugu Voice + Announcement Queue` (plan §24: P7 TTS engine + audio routing, P8 queue UI with playback controls)
-- **Current branch/status:** usable counter app (create event → save cash/item donations with haptic → live totals → list/filter/sort → detail sheet with preview text); no audio code yet
+- **Last completed:** `G4 — Telugu Voice + Announcement Queue` ✅ — `assembleDebug` + 23/23 tests green, zero warnings
+- **Next up:** `G5 — Expenses + Ledger Safety + Reports` (plan §24: P9 expense entry/list + receipts + corrections UI + activity feed, P10 PDF/CSV/WhatsApp export)
+- **Current branch/status:** full money-in + voice app (donations → Telugu/English announcements over phone/BT speaker, cloud-voice prefetch, single-play in detail sheet); no expense UI yet
 
 ## 2. Key Decisions (carry forward, do not re-litigate)
 - Package: `com.durgamma.festival`, Kotlin 2.0+, Compose BOM + Material3, Room 2.6+ w/ KSP, `StateFlow` + `WhileSubscribed(5000)`
@@ -30,25 +30,31 @@
 - G3 shared UI: `presentation/common/{ViewModels.kt (containerViewModel+factory), Derived.kt (keyed derivedTotal)}`, nav routes `DONATION_ENTRY` + `DONATIONS`
 - G3 events: `presentation/event/{EventViewModel, EventBanner.kt (CurrentEventBanner + CreateEventDialog)}`
 - G3 dashboard: `DashboardViewModel` (event + BalanceSnapshot combine, unsynced refresh), rewritten `DashboardScreen` (pinned banner, totals grid, chips, FAB, G4/G5 placeholder button)
-- G3 donations: `Donation{Entry,List,Detail}ViewModel`, `DonationEntryScreen` (cash/item form, tags incl. custom, haptic-on-save), `DonationListScreen` (search + status/tag/sort persisted, keyed animateItem, badges), `DonationDetailSheet` (details + preview + correction history), `AnnouncementPreview.kt` (`buildAnnouncementPreview` — G4 must keep signature)
+- G3 donations: `Donation{Entry,List,Detail}ViewModel`, `DonationEntryScreen` (cash/item form, tags incl. custom, haptic-on-save), `DonationListScreen` (search + status/tag/sort persisted, keyed animateItem, badges), `DonationDetailSheet` (details + preview + correction history + single-play), `AnnouncementPreview.kt` (delegates to G4 engine)
+- G4 gradle: Retrofit 2.11.0 + OkHttp 4.12.0 (explicit — transitive alone didn't resolve); INTERNET + ACCESS_NETWORK_STATE in manifest; versionName still `0.2.0-g2` (bump in G5)
+- G4 engine: `core/tts/{TeluguNumberFormatter (5000→ఐదు వేల verified), AnnouncementTemplates (TE/EN/BI), SarvamTtsClient (cacheDir/audio only), AndroidTtsClient (te-IN, AudioAttributes), DualTtsEngine (playBest/prefetch/test-line)}`, `core/audio/{AudioFocusManager (framework, minSdk 26), AudioRouteDetector (SPEAKER/BT/WIRED live)}`, `data/remote/SarvamApiService.kt` (hand-rolled JSON, no converter)
+- G4 wiring: `DonationDao.updateAudioStatus` (no version/sync bump — local artifact), `DonationRepository.updateAudioStatus`, `SessionPrefs` += queueGap/queueSort/queueLanguage/sarvamApiKey/sarvamSpeaker, `AppContainer.{audioFocus, routeDetector, ttsEngine}`
+- G4 UI: `presentation/announcement/{AnnouncementQueueViewModel (single-job transport, background prefetch, pledged toggle), AnnouncementQueueScreen (route badge + test, key/speaker/language cards, transport, tappable queue)}`, nav `ANNOUNCEMENTS`, dashboard Announce button live
+- G4 tests (23 green): + `TeluguNumberFormatterTest` (plan byte-exact examples), `AnnouncementTemplatesTest` (TE/EN/BI/material)
 
 ## 4. Gotchas For Next Session
-- Deps cached — G3 verify ~20s incremental; use `.\gradlew.bat` or dist binary at `Temp/opencode/gradle-dist/gradle-8.11.1`
-- Room v1 still frozen (no migrations, exportSchema=false) — G4 must NOT change entities; audio status is updated via existing `DonationDao.updateStatus`? NO — audio needs its own query; G4 may ADD a DAO method `updateAudioStatus` (query-only addition, no schema change, safe)
-- `buildAnnouncementPreview(donation, eventName)` signature is G4's entry point — replace amount digits with TeluguNumberFormatter, keep function
-- Donation rows already carry `audioStatus` (NOT_GENERATED default); G4 updates it to PREPARING/READY/FAILED as Sarvam cache fills
-- Material3 quirks hit: ExposedDropdownMenu needs `menuAnchor(MenuAnchorType.PrimaryNotEditable)`; only `List` (not `Add`) has AutoMirrored icon; private `@OptIn` needed per-composable
-- Load skill `telugu-tts-audio` in G4 (full file); `jetpack-compose-performance` only for queue-list perf
-- G4 needs Retrofit/OkHttp for Sarvam REST — new catalog deps (add `retrofit`, `converter-moshi`/`kotlinx-serialization`? prefer Moshi or manual JSON via org.json to avoid converter weight; skill uses Retrofit — add retrofit2 + converter-gson? keep minimal: retrofit + scalars? Sarvam returns JSON with base64 audio — manual JSONObject parse on `ResponseBody` string is simplest, zero converter dep)
+- Deps cached — G4 verify ~4s incremental; use `.\gradlew.bat` or dist binary at `Temp/opencode/gradle-dist/gradle-8.11.1`
+- Room v1 STILL frozen (no migrations) — G5 must NOT change entities either; expense/correction/activity tables already exist, receipt = local path string in `receiptPath`
+- Toolchain lesson: `kotlinx.coroutines.flow.combine` wider than 3 flows does NOT resolve here — G5 must use only ≤3-flow combines (see AnnouncementQueueViewModel nesting pattern); also add explicit OkHttp dep for any new Square lib
+- Sarvam key lives in plain SessionPrefs as DEV holder — G6 migrates to EncryptedSharedPreferences; G5 must not build on it
+- Prefetch runs inside AnnouncementQueueViewModel init (collects uiState on IO) — G5 queue-adjacent work must not duplicate prefetch loops
+- TTS singletons live in AppContainer (ttsEngine/routeDetector/audioFocus); detector.start() is owned by the queue VM — don't double-start
+- G5 needs: camera/gallery picker (ActivityResultContracts, no new dep), Bitmap→WebP compress (~100KB) via `Bitmap.compress(WEBP_LOSSY)`, PDF via framework `PdfDocument` (no dep), CSV via plain file IO, share via ACTION_SEND intent (WhatsApp text). Zero new Gradle deps expected
+- Load skill `jetpack-compose-performance` in G5 (expense list perf); no TTS skill needed
 
-## 5. Paste This To Start The Next Session (G4)
+## 5. Paste This To Start The Next Session (G5)
 ```
 Read AGENTS.md, PROGRESS.md, SESSION_HANDOFF.md, and "festival organizer app plan.md" §24.
-Load skill: telugu-tts-audio (full file).
+Load skill: jetpack-compose-performance (lists + derivedStateOf sections).
 
-Execute ONLY GROUP G4 — Telugu Voice + Announcement Queue (P7 TeluguNumberFormatter + templates + AndroidTtsClient + SarvamTtsClient with cacheDir/audio cache + DualTtsEngine + AudioFocus/RouteDetector + test-audio; P8 queue screen with Play/Pause/Resume/Stop/Replay/Skip/Prev/Next/Repeat + gap setting).
-Keep buildAnnouncementPreview() signature; add DonationDao.updateAudioStatus (query-only, no schema change); donation entry must never block on audio; zero Firebase Storage.
-End with assembleDebug + testDebugUnitTest passing (add TeluguNumberFormatter + template unit tests). Then update PROGRESS.md + SESSION_HANDOFF.md §1/§3 and stop.
+Execute ONLY GROUP G5 — Expenses + Ledger Safety + Reports (P9 ExpenseEntry/List + WebP receipt + grace-window edit vs RecordCorrection flow + cancel (never delete) + ActivityFeed; P10 local PDF summary + CSV export + WhatsApp share text + non-cash dashboard breakdown).
+Consume SaveExpenseUseCase + RecordCorrectionUseCase + existing Correction/Activity repos; framework PdfDocument + ACTION_SEND only, no new deps; only ≤3-flow combines.
+End with assembleDebug + testDebugUnitTest passing (add receipt-compress + export-format unit tests where JVM-feasible). Then update PROGRESS.md + SESSION_HANDOFF.md §1/§3 and stop.
 ```
 
 ## 6. Template For Future Handoffs (overwrite §1/§3/§4/§5 each session)

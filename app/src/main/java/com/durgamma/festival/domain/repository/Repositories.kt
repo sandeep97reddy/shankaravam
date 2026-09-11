@@ -1,6 +1,7 @@
 package com.durgamma.festival.domain.repository
 
 import com.durgamma.festival.domain.model.ActivityRecord
+import com.durgamma.festival.domain.model.AudioStatus
 import com.durgamma.festival.domain.model.Correction
 import com.durgamma.festival.domain.model.Donation
 import com.durgamma.festival.domain.model.DonationStatus
@@ -20,6 +21,8 @@ interface DonationRepository {
     fun observeById(id: String): Flow<Donation?>
     suspend fun save(donation: Donation)
     suspend fun updateStatus(id: String, status: DonationStatus, now: Long = System.currentTimeMillis())
+    /** G4 audio-cache bookkeeping — never bumps version/sync (local artifact). */
+    suspend fun updateAudioStatus(id: String, status: AudioStatus, now: Long = System.currentTimeMillis())
     suspend fun pendingSync(): List<Donation>
 }
 

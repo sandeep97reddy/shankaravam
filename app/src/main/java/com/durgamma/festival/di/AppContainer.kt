@@ -1,6 +1,11 @@
 package com.durgamma.festival.di
 
 import android.content.Context
+import com.durgamma.festival.core.audio.AudioFocusManager
+import com.durgamma.festival.core.audio.AudioRouteDetector
+import com.durgamma.festival.core.tts.AndroidTtsClient
+import com.durgamma.festival.core.tts.DualTtsEngine
+import com.durgamma.festival.core.tts.SarvamTtsClient
 import com.durgamma.festival.data.local.AppDatabase
 import com.durgamma.festival.data.local.SessionPrefs
 import com.durgamma.festival.data.repository.ActivityRepositoryImpl
@@ -56,5 +61,17 @@ class AppContainer(context: Context) {
     }
     val observeEventTotals: ObserveEventTotalsUseCase by lazy {
         ObserveEventTotalsUseCase(donationRepository, expenseRepository)
+    }
+
+    // G4 audio graph. Singletons: TTS init is expensive, MediaPlayer is exclusive.
+    val audioFocus: AudioFocusManager by lazy { AudioFocusManager(appContext) }
+    val routeDetector: AudioRouteDetector by lazy { AudioRouteDetector(appContext) }
+    val ttsEngine: DualTtsEngine by lazy {
+        DualTtsEngine(
+            appContext,
+            AndroidTtsClient(appContext),
+            SarvamTtsClient(appContext),
+            audioFocus
+        )
     }
 }

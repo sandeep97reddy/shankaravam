@@ -8,6 +8,7 @@ import com.durgamma.festival.data.local.ExpenseDao
 import com.durgamma.festival.data.local.toDomain
 import com.durgamma.festival.data.local.toEntity
 import com.durgamma.festival.domain.model.ActivityRecord
+import com.durgamma.festival.domain.model.AudioStatus
 import com.durgamma.festival.domain.model.Correction
 import com.durgamma.festival.domain.model.Donation
 import com.durgamma.festival.domain.model.DonationStatus
@@ -53,6 +54,9 @@ class DonationRepositoryImpl(private val dao: DonationDao) : DonationRepository 
 
     override suspend fun updateStatus(id: String, status: DonationStatus, now: Long) =
         withContext(Dispatchers.IO) { dao.updateStatus(id, status.name, now) }
+
+    override suspend fun updateAudioStatus(id: String, status: AudioStatus, now: Long) =
+        withContext(Dispatchers.IO) { dao.updateAudioStatus(id, status.name, now) }
 
     override suspend fun pendingSync(): List<Donation> =
         withContext(Dispatchers.IO) { dao.pendingSync().map { it.toDomain() } }

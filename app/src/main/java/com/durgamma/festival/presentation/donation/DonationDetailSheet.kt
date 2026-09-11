@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -15,14 +16,21 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.durgamma.festival.core.tts.AnnouncementLanguage
 import com.durgamma.festival.core.util.formatInr
+import com.durgamma.festival.data.local.SessionPrefs
 import com.durgamma.festival.domain.model.Donation
 import com.durgamma.festival.presentation.common.containerViewModel
+import com.durgamma.festival.presentation.common.rememberContainer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -95,11 +103,52 @@ fun DonationDetailSheet(
 
             CorrectionHistory(donationId = donation.id)
 
+            SinglePlayButton(donation = donation, eventName = eventName)
+
             OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
-                Text("Play announcement (G4)  •  Correct (G5)")
+                Text("Correct entry (G5)")
             }
             Spacer(Modifier.height(4.dp))
         }
+    }
+}
+
+/**
+ * Instant single-row playback through the DualTtsEngine (cached cloud mp3 when
+ * present, native Telugu otherwise). Stops when the sheet goes away.
+ */
+@Composable
+private fun SinglePlayButton(donation: Donation, eventName: String) {
+    val container = rememberContainer()
+    var playing by remember(donation.id) { mutableStateOf(false) }
+    val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+    DisposableEffect(donation.id) {
+        onDispose { container.ttsEngine.stopAll() }
+    }
+    val language = when (container.sessionPrefs.queueLanguage) {
+        SessionPrefs.LANG_ENGLISH -> AnnouncementLanguage.ENGLISH
+        SessionPrefs.LANG_BILINGUAL -> AnnouncementLanguage.BILINGUAL
+        else -> AnnouncementLanguage.TELUGU
+    }
+    Button(
+        onClick = {
+            if (playing) {
+                container.ttsEngine.stopAll()
+                playing = false
+            } else {
+                playing = true
+                container.ttsEngine.playBest(
+                    donation,
+                    eventName,
+                    language,
+                    onDone = { mainHandler.post { playing = false } },
+                    onError = { mainHandler.post { playing = false } }
+                )
+            }
+        },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(if (playing) "Stop preview" else "Play announcement")
     }
 }
 

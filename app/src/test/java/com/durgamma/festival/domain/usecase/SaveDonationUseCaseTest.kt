@@ -25,6 +25,11 @@ private class FakeDonationRepository : DonationRepository {
     }
 
     override suspend fun updateStatus(id: String, status: DonationStatus, now: Long) = Unit
+    override suspend fun updateAudioStatus(
+        id: String,
+        status: com.durgamma.festival.domain.model.AudioStatus,
+        now: Long
+    ) = Unit
     override suspend fun pendingSync(): List<Donation> = saved.toList()
 }
 
