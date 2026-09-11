@@ -13,6 +13,8 @@ data class DonationEntity(
     val eventId: String,
     val donorName: String,
     val pronunciationText: String?,
+    /** Pandal mic title. Default covers pre-v2 rows read by old code paths. */
+    val honorific: String = "శ్రీ",
     val amount: Double,
     val currency: String,
     val isNonCash: Boolean,

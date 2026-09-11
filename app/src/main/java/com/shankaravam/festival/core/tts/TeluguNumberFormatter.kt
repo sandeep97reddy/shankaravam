@@ -4,8 +4,13 @@ import kotlin.math.roundToLong
 
 /**
  * Cash amounts rendered as natural Telugu words (plan §12).
- * Verified examples: 5000 → "ఐదు వేల", 10016 → "పది వేల పదహారు".
- * Pure JVM — unit-tested, no Android dependency.
+ * Formats with authentic Telugu phrasing:
+ * - 101 → "నూట ఒకటి" (amounts: "నూట ఒక రూపాయి")
+ * - 116 → "నూట పదహారు రూపాయలు"
+ * - 501 → "ఐదు వందల ఒకటి" (amounts: "ఐదు వందల ఒక రూపాయి")
+ * - 1116 → "వెయ్యి నూట పదహారు రూపాయలు"
+ * - 2116 → "రెండు వేల నూట పదహారు రూపాయలు"
+ * - 5116 → "ఐదు వేల నూట పదహారు రూపాయలు"
  */
 object TeluguNumberFormatter {
 
@@ -31,25 +36,34 @@ object TeluguNumberFormatter {
             return if (rem == 0L) ten else "$ten ${ONES[rem.toInt()]}"
         }
         if (n < 1_000) {
-            val head = if (n / 100 == 1L) "వంద" else "${ONES[(n / 100).toInt()]} వందల"
-            return withRemainder(head, n % 100)
+            val q = (n / 100).toInt()
+            val rem = n % 100
+            val head = if (q == 1) {
+                if (rem == 0L) "వంద" else "నూట"
+            } else {
+                "${ONES[q]} వందల"
+            }
+            return withRemainder(head, rem)
         }
         if (n < 100_000) {
             val q = n / 1_000
+            val rem = n % 1_000
             val head = if (q == 1L) "వెయ్యి" else "${wordsForNumber(q)} వేల"
-            return withRemainder(head, n % 1_000)
+            return withRemainder(head, rem)
         }
         if (n < 10_000_000) {
             val q = n / 100_000
+            val rem = n % 100_000
             val head = if (q == 1L) "ఒక లక్ష" else "${wordsForNumber(q)} లక్షల"
-            return withRemainder(head, n % 100_000)
+            return withRemainder(head, rem)
         }
         val q = n / 10_000_000
+        val rem = n % 10_000_000
         val head = if (q == 1L) "ఒక కోటి" else "${wordsForNumber(q)} కోట్ల"
-        return withRemainder(head, n % 10_000_000)
+        return withRemainder(head, rem)
     }
 
-    /** "ఐదు వేల రూపాయలు" — paise appended only when present. */
+    /** "ఐదు వేల రూపాయలు", "నూట ఒక రూపాయి", "వెయ్యి నూట పదహారు రూపాయలు" */
     fun wordsForAmount(amount: Double): String {
         require(amount >= 0) { "negative amounts are not announced" }
         val whole = amount.toLong()
@@ -59,10 +73,19 @@ object TeluguNumberFormatter {
             rupees += 1
             paise = 0
         }
-        val base = if (rupees == 0L && paise > 0) {
-            ""
-        } else {
-            "${wordsForNumber(rupees)} రూపాయలు"
+        val base = when {
+            rupees == 0L && paise > 0 -> ""
+            rupees == 1L -> "ఒక రూపాయి"
+            rupees % 10 == 1L && rupees % 100 != 11L -> {
+                // Ends in 1 (e.g. 101, 501, 1001, 2101): "నూట ఒక రూపాయి", "ఐదు వందల ఒక రూపాయి"
+                val words = wordsForNumber(rupees)
+                if (words.endsWith("ఒకటి")) {
+                    "${words.removeSuffix("ఒకటి").trimEnd()} ఒక రూపాయి"
+                } else {
+                    "$words రూపాయలు"
+                }
+            }
+            else -> "${wordsForNumber(rupees)} రూపాయలు"
         }
         return if (paise > 0) {
             val paiseWords = "${wordsForNumber(paise)} పైసలు"

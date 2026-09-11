@@ -5,6 +5,7 @@ import com.shankaravam.festival.core.util.newRecordId
 import com.shankaravam.festival.domain.model.ActivityActions
 import com.shankaravam.festival.domain.model.ActivityRecord
 import com.shankaravam.festival.domain.model.AudioStatus
+import com.shankaravam.festival.domain.model.HONORIFIC_SRI
 import com.shankaravam.festival.domain.model.Donation
 import com.shankaravam.festival.domain.model.DonationStatus
 import com.shankaravam.festival.domain.model.SyncStatus
@@ -29,6 +30,7 @@ class SaveDonationUseCase(
         quantity: Double? = null,
         unit: String? = null,
         pronunciationText: String? = null,
+        honorific: String = HONORIFIC_SRI,
         paymentMethod: String = "Cash",
         tags: List<String> = emptyList(),
         status: DonationStatus = DonationStatus.RECEIVED,
@@ -51,6 +53,7 @@ class SaveDonationUseCase(
             eventId = eventId,
             donorName = donorName.trim(),
             pronunciationText = pronunciationText?.trim()?.ifEmpty { null },
+            honorific = honorific.trim().ifEmpty { HONORIFIC_SRI },
             amount = amount,
             isNonCash = isNonCash,
             itemDescription = itemDescription?.trim()?.ifEmpty { null },

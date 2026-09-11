@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.shankaravam.festival.data.local.SessionPrefs
 import com.shankaravam.festival.di.AppContainer
 import com.shankaravam.festival.domain.model.DonationStatus
+import com.shankaravam.festival.domain.model.HONORIFIC_SRI
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +26,7 @@ sealed interface SaveState {
 data class DonationFormState(
     val donorName: String = "",
     val pronunciation: String = "",
+    val honorific: String = HONORIFIC_SRI,
     val amountText: String = "",
     val isNonCash: Boolean = false,
     val itemDescription: String = "",
@@ -94,6 +96,7 @@ class DonationEntryViewModel(container: AppContainer) : ViewModel() {
                 quantity = f.quantityText.toDoubleOrNull(),
                 unit = f.unit.ifBlank { null },
                 pronunciationText = f.pronunciation.ifBlank { null },
+                honorific = f.honorific.ifBlank { HONORIFIC_SRI },
                 paymentMethod = f.paymentMethod,
                 tags = f.tags,
                 status = f.status,

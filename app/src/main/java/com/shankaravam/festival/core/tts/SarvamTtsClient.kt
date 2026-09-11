@@ -21,8 +21,13 @@ class SarvamTtsClient(
     private val context: Context,
     private val api: SarvamApiService = SarvamApiService.create()
 ) {
-    fun cachedFile(donationId: String): File? {
-        val file = File(audioDir(), "donation_${donationId}.mp3")
+    /**
+     * Full-sentence and roster recordings are cached separately
+     * (`donation_{id}.mp3` vs `donation_{id}_roster.mp3`) so switching
+     * announcement style never plays the wrong recording.
+     */
+    fun cachedFile(donationId: String, roster: Boolean = false): File? {
+        val file = File(audioDir(), cacheFileName(donationId, roster))
         return if (file.exists() && file.length() > 0) file else null
     }
 
@@ -30,9 +35,10 @@ class SarvamTtsClient(
         donationId: String,
         text: String,
         apiKey: String,
-        speaker: String = "meera"
+        speaker: String = "meera",
+        roster: Boolean = false
     ): File = withContext(Dispatchers.IO) {
-        cachedFile(donationId)?.let { return@withContext it }
+        cachedFile(donationId, roster)?.let { return@withContext it }
 
         val payload = JSONObject()
             .put("inputs", JSONArray().put(text))
@@ -48,11 +54,17 @@ class SarvamTtsClient(
         val bytes = Base64.decode(audioBase64, Base64.DEFAULT)
         if (bytes.isEmpty()) throw IOException("Empty audio from Sarvam")
 
-        val file = File(audioDir(), "donation_${donationId}.mp3")
+        val file = File(audioDir(), cacheFileName(donationId, roster))
         file.writeBytes(bytes)
         file
     }
 
     private fun audioDir(): File =
         File(context.cacheDir, "audio").apply { if (!exists()) mkdirs() }
+
+    companion object {
+        /** Pure filename mapping — unit-tested (no Android needed). */
+        fun cacheFileName(donationId: String, roster: Boolean): String =
+            if (roster) "donation_${donationId}_roster.mp3" else "donation_${donationId}.mp3"
+    }
 }

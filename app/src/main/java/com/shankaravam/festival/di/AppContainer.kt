@@ -80,7 +80,9 @@ class AppContainer(context: Context) {
     val ttsEngine: DualTtsEngine by lazy {
         DualTtsEngine(
             appContext,
-            AndroidTtsClient(appContext),
+            AndroidTtsClient(appContext) {
+                sessionPrefs.nativeTtsVoice to sessionPrefs.nativeTtsSpeed
+            },
             SarvamTtsClient(appContext),
             audioFocus
         )

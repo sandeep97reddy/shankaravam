@@ -3,6 +3,7 @@
 > Copy-paste starter + context bridge. Update ALL sections at the end of every Group session. The next session starts by reading this file + `PROGRESS.md` + plan §24 + `AGENTS.md`.
 
 ## 1. Where We Are
+- **Post-G6 audio iteration (uncommitted):** natural Telugu numbers (నూట/వందల), roster mode + presets, PNG chakra logo, native voice picker — plus 6 review fixes: secure-key single source (VM + queue card → `secureKeys`), roster-aware Sarvam cache (`donation_{id}_roster.mp3`, cache-first playback, roster-aware prefetch with status persistence), voice/speed applied at TTS init, reactive voice list, dead `tint` param removed. Verify: `assembleDebug` + 46/46 tests green, zero warnings.
 - **Last completed:** `G6 — Optional Cloud Sync + Admin + Hardening` ✅ — `assembleDebug` + 42/42 tests green, zero warnings, APK 25.1 MB, v1.0.0-g6. **ALL GROUPS DONE — BUILD COMPLETE.**
 - **Next up:** nothing scheduled. To go live with teams: create Firebase (Spark) project → drop in `google-services.json` → `firebase deploy --only firestore:rules` → sign in via Settings → enable sync. No code changes needed.
 - **Current branch/status:** shippable festival app (offline-first + optional cloud); committed as `ecc4e74` + tag `v1.0.0-g6` (not pushed — say the word for `git push origin master --tags`)

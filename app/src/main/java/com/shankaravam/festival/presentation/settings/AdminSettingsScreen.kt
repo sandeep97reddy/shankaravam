@@ -1,16 +1,22 @@
 package com.shankaravam.festival.presentation.settings
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -60,6 +66,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -103,6 +110,36 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
 
     fun consumeNotice() { _notice.value = null }
+
+    val nativeVoices: StateFlow<List<String>> =
+        container.ttsEngine.native.ready
+            .map { ready ->
+                if (ready) container.ttsEngine.native.getAvailableTeluguVoices() else emptyList()
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    private val _selectedVoice = MutableStateFlow(container.sessionPrefs.nativeTtsVoice)
+    val selectedVoice: StateFlow<String?> = _selectedVoice.asStateFlow()
+
+    private val _speed = MutableStateFlow(container.sessionPrefs.nativeTtsSpeed)
+    val speed: StateFlow<Float> = _speed.asStateFlow()
+
+    fun setNativeVoice(name: String?) {
+        _selectedVoice.value = name
+        container.sessionPrefs.nativeTtsVoice = name
+        if (name != null) {
+            container.ttsEngine.native.setVoiceByName(name)
+        }
+    }
+
+    fun setSpeed(s: Float) {
+        _speed.value = s
+        container.sessionPrefs.nativeTtsSpeed = s
+        container.ttsEngine.native.setSpeechRate(s)
+    }
+
+    fun testNativeSpeech() {
+        container.ttsEngine.native.speak("శ్రీ రెడబోతు సందీప్ రెడ్డి గారు, వెయ్యి నూట పదహారు రూపాయలు.")
+    }
 
     fun saveKeyLocally(key: String, speaker: String) {
         container.secureKeys.setSarvamKey(key)
@@ -240,6 +277,19 @@ fun AdminSettingsScreen(
                 onPush = { key, speaker -> viewModel.pushKey(key, speaker) },
                 onPull = { viewModel.pullKey() }
             )
+
+            val selectedVoice by viewModel.selectedVoice.collectAsState()
+            val speed by viewModel.speed.collectAsState()
+            val teluguVoices by viewModel.nativeVoices.collectAsState()
+            NativeVoiceCard(
+                voices = teluguVoices,
+                selectedVoice = selectedVoice,
+                speed = speed,
+                onSelectVoice = { viewModel.setNativeVoice(it) },
+                onSetSpeed = { viewModel.setSpeed(it) },
+                onTestVoice = { viewModel.testNativeSpeech() }
+            )
+
             if (AccessPolicy.canCloseEvent(state.role)) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -342,3 +392,77 @@ private fun VoiceKeyCard(
         }
     }
 }
+
+@Composable
+private fun NativeVoiceCard(
+    voices: List<String>,
+    selectedVoice: String?,
+    speed: Float,
+    onSelectVoice: (String?) -> Unit,
+    onSetSpeed: (Float) -> Unit,
+    onTestVoice: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Inbuilt Phone Voice (Android TTS)", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Offline Telugu voice built into Android. Select from voices installed on your device:",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (voices.isNotEmpty()) {
+                Text("Installed Telugu Voices:", style = MaterialTheme.typography.labelSmall)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = selectedVoice == null,
+                        onClick = { onSelectVoice(null) },
+                        label = { Text("Default / సిస్టమ్") }
+                    )
+                    voices.forEach { v ->
+                        val label = v.substringAfterLast("-", v.takeLast(10))
+                        FilterChip(
+                            selected = selectedVoice == v,
+                            onClick = { onSelectVoice(v) },
+                            label = { Text("Voice ($label)") }
+                        )
+                    }
+                }
+            } else {
+                Text(
+                    "Default Telugu engine active. (To download additional voices, open Android Settings → Accessibility → Text-to-speech output → Google TTS engine).",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            Text("Speech Speed / వేగం: ${String.format(java.util.Locale.US, "%.2fx", speed)}", style = MaterialTheme.typography.labelSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(0.85f, 1.0f, 1.15f).forEach { s ->
+                    FilterChip(
+                        selected = kotlin.math.abs(speed - s) < 0.05f,
+                        onClick = { onSetSpeed(s) },
+                        label = { Text("${s}x") }
+                    )
+                }
+            }
+
+            OutlinedButton(
+                onClick = onTestVoice,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Test Voice: శ్రీ రెడబోతు సందీప్ రెడ్డి గారు")
+            }
+        }
+    }
+}
+

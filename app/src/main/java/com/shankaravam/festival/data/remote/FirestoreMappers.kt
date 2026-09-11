@@ -19,6 +19,7 @@ object FirestoreMappers {
     fun donationToMap(e: DonationEntity): Map<String, Any?> = mapOf(
         "donorName" to e.donorName,
         "pronunciationText" to e.pronunciationText,
+        "honorific" to e.honorific,
         "amount" to e.amount,
         "currency" to e.currency,
         "isNonCash" to e.isNonCash,
@@ -43,6 +44,7 @@ object FirestoreMappers {
             eventId = eventId,
             donorName = donorName,
             pronunciationText = map["pronunciationText"] as? String,
+            honorific = (map["honorific"] as? String)?.ifBlank { null } ?: "శ్రీ",
             amount = (map["amount"] as? Number)?.toDouble() ?: 0.0,
             currency = map["currency"] as? String ?: "INR",
             isNonCash = map["isNonCash"] as? Boolean ?: false,

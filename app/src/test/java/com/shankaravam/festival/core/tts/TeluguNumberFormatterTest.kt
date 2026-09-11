@@ -23,13 +23,17 @@ class TeluguNumberFormatterTest {
     }
 
     @Test
-    fun hundreds_thousands_lakhs_crores() {
+    fun natural_noota_hundreds_and_thousands() {
         assertEquals("వంద", TeluguNumberFormatter.wordsForNumber(100))
-        assertEquals("వంద ఒకటి", TeluguNumberFormatter.wordsForNumber(101))
+        assertEquals("నూట ఒకటి", TeluguNumberFormatter.wordsForNumber(101))
+        assertEquals("నూట పదహారు", TeluguNumberFormatter.wordsForNumber(116))
         assertEquals("రెండు వందల", TeluguNumberFormatter.wordsForNumber(200))
+        assertEquals("రెండు వందల పదహారు", TeluguNumberFormatter.wordsForNumber(216))
         assertEquals("వెయ్యి", TeluguNumberFormatter.wordsForNumber(1000))
+        assertEquals("వెయ్యి నూట పదహారు", TeluguNumberFormatter.wordsForNumber(1116))
         assertEquals("రెండు వేల", TeluguNumberFormatter.wordsForNumber(2000))
-        assertEquals("వెయ్యి వంద", TeluguNumberFormatter.wordsForNumber(1100))
+        assertEquals("రెండు వేల నూట పదహారు", TeluguNumberFormatter.wordsForNumber(2116))
+        assertEquals("ఐదు వేల నూట పదహారు", TeluguNumberFormatter.wordsForNumber(5116))
         assertEquals("ఒక లక్ష", TeluguNumberFormatter.wordsForNumber(100_000))
         assertEquals("రెండు లక్షల", TeluguNumberFormatter.wordsForNumber(200_000))
         assertEquals("ఒక కోటి", TeluguNumberFormatter.wordsForNumber(10_000_000))
@@ -39,6 +43,11 @@ class TeluguNumberFormatterTest {
     @Test
     fun amount_appends_rupees_and_optional_paise() {
         assertEquals("ఐదు వేల రూపాయలు", TeluguNumberFormatter.wordsForAmount(5000.0))
+        assertEquals("నూట ఒక రూపాయి", TeluguNumberFormatter.wordsForAmount(101.0))
+        assertEquals("ఐదు వందల ఒక రూపాయి", TeluguNumberFormatter.wordsForAmount(501.0))
+        assertEquals("వెయ్యి నూట పదహారు రూపాయలు", TeluguNumberFormatter.wordsForAmount(1116.0))
+        assertEquals("రెండు వేల నూట పదహారు రూపాయలు", TeluguNumberFormatter.wordsForAmount(2116.0))
+        assertEquals("ఐదు వేల నూట పదహారు రూపాయలు", TeluguNumberFormatter.wordsForAmount(5116.0))
         assertEquals("వంద రూపాయలు యాభై పైసలు", TeluguNumberFormatter.wordsForAmount(100.50))
         assertEquals("యాభై పైసలు", TeluguNumberFormatter.wordsForAmount(0.50))
         assertEquals("సున్నా రూపాయలు", TeluguNumberFormatter.wordsForAmount(0.0))

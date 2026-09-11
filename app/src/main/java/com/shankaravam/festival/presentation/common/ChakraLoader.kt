@@ -9,7 +9,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -24,14 +23,15 @@ import com.shankaravam.festival.R
 import com.shankaravam.festival.core.theme.TempleGold
 
 /**
- * Rotating Vishnu Sudarshana Chakra with radiant aura.
+ * Rotating Vishnu Sudarshana Chakra photo with radiant aura.
+ * NOTE: the artwork is full-color — no tint is applied (tinting would flatten
+ * the fiery gold/red gradients into a monochrome silhouette).
  * Per jetpack-compose-performance skill: 3000ms linear spin, GPU rotationZ layer.
  */
 @Composable
 fun VishnuChakraLoader(
     modifier: Modifier = Modifier,
-    size: Dp = 96.dp,
-    tint: Color = TempleGold
+    size: Dp = 96.dp
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "ChakraSpin")
     val angle by infiniteTransition.animateFloat(
@@ -55,12 +55,11 @@ fun VishnuChakraLoader(
                 )
             )
         }
-        Icon(
+        androidx.compose.foundation.Image(
             painter = painterResource(id = R.drawable.ic_sudarshana_chakra),
             contentDescription = "Sudarshana Chakra",
-            tint = tint,
             modifier = Modifier
-                .fillMaxSize(0.75f)
+                .fillMaxSize(0.85f)
                 .graphicsLayer { rotationZ = angle }
         )
     }

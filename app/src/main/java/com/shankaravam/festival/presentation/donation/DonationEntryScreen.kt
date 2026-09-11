@@ -16,17 +16,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Notes
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CurrencyRupee
 import androidx.compose.material.icons.filled.Inventory2
-import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Payment
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.Verified
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.sp
 import com.shankaravam.festival.core.i18n.appStrings
 import com.shankaravam.festival.core.theme.TempleSaffron
 import com.shankaravam.festival.domain.model.DonationStatus
+import com.shankaravam.festival.domain.model.HONORIFICS
 import com.shankaravam.festival.presentation.common.ModernTextField
 import com.shankaravam.festival.presentation.common.QuickAmountRow
 import com.shankaravam.festival.presentation.common.TempleAppBar
@@ -143,8 +144,27 @@ fun DonationEntryScreen(
                 isRequired = true,
                 leadingIcon = Icons.Filled.Person,
                 singleLine = true,
-                placeholder = if (strings.languageCode == "te") "ఉదా: రమేష్ రావు" else "e.g. Ramesh Rao"
+                placeholder = if (strings.languageCode == "te") "ఉదా: ఆర్. సందీప్ రెడ్డి" else "e.g. R. Sandeep Reddy"
             )
+
+            // 1b. Pandal honorific (శ్రీ / శ్రీమతి / కుమారి) — spoken before the name.
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    if (strings.languageCode == "te") "గౌరవ సంబోధన" else "Honorific",
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(end = 4.dp)
+                )
+                HONORIFICS.forEach { option ->
+                    FilterChip(
+                        selected = form.honorific == option,
+                        onClick = { viewModel.update { it.copy(honorific = option) } },
+                        label = { Text(option) }
+                    )
+                }
+            }
 
             // 2. Telugu Pronunciation (For speaker)
             ModernTextField(
@@ -337,7 +357,7 @@ fun DonationEntryScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.VolumeUp,
+                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
                             contentDescription = null,
                             tint = if (form.announcementEnabled) TempleSaffron else MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -359,7 +379,7 @@ fun DonationEntryScreen(
                 value = form.notes,
                 onValueChange = { v -> viewModel.update { it.copy(notes = v) } },
                 label = strings.notesLabel,
-                leadingIcon = Icons.Filled.Notes,
+                leadingIcon = Icons.AutoMirrored.Filled.Notes,
                 singleLine = false,
                 minLines = 2
             )

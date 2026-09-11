@@ -8,6 +8,8 @@ data class Donation(
     val eventId: String,
     val donorName: String,
     val pronunciationText: String? = null,
+    /** Pandal honorific: శ్రీ / శ్రీమతి / కుమారి. Never blank — defaults to శ్రీ. */
+    val honorific: String = HONORIFIC_SRI,
     val amount: Double = 0.0,
     val currency: String = "INR",
     val isNonCash: Boolean = false,
@@ -32,3 +34,10 @@ data class Donation(
         get() = !isNonCash &&
             (status == DonationStatus.RECEIVED || status == DonationStatus.CONFIRMED)
 }
+
+const val HONORIFIC_SRI = "శ్రీ"
+const val HONORIFIC_SRIMATI = "శ్రీమతి"
+const val HONORIFIC_KUMARI = "కుమారి"
+
+/** Pandal mic choices, in display order. */
+val HONORIFICS = listOf(HONORIFIC_SRI, HONORIFIC_SRIMATI, HONORIFIC_KUMARI)

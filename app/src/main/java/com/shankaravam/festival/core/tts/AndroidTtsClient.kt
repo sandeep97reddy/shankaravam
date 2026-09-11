@@ -16,7 +16,15 @@ import java.util.concurrent.ConcurrentHashMap
  * AudioAttributes (not the deprecated stream-type param) route speech to
  * STREAM_MUSIC so Bluetooth amplifiers just work.
  */
-class AndroidTtsClient(context: Context) : TextToSpeech.OnInitListener {
+class AndroidTtsClient(
+    context: Context,
+    /**
+     * Saved voice settings, applied once the engine finishes init so a
+     * chosen voice/speed survives app restarts (not just live changes).
+     * Returns (voiceNameOrNull, speechRate).
+     */
+    private val savedSettings: (() -> Pair<String?, Float>)? = null
+) : TextToSpeech.OnInitListener {
 
     private var tts: TextToSpeech? = null
 
@@ -40,9 +48,16 @@ class AndroidTtsClient(context: Context) : TextToSpeech.OnInitListener {
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
             )
-            val result = engine.setLanguage(Locale.Builder().setLanguage("te").setRegion("IN").build())
-            _ready.value = result != TextToSpeech.LANG_MISSING_DATA &&
-                result != TextToSpeech.LANG_NOT_SUPPORTED
+        val result = engine.setLanguage(Locale.Builder().setLanguage("te").setRegion("IN").build())
+        _ready.value = result != TextToSpeech.LANG_MISSING_DATA &&
+            result != TextToSpeech.LANG_NOT_SUPPORTED
+        // Re-apply the user's saved voice + speed (Admin choices persist here).
+        runCatching {
+            savedSettings?.invoke()?.let { (voiceName, rate) ->
+                setSpeechRate(rate)
+                if (voiceName != null) setVoiceByName(voiceName)
+            }
+        }
             engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) = Unit
                 override fun onDone(utteranceId: String?) {
@@ -86,6 +101,35 @@ class AndroidTtsClient(context: Context) : TextToSpeech.OnInitListener {
     fun stop() {
         tts?.stop()
         pending.clear()
+    }
+
+    /** Returns all available Telugu voices installed on the device (e.g. Google/Samsung TTS). */
+    fun getAvailableTeluguVoices(): List<String> {
+        val engine = tts ?: return emptyList()
+        return runCatching {
+            engine.voices
+                ?.filter { it.locale.language == "te" || it.name.contains("te-in", ignoreCase = true) }
+                ?.map { it.name }
+                ?: emptyList()
+        }.getOrDefault(emptyList())
+    }
+
+    /** Sets the active native voice by name. */
+    fun setVoiceByName(voiceName: String): Boolean {
+        val engine = tts ?: return false
+        return runCatching {
+            val voice = engine.voices?.firstOrNull { it.name == voiceName } ?: return false
+            engine.voice = voice
+            true
+        }.getOrDefault(false)
+    }
+
+    fun setSpeechRate(rate: Float) {
+        runCatching { tts?.setSpeechRate(rate.coerceIn(0.5f, 2.0f)) }
+    }
+
+    fun setPitch(pitch: Float) {
+        runCatching { tts?.setPitch(pitch.coerceIn(0.5f, 2.0f)) }
     }
 
     fun shutdown() {

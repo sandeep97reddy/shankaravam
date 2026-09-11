@@ -59,6 +59,22 @@ class SessionPrefs(context: Context) {
         get() = prefs.getString(KEY_QUEUE_LANG, LANG_TELUGU) ?: LANG_TELUGU
         set(value) = prefs.edit().putString(KEY_QUEUE_LANG, value).apply()
 
+    var nativeTtsVoice: String?
+        get() = prefs.getString(KEY_NATIVE_VOICE, null)
+        set(value) = prefs.edit().apply { if (value == null) remove(KEY_NATIVE_VOICE) else putString(KEY_NATIVE_VOICE, value) }.apply()
+
+    var nativeTtsSpeed: Float
+        get() = prefs.getFloat(KEY_NATIVE_SPEED, 1.0f)
+        set(value) = prefs.edit().putFloat(KEY_NATIVE_SPEED, value).apply()
+
+    var queueRosterMode: Boolean
+        get() = prefs.getBoolean(KEY_QUEUE_ROSTER_MODE, true)
+        set(value) = prefs.edit().putBoolean(KEY_QUEUE_ROSTER_MODE, value).apply()
+
+    var queueFestivalPreset: String
+        get() = prefs.getString(KEY_QUEUE_PRESET, "VINAYAKA_CHAVITHI") ?: "VINAYAKA_CHAVITHI"
+        set(value) = prefs.edit().putString(KEY_QUEUE_PRESET, value).apply()
+
     /** DEV holder for the Sarvam key so G4 is testable without G6 cloud. */
     var sarvamApiKey: String
         get() = prefs.getString(KEY_SARVAM, "") ?: ""
@@ -127,6 +143,10 @@ class SessionPrefs(context: Context) {
         private const val KEY_QUEUE_LANG = "queue_language"
         private const val KEY_SARVAM = "sarvam_api_key"
         private const val KEY_SPEAKER = "sarvam_speaker"
+        private const val KEY_NATIVE_VOICE = "native_tts_voice"
+        private const val KEY_NATIVE_SPEED = "native_tts_speed"
+        private const val KEY_QUEUE_ROSTER_MODE = "queue_roster_mode"
+        private const val KEY_QUEUE_PRESET = "queue_festival_preset"
         private const val KEY_DEVICE = "device_id"
         private const val KEY_SYNC_ENABLED = "cloud_sync_enabled"
         private const val KEY_LAST_SYNC = "last_sync_"

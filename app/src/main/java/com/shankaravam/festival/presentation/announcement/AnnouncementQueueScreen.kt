@@ -1,6 +1,8 @@
 package com.shankaravam.festival.presentation.announcement
 
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -53,6 +55,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.shankaravam.festival.core.audio.displayName
 import com.shankaravam.festival.core.theme.DeepMaroon
 import com.shankaravam.festival.core.theme.TempleGold
@@ -110,6 +113,8 @@ fun AnnouncementQueueScreen(
                     onPrevious = { viewModel.previous() },
                     onReplay = { viewModel.replay() },
                     onToggleRepeat = { viewModel.toggleRepeat() },
+                    onToggleRoster = { viewModel.toggleRosterMode() },
+                    onPreset = { viewModel.setFestivalPreset(it) },
                     onGap = { viewModel.setGap(it) },
                     onSort = { viewModel.setSort(it) },
                     onLanguage = { viewModel.setLanguage(it) },
@@ -182,7 +187,8 @@ private fun RouteCard(
 private fun VoiceSettingsCard() {
     val container = rememberContainer()
     val prefs = remember { container.sessionPrefs }
-    var key by remember { mutableStateOf(prefs.sarvamApiKey) }
+    val secureKeys = remember { container.secureKeys }
+    var key by remember { mutableStateOf(secureKeys.getSarvamKey()) }
     var speaker by remember { mutableStateOf(prefs.sarvamSpeaker) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -190,7 +196,7 @@ private fun VoiceSettingsCard() {
             Text("Voice", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             OutlinedTextField(
                 value = key,
-                onValueChange = { key = it; prefs.sarvamApiKey = it },
+                onValueChange = { key = it; secureKeys.setSarvamKey(it) },
                 label = { Text("Sarvam API key (optional)") },
                 placeholder = { Text("Empty = offline voice") },
                 singleLine = true,
@@ -208,7 +214,7 @@ private fun VoiceSettingsCard() {
                 }
             }
             Text(
-                "Cloud audio is cached on this device only — never uploaded. Key moves to secure storage in G6.",
+                "Cloud audio is cached on this device only — never uploaded. Key is stored encrypted.",
                 style = MaterialTheme.typography.bodySmall
             )
         }
@@ -226,6 +232,8 @@ private fun TransportCard(
     onPrevious: () -> Unit,
     onReplay: () -> Unit,
     onToggleRepeat: () -> Unit,
+    onToggleRoster: () -> Unit,
+    onPreset: (String) -> Unit,
     onGap: (Int) -> Unit,
     onSort: (String) -> Unit,
     onLanguage: (String) -> Unit,
@@ -286,6 +294,52 @@ private fun TransportCard(
                     )
                 }
             }
+
+            // Announcement Style Toggle (Roster vs Full)
+            Text("Announcement Style / శైలి", style = MaterialTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = state.rosterMode,
+                    onClick = onToggleRoster,
+                    label = { Text("జాబితా శైలి (Roster Mode)") }
+                )
+                FilterChip(
+                    selected = !state.rosterMode,
+                    onClick = onToggleRoster,
+                    label = { Text("పూర్తి వాక్యాలు (Full)") }
+                )
+            }
+
+            // Festival Opening Preset (when in roster mode)
+            if (state.rosterMode) {
+                Text(
+                    if (state.festivalPresetAuto) "Festival Opening / ప్రారంభ ప్రకటన (auto • ఆటో)"
+                    else "Festival Opening / ప్రారంభ ప్రకటన",
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        "VINAYAKA_CHAVITHI" to "వినాయక చవితి",
+                        "KANAKA_DURGAMMA" to "కనకదుర్గమ్మ",
+                        "SRI_RAMA_NAVAMI" to "శ్రీరామనవమి",
+                        "HANUMAN_JAYANTHI" to "హనుమాన్ జయంతి",
+                        "MAHA_SHIVARATRI" to "మహా శివరాత్రి",
+                        "TEMPLE_ANNADANAM" to "ఆలయ అన్నదానం"
+                    ).forEach { (key, label) ->
+                        FilterChip(
+                            selected = state.festivalPreset == key,
+                            onClick = { onPreset(key) },
+                            label = { Text(label, fontSize = 12.sp) }
+                        )
+                    }
+                }
+            }
+
             Text("Pause between announcements", style = MaterialTheme.typography.labelLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(2, 5, 10).forEach { gap ->

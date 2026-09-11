@@ -10,6 +10,7 @@ import com.shankaravam.festival.domain.model.Event
 import com.shankaravam.festival.domain.model.EventStatus
 import com.shankaravam.festival.domain.model.Expense
 import com.shankaravam.festival.domain.model.ExpenseStatus
+import com.shankaravam.festival.domain.model.HONORIFIC_SRI
 import com.shankaravam.festival.domain.model.SyncStatus
 import com.shankaravam.festival.domain.model.decodeEnum
 
@@ -36,7 +37,9 @@ fun Event.toEntity() = EventEntity(
 
 fun DonationEntity.toDomain() = Donation(
     id = id, eventId = eventId, donorName = donorName,
-    pronunciationText = pronunciationText, amount = amount, currency = currency,
+    pronunciationText = pronunciationText,
+    honorific = honorific.ifBlank { HONORIFIC_SRI },
+    amount = amount, currency = currency,
     isNonCash = isNonCash, itemDescription = itemDescription,
     quantity = quantity, unit = unit, paymentMethod = paymentMethod, tags = tags,
     status = decodeEnum(status, DonationStatus.RECEIVED),
@@ -49,7 +52,9 @@ fun DonationEntity.toDomain() = Donation(
 
 fun Donation.toEntity() = DonationEntity(
     id = id, eventId = eventId, donorName = donorName,
-    pronunciationText = pronunciationText, amount = amount, currency = currency,
+    pronunciationText = pronunciationText,
+    honorific = honorific.ifBlank { HONORIFIC_SRI },
+    amount = amount, currency = currency,
     isNonCash = isNonCash, itemDescription = itemDescription,
     quantity = quantity, unit = unit, paymentMethod = paymentMethod, tags = tags,
     status = status.name, announcementEnabled = announcementEnabled,

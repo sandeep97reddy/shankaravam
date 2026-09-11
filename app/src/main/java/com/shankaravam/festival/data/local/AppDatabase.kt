@@ -5,10 +5,14 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 /**
- * G2 schema v1. Room is the single source of truth for the UI (AGENTS.md Rule #1).
+ * Room is the single source of truth for the UI (AGENTS.md Rule #1).
  * exportSchema=false: schema snapshots start when the first migration ships (post-G5).
+ *
+ * v2: donations.honorific (pandal mic title — శ్రీ/శ్రీమతి/కుమారి, default శ్రీ).
  */
 @Database(
     entities = [
@@ -18,7 +22,7 @@ import androidx.room.TypeConverters
         CorrectionEntity::class,
         ActivityEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -32,7 +36,17 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         const val NAME = "shankaravam.db"
 
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE donations ADD COLUMN honorific TEXT NOT NULL DEFAULT 'శ్రీ'"
+                )
+            }
+        }
+
         fun build(context: Context): AppDatabase =
-            Room.databaseBuilder(context, AppDatabase::class.java, NAME).build()
+            Room.databaseBuilder(context, AppDatabase::class.java, NAME)
+                .addMigrations(MIGRATION_1_2)
+                .build()
     }
 }

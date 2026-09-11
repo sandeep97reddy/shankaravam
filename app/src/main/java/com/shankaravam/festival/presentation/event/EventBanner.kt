@@ -296,7 +296,7 @@ private fun CreateEventModernDialog(
                     value = location,
                     onValueChange = { location = it },
                     label = strings.locationLabel,
-                    placeholder = if (strings.languageCode == "te") "ఉదా: మెయిన్ రోడ్డు మండపం" else "e.g. Main Road Pandal",
+                    placeholder = if (strings.languageCode == "te") "ఉదా: కొట్లగడ్డ / మెయిన్ రోడ్డు" else "e.g. Kotlagadda / Main Road",
                     leadingIcon = Icons.Filled.LocationOn,
                     singleLine = true
                 )

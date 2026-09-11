@@ -40,7 +40,7 @@ fun SplashScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        VishnuChakraLoader(size = 120.dp, tint = TempleGold)
+        VishnuChakraLoader(size = 120.dp)
         Spacer(Modifier.height(20.dp))
         Text(
             text = stringResource(R.string.app_name),

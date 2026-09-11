@@ -27,25 +27,32 @@ class DualTtsEngine(
 
     val nativeReady: StateFlow<Boolean> = native.ready
 
-    fun cachedFile(donationId: String): File? = sarvam.cachedFile(donationId)
+    fun cachedFile(donationId: String, roster: Boolean = false): File? =
+        sarvam.cachedFile(donationId, roster)
 
     /**
      * Best-effort background caching. Reports PREPARING/READY/FAILED through
      * [onStatus] (persisted by the caller); returns the file or null.
+     * [roster] selects the roster-line recording vs the full sentence.
      */
     suspend fun ensureCached(
         donation: Donation,
         eventName: String,
         language: AnnouncementLanguage,
         apiKey: String,
-        onStatus: suspend (AudioStatus) -> Unit
+        onStatus: suspend (AudioStatus) -> Unit,
+        roster: Boolean = false
     ): File? {
-        sarvam.cachedFile(donation.id)?.let { return it }
+        sarvam.cachedFile(donation.id, roster)?.let { return it }
         if (apiKey.isBlank()) return null
         onStatus(AudioStatus.PREPARING)
         return try {
-            val text = buildDonationAnnouncement(donation, eventName, language)
-            val file = sarvam.getOrGenerateAudio(donation.id, text, apiKey)
+            val text = if (roster) {
+                buildRosterItemAnnouncement(donation, language)
+            } else {
+                buildDonationAnnouncement(donation, eventName, language)
+            }
+            val file = sarvam.getOrGenerateAudio(donation.id, text, apiKey, roster = roster)
             onStatus(AudioStatus.READY)
             file
         } catch (_: Exception) {
@@ -78,6 +85,30 @@ class DualTtsEngine(
         } else {
             speakNative(buildDonationAnnouncement(donation, eventName, language), onDone, onError)
         }
+    }
+
+    /** Plays a crisp roster line: cloud recording when cached, else native TTS. */
+    fun playRosterItem(
+        donation: Donation,
+        language: AnnouncementLanguage,
+        onDone: () -> Unit,
+        onError: () -> Unit
+    ) {
+        val cached = sarvam.cachedFile(donation.id, roster = true)
+        if (cached != null) {
+            playFile(cached, onDone, onError)
+        } else {
+            speakNative(buildRosterItemAnnouncement(donation, language), onDone, onError)
+        }
+    }
+
+    /** Speaks opening intro or closing outro phrase over the audio focus channel. */
+    fun speakPhrase(
+        text: String,
+        onDone: () -> Unit,
+        onError: () -> Unit
+    ) {
+        speakNative(text, onDone, onError)
     }
 
     fun playFile(file: File, onDone: () -> Unit, onError: () -> Unit) {

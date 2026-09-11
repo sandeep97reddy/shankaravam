@@ -19,16 +19,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Notes
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CurrencyRupee
 import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Payment
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Store
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -333,7 +333,7 @@ fun ExpenseEntryScreen(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Icon(Icons.Filled.ReceiptLong, contentDescription = null, tint = CrimsonRose)
+                                    Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null, tint = CrimsonRose)
                                     Text(
                                         "${receipt.fileName} (~${receipt.sizeKb} KB)",
                                         style = MaterialTheme.typography.bodyMedium,
@@ -354,7 +354,7 @@ fun ExpenseEntryScreen(
                 value = form.notes,
                 onValueChange = { v -> viewModel.update { it.copy(notes = v) } },
                 label = strings.notesLabel,
-                leadingIcon = Icons.Filled.Notes,
+                leadingIcon = Icons.AutoMirrored.Filled.Notes,
                 singleLine = false,
                 minLines = 2
             )
@@ -379,7 +379,7 @@ fun ExpenseEntryScreen(
                         modifier = Modifier.size(20.dp).padding(end = 8.dp)
                     )
                 }
-                Icon(Icons.Filled.ReceiptLong, contentDescription = null)
+                Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null)
                 Spacer(Modifier.size(8.dp))
                 Text(
                     text = strings.saveExpenseAction,
