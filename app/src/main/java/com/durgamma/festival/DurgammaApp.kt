@@ -1,9 +1,17 @@
 package com.durgamma.festival
 
 import android.app.Application
+import com.durgamma.festival.di.AppContainer
 
 /**
- * G1 application shell. Holds no singletons yet — G2 adds Room database,
- * G4 adds TTS engine. Kept so the manifest has a stable entry point.
+ * Application shell. Owns the manual [AppContainer]; G4 adds the TTS engine here.
  */
-class DurgammaApp : Application()
+class DurgammaApp : Application() {
+    lateinit var container: AppContainer
+        private set
+
+    override fun onCreate() {
+        super.onCreate()
+        container = AppContainer(this)
+    }
+}

@@ -3,9 +3,9 @@
 > Copy-paste starter + context bridge. Update ALL sections at the end of every Group session. The next session starts by reading this file + `PROGRESS.md` + plan §24 + `AGENTS.md`.
 
 ## 1. Where We Are
-- **Last completed:** `G1 — Foundation Shell` ✅ — `assembleDebug` BUILD SUCCESSFUL, `app-debug.apk` 18.2 MB
-- **Next up:** `G2 — Offline Data Core` (plan §24: P3 Room layer + P4 domain/repos/use cases)
-- **Current branch/status:** scaffold + theme + splash + placeholder dashboard all compile; no Room/Firebase code yet
+- **Last completed:** `G2 — Offline Data Core` ✅ — `assembleDebug` + `testDebugUnitTest` (14/14, 0 failures) green, zero warnings
+- **Next up:** `G3 — Events + Donations + Dashboard` (plan §24: P5 event mgmt + live dashboard, P6 donation entry/list/detail/filter)
+- **Current branch/status:** Room v1 (5 tables) + 5 repos + 5 use cases + manual AppContainer wired in DurgammaApp; UI still G1 placeholder
 
 ## 2. Key Decisions (carry forward, do not re-litigate)
 - Package: `com.durgamma.festival`, Kotlin 2.0+, Compose BOM + Material3, Room 2.6+ w/ KSP, `StateFlow` + `WhileSubscribed(5000)`
@@ -21,22 +21,30 @@
 - G1 scaffold: `settings.gradle.kts`, `build.gradle.kts`, `gradle.properties`, `gradle/libs.versions.toml`, `gradlew`/`gradlew.bat` + `gradle/wrapper/*`, `local.properties`, `app/build.gradle.kts`, `app/proguard-rules.pro`, `.gitignore`, `app/.gitignore`
 - G1 app code: `MainActivity.kt`, `DurgammaApp.kt`, `core/theme/{Color,Type,Shape,Theme}.kt`, `presentation/{navigation/NavGraph,splash/SplashScreen,dashboard/DashboardScreen,common/{ChakraLoader,TempleAppBar,CurrencyTextField}}.kt`
 - G1 res: `AndroidManifest.xml`, `res/{values/{strings,themes,colors},drawable/{ic_sudarshana_chakra,ic_launcher_foreground},mipmap-anydpi-v26/{ic_launcher,ic_launcher_round}}.xml`
+- G2 gradle: Room 2.6.1 + KSP applied, `room-runtime/ktx/compiler`, junit + kotlin-test + coroutines-test(1.8.1); versionName `0.2.0-g2`
+- G2 data: `data/local/{Event,Donation,Expense,Correction,Activity}Entity.kt`, `Converters.kt` (char-31 separator), `{Event,Donation,Expense,Correction,Activity}Dao.kt`, `AppDatabase.kt` (v1, exportSchema=false), `EntityMappers.kt`
+- G2 domain: `domain/model/{Enums,Event,Donation,Expense,Correction,Activity}.kt`, `domain/repository/Repositories.kt`, `domain/usecase/{SaveDonation,SaveExpense,RecordCorrection,CalculateBalance (BalanceSnapshot),ObserveEventTotals}UseCase.kt`
+- G2 di/app: `di/AppContainer.kt`, `DurgammaApp` owns container; `core/util/{Outcome,Formatters,AppIds}.kt`
+- G2 tests (14 green): `ConvertersTest`, `CalculateBalanceTest`, `SaveDonationUseCaseTest`, `RecordCorrectionUseCaseTest` (fakes included)
 
 ## 4. Gotchas For Next Session
-- Slow network made first Gradle/dependency download take ~50 min total; all deps now cached in `~/.gradle` — G2 builds will be ~2–3 min incremental; prefer `.\gradlew.bat` (wrapper dist auto-downloads once) or the extracted dist binary
-- AAPT requires launcher icons: adaptive `mipmap-anydpi-v26` + foreground/background now exist — never delete; pre-API-26 fallback not needed (minSdk 26)
-- KSP + Room deps NOT yet in `app/build.gradle.kts` — G2 must add `alias(libs.plugins.ksp)`, `room-runtime/compiler/ktx` to catalog + module
-- Splash budget constant: `SPLASH_TIMEOUT_MS = 1400L` in `SplashScreen.kt` — G3+ must keep ≤1500ms
-- Load skill `jetpack-compose-performance` in G2 (Room-as-Source-of-Truth section); do NOT pull `telugu-tts-audio` until G4
+- Deps cached — G2 full verify took ~3 min; use `.\gradlew.bat` or the extracted dist binary at `Temp/opencode/gradle-dist/gradle-8.11.1`
+- Room v1 has NO migrations and exportSchema=false — G3 must NOT change entity columns; new queries only (DAO additions are safe). Schema changes wait for post-G5
+- DAOs expose newest-first Flows only — G3 sorting/filtering should be added as DAO queries (preferred) or in-memory for small lists
+- `SaveDonationUseCase` defaults: status=RECEIVED, audio=NOT_GENERATED, sync=PENDING_UPLOAD; validation rejects blank donor / negative / cash-zero-without-item
+- `RecordCorrectionUseCase` never touches the target row (invariant) — G5 builds its UI on this
+- KSP+Room stable on Kotlin 2.0.21; do not bump Kotlin/Room versions mid-build
+- Load skill `jetpack-compose-performance` in G3 (keyed LazyColumn + animateItem + derivedStateOf); do NOT pull `telugu-tts-audio` until G4
 
-## 5. Paste This To Start The Next Session (G2)
+## 5. Paste This To Start The Next Session (G3)
 ```
 Read AGENTS.md, PROGRESS.md, SESSION_HANDOFF.md, and "festival organizer app plan.md" §24.
-Load skill: jetpack-compose-performance (Room + StateFlow sections).
+Load skill: jetpack-compose-performance (lists + derivedStateOf sections).
 
-Execute ONLY GROUP G2 — Offline Data Core (P3 Room entities/DAOs/DB + P4 domain/repos/use cases).
-Do not start G3 (no UI changes beyond wiring-free ViewModel-ready repos).
-End with assembleDebug + testDebugUnitTest passing. Then update PROGRESS.md + SESSION_HANDOFF.md §1/§3 and stop.
+Execute ONLY GROUP G3 — Events + Donations + Dashboard (P5 event selector/creator + live BalanceSnapshot dashboard, P6 donation entry/list/detail/sort-filter).
+Consume AppContainer repos + SaveDonationUseCase + ObserveEventTotalsUseCase; single uiState StateFlow per ViewModel; keyed LazyColumn + animateItem.
+Do not start G4 (no TTS/audio code; announcement preview TEXT only).
+End with assembleDebug passing + airplane-mode counter walkthrough. Then update PROGRESS.md + SESSION_HANDOFF.md §1/§3 and stop.
 ```
 
 ## 6. Template For Future Handoffs (overwrite §1/§3/§4/§5 each session)
