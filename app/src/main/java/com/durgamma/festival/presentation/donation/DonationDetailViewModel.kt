@@ -8,6 +8,8 @@ import com.durgamma.festival.domain.model.Correction
 import com.durgamma.festival.domain.model.CorrectionTargetType
 import com.durgamma.festival.domain.model.Donation
 import com.durgamma.festival.domain.model.SyncStatus
+import com.durgamma.festival.domain.model.AccessPolicy
+import com.durgamma.festival.domain.model.roleOf
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -30,8 +32,11 @@ class DonationDetailViewModel(
         newAmount: Double,
         reason: String,
         actor: String = ""
-    ): Outcome<Correction?> =
-        container.correctRecord(
+    ): Outcome<Correction?> {
+        if (!AccessPolicy.canCorrect(roleOf(container.sessionPrefs.myRole(donation.eventId)))) {
+            return Outcome.Err("Fixing entries needs a collector role.")
+        }
+        return container.correctRecord(
             eventId = donation.eventId,
             targetRecordId = donation.id,
             targetType = CorrectionTargetType.DONATION,
@@ -51,4 +56,5 @@ class DonationDetailViewModel(
                 )
             )
         }
+    }
 }

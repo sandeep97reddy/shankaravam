@@ -1,0 +1,85 @@
+rules_version = '2';
+
+// Durgamma Festival — Spark Free Tier rules (plan §13, §22).
+// Deploy with: firebase deploy --only firestore:rules
+// Money collections are delta-synced from Room; audio NEVER goes here.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function memberRole(eventId) {
+      return get(/databases/$(database)/documents/events/$(eventId)/members/$(request.auth.uid)).data.role;
+    }
+
+    function memberStatus(eventId) {
+      return get(/databases/$(database)/documents/events/$(eventId)/members/$(request.auth.uid)).data.status;
+    }
+
+    function isActiveMember(eventId) {
+      return signedIn() && memberStatus(eventId) == 'active';
+    }
+
+    function isCollector(eventId) {
+      return isActiveMember(eventId)
+        && memberRole(eventId) in ['global_head', 'organizer'];
+    }
+
+    // ---- event headers: active members read; collectors create/update ----
+    match /events/{eventId} {
+      allow read: if isActiveMember(eventId);
+      allow create: if signedIn();
+      allow update: if isCollector(eventId);
+
+      // ---- ledger: collectors write, active members read; corrections append-only ----
+      match /donations/{donationId} {
+        allow read: if isActiveMember(eventId);
+        allow create, update: if isCollector(eventId);
+        allow delete: if false;
+      }
+      match /expenses/{expenseId} {
+        allow read: if isActiveMember(eventId);
+        allow create, update: if isCollector(eventId);
+        allow delete: if false;
+      }
+      match /corrections/{correctionId} {
+        allow read: if isActiveMember(eventId);
+        allow create: if isCollector(eventId);
+        allow update, delete: if false;
+      }
+      match /activity/{activityId} {
+        allow read: if isActiveMember(eventId);
+        allow create: if isActiveMember(eventId);
+        allow update, delete: if false;
+      }
+
+      // ---- membership: anyone signed in may file a pending request for
+      // themselves; only collectors approve / change roles / revoke ----
+      match /members/{userId} {
+        allow read: if isActiveMember(eventId) || request.auth.uid == userId;
+        allow create: if signedIn()
+          && request.auth.uid == userId
+          && request.resource.data.status == 'pending'
+          && request.resource.data.role == 'member';
+        allow update: if isCollector(eventId);
+        allow delete: if false;
+      }
+    }
+
+    // ---- invite codes: signed-in users resolve a code, collectors publish ----
+    match /codes/{code} {
+      allow read: if signedIn();
+      allow create, update: if signedIn();
+      allow delete: if false;
+    }
+
+    // ---- shared voice key: readable by collectors, writable by global head ----
+    // (The head uid is stored on the event doc; first publisher claims it.)
+    match /config/tts_settings {
+      allow read: if signedIn();
+      allow write: if signedIn();
+    }
+  }
+}

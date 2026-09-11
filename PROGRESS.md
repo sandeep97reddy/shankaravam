@@ -3,8 +3,8 @@
 > Single source of truth for build progress. Update this file at the END of every Group session, in the same task as the code changes. Stale rows mislead the next session.
 
 ## Current Pointer
-- **Status:** G5 done ✅ — offline app COMPLETE (expenses + ledger safety + reports)
-- **Next session:** `G6 — Optional Cloud Sync + Admin` (last, optional)
+- **Status:** ALL GROUPS DONE ✅ — v1.0.0-g6, APK 25.1 MB, 42/42 tests, zero warnings
+- **Next session:** none scheduled — app is shippable offline; cloud goes live on `google-services.json` + `firestore.rules` deploy
 - **Plan:** `festival organizer app plan.md` §24 (6 groups, 1 group = 1 session)
 - **Handoff details:** see `SESSION_HANDOFF.md`
 
@@ -16,15 +16,15 @@
 | G3 | Events + Donations + Dashboard (first usable app) | ✅ done | `assembleDebug` + 14/14 tests green, zero warnings; counter loop works offline | Money-in loop live |
 | G4 | Telugu Voice + Announcement Queue | ✅ done | `assembleDebug` + 23/23 tests green, zero warnings | Native te-IN + Sarvam `cacheDir/audio/` |
 | G5 | Expenses + Ledger Safety + Reports (offline complete) | ✅ done | `assembleDebug` + 31/31 tests green, zero warnings | PDF/CSV/WhatsApp all local |
-| G6 | Optional Cloud Sync + Admin + Hardening (last) | 🟡 next | Zero-login fresh install still works, delta sync + backoff | Only networked code |
+| G6 | Optional Cloud Sync + Admin + Hardening (last) | ✅ done | `assembleDebug` + 42/42 tests green; offline default untouched | Live on `google-services.json` drop-in |
 
 Legend: ⬜ todo · 🟡 in_progress · ✅ done · ⏭️ skipped (G6 may ship without)
 
-## Non-Negotiables (check every group)
-- [ ] Offline-first: fresh install works with zero login, Room = UI source of truth
-- [ ] Free tier: zero audio in Firebase Storage, delta sync only, receipts WebP ~100KB
-- [ ] Non-destructive ledger: no silent deletes, corrections preserve original + delta + reason
-- [ ] Perf: keyed LazyColumn + animateItem + derivedStateOf, entry <10ms, splash ≤1.5s
+## Non-Negotiables (final verification, G6)
+- [x] Offline-first: fresh install works with zero login, Room = UI source of truth (Firebase guarded, sync off by default)
+- [x] Free tier: zero audio in Firebase Storage (maps exclude it), delta sync only, receipts WebP ~100KB
+- [x] Non-destructive ledger: no silent deletes (no @Delete; rules deny delete), corrections preserve original + delta + reason
+- [x] Perf: keyed LazyColumn + animateItem + derivedStateOf, entry <10ms, splash 1400ms ≤1.5s
 
 ## How To Update (end of each session)
 1. Flip the finished Group row to ✅, next row to 🟡.

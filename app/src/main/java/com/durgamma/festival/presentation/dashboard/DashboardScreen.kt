@@ -48,6 +48,7 @@ fun DashboardScreen(
     onExpenses: () -> Unit,
     onHistory: () -> Unit,
     onReports: () -> Unit,
+    onSettings: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: DashboardViewModel = containerViewModel { DashboardViewModel(it) }
 ) {
@@ -131,6 +132,9 @@ fun DashboardScreen(
                     }
                     OutlinedButton(onClick = onReports, modifier = Modifier.weight(1f)) {
                         Text("Reports")
+                    }
+                    OutlinedButton(onClick = onSettings, modifier = Modifier.weight(1f)) {
+                        Text("Sync")
                     }
                 }
             }

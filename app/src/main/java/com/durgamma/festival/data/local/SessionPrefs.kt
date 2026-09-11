@@ -55,6 +55,54 @@ class SessionPrefs(context: Context) {
         get() = prefs.getString(KEY_SPEAKER, "meera") ?: "meera"
         set(value) = prefs.edit().putString(KEY_SPEAKER, value).apply()
 
+    // ---- G6 cloud session (all inert until the user enables Cloud Sync) ----
+
+    /** Stable per-install id used as creator/device attribution (plan §20). */
+    var deviceId: String
+        get() {
+            var id = prefs.getString(KEY_DEVICE, null)
+            if (id.isNullOrBlank()) {
+                id = java.util.UUID.randomUUID().toString()
+                prefs.edit().putString(KEY_DEVICE, id).apply()
+            }
+            return id
+        }
+        set(value) = prefs.edit().putString(KEY_DEVICE, value).apply()
+
+    var cloudSyncEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SYNC_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_SYNC_ENABLED, value).apply()
+
+    fun lastSyncMillis(eventId: String): Long =
+        prefs.getLong(KEY_LAST_SYNC + eventId, 0L)
+
+    fun setLastSyncMillis(eventId: String, millis: Long) {
+        prefs.edit().putLong(KEY_LAST_SYNC + eventId, millis).apply()
+    }
+
+    /** Local role cache per event (plan §6). Default ORGANIZER keeps offline behavior. */
+    fun myRole(eventId: String): String =
+        prefs.getString(KEY_ROLE + eventId, ROLE_ORGANIZER) ?: ROLE_ORGANIZER
+
+    fun setMyRole(eventId: String, role: String) {
+        prefs.edit().putString(KEY_ROLE + eventId, role).apply()
+    }
+
+    /** Share-code → eventId directory for QR/code joins (codes also live in Firestore). */
+    fun shareCodeFor(eventId: String): String? =
+        prefs.getString(KEY_CODE + eventId, null)
+
+    fun putShareCode(eventId: String, code: String) {
+        prefs.edit().putString(KEY_CODE + eventId, code).apply()
+    }
+
+    fun eventIdForShareCode(code: String): String? =
+        prefs.getString(KEY_CODE_REV + code.uppercase(), null)
+
+    fun putShareCodeReverse(code: String, eventId: String) {
+        prefs.edit().putString(KEY_CODE_REV + code.uppercase(), eventId).apply()
+    }
+
     companion object {
         private const val FILE = "durgamma_prefs"
         private const val KEY_EVENT = "current_event_id"
@@ -65,6 +113,16 @@ class SessionPrefs(context: Context) {
         private const val KEY_QUEUE_LANG = "queue_language"
         private const val KEY_SARVAM = "sarvam_api_key"
         private const val KEY_SPEAKER = "sarvam_speaker"
+        private const val KEY_DEVICE = "device_id"
+        private const val KEY_SYNC_ENABLED = "cloud_sync_enabled"
+        private const val KEY_LAST_SYNC = "last_sync_"
+        private const val KEY_ROLE = "my_role_"
+        private const val KEY_CODE = "share_code_"
+        private const val KEY_CODE_REV = "share_code_rev_"
+
+        const val ROLE_GLOBAL_HEAD = "global_head"
+        const val ROLE_ORGANIZER = "organizer"
+        const val ROLE_MEMBER = "member"
 
         const val SORT_NEWEST = "newest"
         const val SORT_OLDEST = "oldest"

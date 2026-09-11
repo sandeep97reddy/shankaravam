@@ -4,6 +4,7 @@ import com.durgamma.festival.core.util.Outcome
 import com.durgamma.festival.domain.model.ActivityRecord
 import com.durgamma.festival.domain.model.Correction
 import com.durgamma.festival.domain.model.CorrectionTargetType
+import com.durgamma.festival.domain.model.SyncStatus
 import com.durgamma.festival.domain.repository.ActivityRepository
 import com.durgamma.festival.domain.repository.CorrectionRepository
 import kotlinx.coroutines.flow.Flow
@@ -23,6 +24,8 @@ private class FakeCorrections : CorrectionRepository {
     override suspend fun record(correction: Correction) {
         recorded += correction
     }
+    override suspend fun updateSyncState(id: String, status: SyncStatus) = Unit
+    override suspend fun pendingSync(): List<Correction> = recorded.toList()
 }
 
 private class FakeActivity : ActivityRepository {

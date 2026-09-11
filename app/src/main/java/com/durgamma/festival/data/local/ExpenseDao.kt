@@ -23,5 +23,9 @@ interface ExpenseDao {
     @Query("UPDATE expenses SET status = :status, updatedAt = :now, version = version + 1, syncStatus = 'PENDING_UPLOAD' WHERE id = :id")
     suspend fun updateStatus(id: String, status: String, now: Long)
 
+    /** G6 sync bookkeeping — no version bump (see DonationDao). */
+    @Query("UPDATE expenses SET syncStatus = :status WHERE id = :id")
+    suspend fun updateSyncState(id: String, status: String)
+
     // No @Delete: cancelled expenses stay in the ledger (plan §18).
 }

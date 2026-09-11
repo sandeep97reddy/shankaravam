@@ -3,9 +3,9 @@
 > Copy-paste starter + context bridge. Update ALL sections at the end of every Group session. The next session starts by reading this file + `PROGRESS.md` + plan §24 + `AGENTS.md`.
 
 ## 1. Where We Are
-- **Last completed:** `G5 — Expenses + Ledger Safety + Reports` ✅ — `assembleDebug` + 31/31 tests green, zero warnings. **100% offline app is FEATURE-COMPLETE.**
-- **Next up:** `G6 — Optional Cloud Sync + Admin + Hardening` (plan §24: P11 Google Sign-In + QR join + Firestore delta via WorkManager + key sync, P12 admin screens + polish). OPTIONAL — G1–G5 already shippable.
-- **Current branch/status:** full festival app offline (events, donations+corrections, expenses+receipts, Telugu/EN announcements, history, PDF/CSV/WhatsApp); Firebase/WorkManager absent
+- **Last completed:** `G6 — Optional Cloud Sync + Admin + Hardening` ✅ — `assembleDebug` + 42/42 tests green, zero warnings, APK 25.1 MB, v1.0.0-g6. **ALL GROUPS DONE — BUILD COMPLETE.**
+- **Next up:** nothing scheduled. To go live with teams: create Firebase (Spark) project → drop in `google-services.json` → `firebase deploy --only firestore:rules` → sign in via Settings → enable sync. No code changes needed.
+- **Current branch/status:** shippable festival app (offline-first + optional cloud); uncommitted work in progress (commit + tag on your word)
 
 ## 2. Key Decisions (carry forward, do not re-litigate)
 - Package: `com.durgamma.festival`, Kotlin 2.0+, Compose BOM + Material3, Room 2.6+ w/ KSP, `StateFlow` + `WhileSubscribed(5000)`
@@ -42,25 +42,28 @@
 - G5 local files: `core/export/{ReceiptCompressor (~100KB WEBP_LOSSY/R), ReportContent (pure CSV/WhatsApp/line builders), ReportExporter (PdfDocument A4 + FileProvider share)}`, `res/xml/file_provider_paths.xml`, manifest FileProvider
 - G5 screens: `presentation/history/ActivityFeedScreen.kt` (VM folded in), `presentation/reports/ExportScreen.kt` (PDF/CSV/WhatsApp + last-file), nav `EXPENSES/EXPENSE_ENTRY/HISTORY/REPORTS`, dashboard Expenses/History/Reports buttons live
 - G5 tests (31 green): + `CorrectRecordUseCaseTest` (grace/correction/reject paths), `ReportContentTest` (CSV quoting, bilingual summary)
+- G6 gradle: Firebase BOM 33.7.0 (auth+firestore), work-runtime-ktx 2.9.0, security-crypto, play-services-auth, zxing core, coroutines-play-services; NO google-services plugin (offline build stays green without json); versionName `1.0.0-g6`
+- G6 data: `data/local/SecureKeyStore.kt` (encrypted Sarvam key + one-way G4 migration), `SessionPrefs` += deviceId/cloudSyncEnabled/lastSync/myRole/shareCode maps; DAO `updateSyncState` (donation/expense/correction, no version bump) + `CorrectionDao.pendingSync`; repo `updateSyncState`/`pendingSync` wired
+- G6 cloud: `data/remote/{AuthRepository (guarded classic Google Sign-In), FirestoreSyncService (delta up/down, conflict→CONFLICT flag, codes/members/tts-key), FirestoreMappers (Long-millis, audio excluded)}`, `data/work/SyncWorker.kt` (15-min + on-demand, no-op when disabled/signed-out)
+- G6 domain: `domain/model/Membership.kt` (UserRole/MemberStatus/AccessPolicy) + `core/util/ShareCodes.kt` (6-char unambiguous codes)
+- G6 UI: `presentation/settings/{CloudSyncScreen (account, sync toggle, sync-now, QR invite + join-by-code + approvals), AdminSettingsScreen (secure key pull/push, role label, close-event)}`, nav `CLOUD_SYNC/ADMIN`, dashboard Sync button; role gating in donation-correct + expense correct/cancel VMs
+- G6 root: `firestore.rules` (collectors-write/members-read, append-only corrections, join-request flow, tts_settings)
+- G6 tests (42 green): + `AccessPolicyTest`, `FirestoreMappersTest` (round-trip + conflict rule), `ShareCodesTest`
+- G6 deviations (documented, deliberate): join by typed code + QR display (no camera-scan dep); classic sign-in intent (Credential Manager 1.3.0 moved GoogleId classes); timestamps as Long millis (not Timestamp); receipts NOT auto-uploaded yet (paths local-only; upload is a 10-line worker addition once Storage is provisioned)
 
-## 4. Gotchas For Next Session
-- Deps cached — G5 verify ~11s incremental; use `.\gradlew.bat` or dist binary at `Temp/opencode/gradle-dist/gradle-8.11.1`
-- Room v1 STILL frozen (no migrations, exportSchema=false) — G6 sync must map Firestore docs onto EXISTING entities; no column changes. First schema change (if ever) ships with a migration + exportSchema=true post-G6 decision
-- `combine` wider than 3 flows does NOT resolve here — only ≤3-flow combines (ExpenseListViewModel chains member `.combine` calls; queue VM nests). Keep this pattern in G6 workers/observers
-- Api quirks hit: `PdfDocument.PageInfo.Builder.create()` (not build()); `Icons.AutoMirrored.Filled.ReceiptLong` IS the current one (Add is the exception with no mirrored variant)
-- Sarvam key still in plain SessionPrefs (`sarvamApiKey`) — G6 MUST migrate to EncryptedSharedPreferences (needs `androidx.security:security-crypto` dep) + `/config/tts_settings` Firestore sync (head-write/member-read rules)
-- Receipts at `filesDir/receipts/*.webp`, reports staged at `cacheDir/reports/*`, audio at `cacheDir/audio/*` — G6 uploads receipts only (~100KB), NEVER audio
-- Sync design pointers: `pendingSync()` one-shots already exist on donation/expense DAOs; corrections/activity are append-only (upload + never update); conflicts → NEEDS_REVIEW/CONFLICT status, never last-write-wins on money; WorkManager needs `androidx.work:work-runtime-ktx` + Auth (`firebase-auth`, `firebase-firestore`, Google Sign-In via Credential Manager) — all G6-only deps
-- No TTS/audio skill needed in G6; `jetpack-compose-performance` only if lists jank
+## 4. Gotchas For Future Work
+- Deps cached — verify ~15s incremental; use `.\gradlew.bat` or dist binary at `Temp/opencode/gradle-dist/gradle-8.11.1`
+- Room v1 STILL frozen (no migrations, exportSchema=false) — first schema change ships with a migration
+- `combine` wider than 3 flows does NOT resolve here — only ≤3-flow combines everywhere
+- AuthRepository uses classic GoogleSignIn intent (`@file:Suppress DEPRECATION`); migrate to Credential Manager only after pinning a version with stable googleid classes
+- `androidx.credentials` catalog entries are unused (kept for that future migration)
+- Cloud goes live with: Firebase Spark project → `google-services.json` in `app/` → `firebase deploy --only firestore:rules` → sign in → enable sync → publish invite
+- Suggest: `git add -A; git commit -m "..."; git tag v1.0.0-g6` — NOT done (needs your explicit word per repo rules)
 
-## 5. Paste This To Start The Next Session (G6 — LAST, OPTIONAL)
+## 5. No Further Groups — Build Complete ✅
 ```
-Read AGENTS.md, PROGRESS.md, SESSION_HANDOFF.md, and "festival organizer app plan.md" §24.
-No skill load required (Firebase/WorkManager greenfield wiring).
-
-Execute ONLY GROUP G6 — Optional Cloud Sync + Admin (P11 lazy Google Sign-In in Settings only + event QR/share-code join + approval + Firestore DELTA sync via WorkManager exponential backoff + Sarvam key migration to EncryptedSharedPreferences ↔ /config/tts_settings with head-write/member-read firestore.rules; P12 role gating global_head/organizer/member + sensitive-action re-auth + close-event + 120Hz jank pass + cold-start re-check).
-HARD RULES: fresh install works with zero login (Rule #1 untouched); Room stays UI source of truth; audio never leaves the device; receipts ≤100KB only; no entity changes without a migration; only ≤3-flow combines.
-End with assembleDebug + testDebugUnitTest passing + full AGENTS.md §7 checklist. Then update PROGRESS.md + SESSION_HANDOFF.md §1/§3, tag release, and stop.
+All 6 groups done. v1.0.0-g6: assembleDebug + 42/42 tests green, zero warnings, APK 25.1 MB.
+Future sessions: read AGENTS.md, PROGRESS.md, SESSION_HANDOFF.md and state the new feature.
 ```
 
 ## 6. Template For Future Handoffs (overwrite §1/§3/§4/§5 each session)

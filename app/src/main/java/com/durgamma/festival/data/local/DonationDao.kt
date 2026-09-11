@@ -32,5 +32,12 @@ interface DonationDao {
     @Query("UPDATE donations SET audioStatus = :status, updatedAt = :now WHERE id = :id")
     suspend fun updateAudioStatus(id: String, status: String, now: Long)
 
+    /**
+     * G6 sync bookkeeping. Uploading a row never bumps version — the version
+     * counts ledger edits, and sync must not look like one.
+     */
+    @Query("UPDATE donations SET syncStatus = :status WHERE id = :id")
+    suspend fun updateSyncState(id: String, status: String)
+
     // No @Delete: voided rows are flagged CANCELLED, never removed (plan §16).
 }

@@ -7,7 +7,10 @@ import com.durgamma.festival.core.tts.AndroidTtsClient
 import com.durgamma.festival.core.tts.DualTtsEngine
 import com.durgamma.festival.core.tts.SarvamTtsClient
 import com.durgamma.festival.data.local.AppDatabase
+import com.durgamma.festival.data.local.SecureKeyStore
 import com.durgamma.festival.data.local.SessionPrefs
+import com.durgamma.festival.data.remote.AuthRepository
+import com.durgamma.festival.data.remote.FirestoreSyncService
 import com.durgamma.festival.data.repository.ActivityRepositoryImpl
 import com.durgamma.festival.data.repository.CorrectionRepositoryImpl
 import com.durgamma.festival.data.repository.DonationRepositoryImpl
@@ -81,5 +84,13 @@ class AppContainer(context: Context) {
             SarvamTtsClient(appContext),
             audioFocus
         )
+    }
+
+    // G6 cloud graph. All inert until the user enables Cloud Sync in Settings;
+    // Firebase getters are guarded so builds without google-services.json run fine.
+    val secureKeys: SecureKeyStore by lazy { SecureKeyStore(appContext, sessionPrefs) }
+    val authRepository: AuthRepository by lazy { AuthRepository(appContext) }
+    val syncService: FirestoreSyncService by lazy {
+        FirestoreSyncService(database, sessionPrefs)
     }
 }

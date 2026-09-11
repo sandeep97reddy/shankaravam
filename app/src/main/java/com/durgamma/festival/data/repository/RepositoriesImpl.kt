@@ -16,6 +16,7 @@ import com.durgamma.festival.domain.model.Event
 import com.durgamma.festival.domain.model.EventStatus
 import com.durgamma.festival.domain.model.Expense
 import com.durgamma.festival.domain.model.ExpenseStatus
+import com.durgamma.festival.domain.model.SyncStatus
 import com.durgamma.festival.domain.repository.ActivityRepository
 import com.durgamma.festival.domain.repository.CorrectionRepository
 import com.durgamma.festival.domain.repository.DonationRepository
@@ -58,6 +59,9 @@ class DonationRepositoryImpl(private val dao: DonationDao) : DonationRepository 
     override suspend fun updateAudioStatus(id: String, status: AudioStatus, now: Long) =
         withContext(Dispatchers.IO) { dao.updateAudioStatus(id, status.name, now) }
 
+    override suspend fun updateSyncState(id: String, status: SyncStatus) =
+        withContext(Dispatchers.IO) { dao.updateSyncState(id, status.name) }
+
     override suspend fun pendingSync(): List<Donation> =
         withContext(Dispatchers.IO) { dao.pendingSync().map { it.toDomain() } }
 }
@@ -75,6 +79,9 @@ class ExpenseRepositoryImpl(private val dao: ExpenseDao) : ExpenseRepository {
     override suspend fun cancel(id: String, now: Long) =
         withContext(Dispatchers.IO) { dao.updateStatus(id, ExpenseStatus.CANCELLED.name, now) }
 
+    override suspend fun updateSyncState(id: String, status: SyncStatus) =
+        withContext(Dispatchers.IO) { dao.updateSyncState(id, status.name) }
+
     override suspend fun pendingSync(): List<Expense> =
         withContext(Dispatchers.IO) { dao.pendingSync().map { it.toDomain() } }
 }
@@ -88,6 +95,12 @@ class CorrectionRepositoryImpl(private val dao: CorrectionDao) : CorrectionRepos
 
     override suspend fun record(correction: Correction) =
         withContext(Dispatchers.IO) { dao.insert(correction.toEntity()) }
+
+    override suspend fun updateSyncState(id: String, status: SyncStatus) =
+        withContext(Dispatchers.IO) { dao.updateSyncState(id, status.name) }
+
+    override suspend fun pendingSync(): List<Correction> =
+        withContext(Dispatchers.IO) { dao.pendingSync().map { it.toDomain() } }
 }
 
 class ActivityRepositoryImpl(private val dao: ActivityDao) : ActivityRepository {

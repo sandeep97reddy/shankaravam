@@ -12,6 +12,8 @@ import com.durgamma.festival.presentation.expense.ExpenseEntryScreen
 import com.durgamma.festival.presentation.expense.ExpenseListScreen
 import com.durgamma.festival.presentation.history.ActivityFeedScreen
 import com.durgamma.festival.presentation.reports.ExportScreen
+import com.durgamma.festival.presentation.settings.AdminSettingsScreen
+import com.durgamma.festival.presentation.settings.CloudSyncScreen
 import com.durgamma.festival.presentation.splash.SplashScreen
 
 object DurgammaRoutes {
@@ -24,6 +26,8 @@ object DurgammaRoutes {
     const val EXPENSE_ENTRY = "expense_entry"
     const val HISTORY = "history"
     const val REPORTS = "reports"
+    const val CLOUD_SYNC = "cloud_sync"
+    const val ADMIN = "admin"
 }
 
 @Composable
@@ -49,7 +53,8 @@ fun DurgammaNavGraph() {
                 onAnnounce = { navController.navigate(DurgammaRoutes.ANNOUNCEMENTS) },
                 onExpenses = { navController.navigate(DurgammaRoutes.EXPENSES) },
                 onHistory = { navController.navigate(DurgammaRoutes.HISTORY) },
-                onReports = { navController.navigate(DurgammaRoutes.REPORTS) }
+                onReports = { navController.navigate(DurgammaRoutes.REPORTS) },
+                onSettings = { navController.navigate(DurgammaRoutes.CLOUD_SYNC) }
             )
         }
         composable(DurgammaRoutes.DONATION_ENTRY) {
@@ -75,6 +80,15 @@ fun DurgammaNavGraph() {
         }
         composable(DurgammaRoutes.REPORTS) {
             ExportScreen(onBack = { navController.popBackStack() })
+        }
+        composable(DurgammaRoutes.CLOUD_SYNC) {
+            CloudSyncScreen(
+                onBack = { navController.popBackStack() },
+                onOpenAdmin = { navController.navigate(DurgammaRoutes.ADMIN) }
+            )
+        }
+        composable(DurgammaRoutes.ADMIN) {
+            AdminSettingsScreen(onBack = { navController.popBackStack() })
         }
     }
 }

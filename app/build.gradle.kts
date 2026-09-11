@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 1
-        versionName = "0.3.0-g5"
+        versionName = "1.0.0-g6"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -66,6 +66,14 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     implementation(libs.retrofit)
     implementation(libs.okhttp)
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.auth)
+    implementation(libs.firebase.firestore)
+    implementation(libs.androidx.work.runtime)
+    implementation(libs.androidx.security.crypto)
+    implementation(libs.play.services.auth)
+    implementation(libs.zxing.core)
+    implementation(libs.kotlinx.coroutines.play.services)
     ksp(libs.androidx.room.compiler)
 
     testImplementation(libs.junit)

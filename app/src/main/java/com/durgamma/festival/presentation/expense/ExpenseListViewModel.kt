@@ -8,6 +8,8 @@ import com.durgamma.festival.core.util.newRecordId
 import com.durgamma.festival.di.AppContainer
 import com.durgamma.festival.domain.model.ActivityActions
 import com.durgamma.festival.domain.model.ActivityRecord
+import com.durgamma.festival.domain.model.AccessPolicy
+import com.durgamma.festival.domain.model.roleOf
 import com.durgamma.festival.domain.model.Correction
 import com.durgamma.festival.domain.model.CorrectionTargetType
 import com.durgamma.festival.domain.model.Expense
@@ -84,6 +86,10 @@ class ExpenseListViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Cancel keeps the row (plan §18) and logs who voided it. */
     fun cancelExpense(expense: Expense, actor: String = "") {
+        if (!AccessPolicy.canCancelExpense(roleOf(container.sessionPrefs.myRole(expense.eventId)))) {
+            error.value = "Cancelling expenses needs a collector role."
+            return
+        }
         viewModelScope.launch {
             val now = System.currentTimeMillis()
             repo.cancel(expense.id, now)
@@ -102,6 +108,10 @@ class ExpenseListViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Amount fix: grace-window direct edit, otherwise appended Correction. */
     fun correctExpense(expense: Expense, newAmount: Double, reason: String, actor: String = "") {
+        if (!AccessPolicy.canCorrect(roleOf(container.sessionPrefs.myRole(expense.eventId)))) {
+            error.value = "Fixing entries needs a collector role."
+            return
+        }
         viewModelScope.launch {
             when (
                 val result = container.correctRecord(

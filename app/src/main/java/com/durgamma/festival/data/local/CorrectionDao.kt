@@ -17,5 +17,12 @@ interface CorrectionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(correction: CorrectionEntity)
 
+    @Query("SELECT * FROM corrections WHERE syncStatus IN ('LOCAL_ONLY','PENDING_UPLOAD','SYNC_FAILED') ORDER BY createdAt ASC")
+    suspend fun pendingSync(): List<CorrectionEntity>
+
+    /** G6 sync bookkeeping — no version column exists; append-only anyway. */
+    @Query("UPDATE corrections SET syncStatus = :status WHERE id = :id")
+    suspend fun updateSyncState(id: String, status: String)
+
     // Append-only: no update, no delete.
 }

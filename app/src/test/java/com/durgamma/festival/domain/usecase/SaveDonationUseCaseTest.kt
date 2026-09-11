@@ -3,6 +3,7 @@ package com.durgamma.festival.domain.usecase
 import com.durgamma.festival.domain.model.ActivityRecord
 import com.durgamma.festival.domain.model.Donation
 import com.durgamma.festival.domain.model.DonationStatus
+import com.durgamma.festival.domain.model.SyncStatus
 import com.durgamma.festival.domain.repository.ActivityRepository
 import com.durgamma.festival.domain.repository.DonationRepository
 import kotlinx.coroutines.flow.Flow
@@ -25,6 +26,7 @@ private class FakeDonationRepository : DonationRepository {
     }
 
     override suspend fun updateStatus(id: String, status: DonationStatus, now: Long) = Unit
+    override suspend fun updateSyncState(id: String, status: SyncStatus) = Unit
     override suspend fun updateAudioStatus(
         id: String,
         status: com.durgamma.festival.domain.model.AudioStatus,
