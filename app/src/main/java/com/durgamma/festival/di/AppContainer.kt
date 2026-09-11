@@ -2,6 +2,7 @@ package com.durgamma.festival.di
 
 import android.content.Context
 import com.durgamma.festival.data.local.AppDatabase
+import com.durgamma.festival.data.local.SessionPrefs
 import com.durgamma.festival.data.repository.ActivityRepositoryImpl
 import com.durgamma.festival.data.repository.CorrectionRepositoryImpl
 import com.durgamma.festival.data.repository.DonationRepositoryImpl
@@ -25,6 +26,8 @@ class AppContainer(context: Context) {
     private val appContext = context.applicationContext
 
     val database: AppDatabase by lazy { AppDatabase.build(appContext) }
+
+    val sessionPrefs: SessionPrefs by lazy { SessionPrefs(appContext) }
 
     val eventRepository: EventRepository by lazy {
         EventRepositoryImpl(database.eventDao())

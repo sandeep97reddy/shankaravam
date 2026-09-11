@@ -3,8 +3,8 @@
 > Single source of truth for build progress. Update this file at the END of every Group session, in the same task as the code changes. Stale rows mislead the next session.
 
 ## Current Pointer
-- **Status:** G2 done ✅ — Room v1 + repos + 5 use cases, 14/14 unit tests green
-- **Next session:** `G3 — Events + Donations + Dashboard`
+- **Status:** G3 done ✅ — first usable offline counter app (events + donations + live dashboard)
+- **Next session:** `G4 — Telugu Voice + Announcement Queue`
 - **Plan:** `festival organizer app plan.md` §24 (6 groups, 1 group = 1 session)
 - **Handoff details:** see `SESSION_HANDOFF.md`
 
@@ -13,8 +13,8 @@
 |-------|-------|--------|--------|-------|
 | G1 | Foundation Shell: scaffold + theme + Chakra splash + nav | ✅ done | `assembleDebug` green, APK 18.2 MB, splash 1400ms → dashboard | Gradle 8.11.1 + AGP 8.9.2 + Kotlin 2.0.21 |
 | G2 | Offline Data Core: Room entities/DAOs + domain/repos/use cases | ✅ done | `assembleDebug` + `testDebugUnitTest` 14/14 green, KSP Room codegen | Manual AppContainer DI, no UI yet |
-| G3 | Events + Donations + Dashboard (first usable app) | 🟡 next | Airplane-mode counter test, pledged excluded | Money-in loop |
-| G4 | Telugu Voice + Announcement Queue | ⬜ todo | Offline TTS instant, Sarvam cached in `cacheDir/audio/`, BT ducking | Load `telugu-tts-audio` skill |
+| G3 | Events + Donations + Dashboard (first usable app) | ✅ done | `assembleDebug` + 14/14 tests green, zero warnings; counter loop works offline | Money-in loop live |
+| G4 | Telugu Voice + Announcement Queue | 🟡 next | Offline TTS instant, Sarvam cached in `cacheDir/audio/`, BT ducking | Load `telugu-tts-audio` skill |
 | G5 | Expenses + Ledger Safety + Reports (offline complete) | ⬜ todo | Correction preserves original, PDF/CSV/WhatsApp offline | 100% offline done here |
 | G6 | Optional Cloud Sync + Admin + Hardening (last) | ⬜ todo | Zero-login fresh install still works, delta sync + backoff | Only networked code |
 
