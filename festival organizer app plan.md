@@ -776,30 +776,101 @@ events/{eventId}/imports/{importId}
 
 ---
 
-## 24. Implementation Phases
+## 24. Implementation Plan — Grouped for Single-Context Execution
 
-### Phase 1: Foundation & Temple Visual Identity
-- Scaffold project with Kotlin, Jetpack Compose, Material 3, Navigation Compose.
-- Implement temple theme, color tokens, and Vishnu Sudarshana Chakra vector rotation splash (< 1.5s).
+> **HOW TO EXECUTE THIS PLAN (READ FIRST):**
+> - Each `GROUP` below = **exactly ONE context window / ONE session**. Do not mix groups in one session.
+> - Each Group contains 1–2 `Phases`. Complete all Phases in the Group, verify with the `Verify` block, update `PROGRESS.md` + `SESSION_HANDOFF.md`, then **STOP and start a new session**.
+> - Always load the listed Skills at session start. Always respect `AGENTS.md` Rules #1–#3 (offline-first, free-tier, non-destructive ledger).
+> - Group outputs are cumulatively buildable: G1 = empty shell APK → G3 = usable offline counter app → G5 = complete offline app → G6 = optional cloud.
+> - Suggested paste-prompt for a new session is in `SESSION_HANDOFF.md`.
 
-### Phase 2: Local Core (Room Database & DAOs)
-- Room entities (`EventEntity`, `DonationEntity`, `ExpenseEntity`, `CorrectionEntity`, `ActivityEntity`).
-- Reactive DAOs returning `Flow<List<T>>` for zero-lag UI updates.
-- Repository layer supporting offline-first operations.
+---
 
-### Phase 3: Fast Donation & Telugu Announcement Engine
-- Quick donation entry sheet (Cash, UPI, Rice, Sarees, Sponsorship, Flowers).
-- Dual TTS Engine (Android `TextToSpeech` with `Locale("te", "IN")` + Sarvam AI REST client).
-- Local audio disk caching in `cacheDir/audio/`.
-- Audio route detector (Phone Speaker vs Bluetooth Amplifier) with test audio button.
-- Announcement queue with playback controls (Play, Pause, Skip, Repeat, Pause interval).
+### GROUP G1 — Foundation Shell (Session 1, start here)
+**Phases:**
+- P1: Project scaffold — Gradle (Kotlin 2.0+, AGP, KSP, Room 2.6+, Compose BOM, Navigation, WorkManager, Hilt/manual DI), `libs.versions.toml`, `AndroidManifest.xml`, `MainActivity.kt`, `NavGraph.kt`, package `com.durgamma.festival`, light/dark `Theme.kt`.
+- P2: Temple visual identity — color tokens (`DeepMaroon/TempleSaffron/TempleGold/DivineAmber/WarmIvory/SacredCharcoal`), `Type.kt`, `Shape.kt`, `TempleAppBar`, `ChakraLoader`, `CurrencyTextField`, `VishnuChakraSplashScreen` (<1.5s, vector rotation + aura), splash → placeholder dashboard navigation.
 
-### Phase 4: Expense Tracker & Real-Time Dashboard
-- Expense entry with category chips and WebP receipt compression.
-- Dashboard with real-time balance formula, donor counts, and non-cash breakdown.
-- Local export engine (PDF summary, CSV/Excel, WhatsApp share text).
+**Files (create):** `build.gradle.kts`, `libs.versions.toml`, `AndroidManifest.xml`, `MainActivity.kt`, `core/theme/*`, `presentation/splash/*`, `presentation/common/*`, `presentation/navigation/*`, `ic_sudarshana_chakra.xml`.
+**Skills:** `jetpack-compose-performance` (splash + theme section).
+**Verify:** `./gradlew assembleDebug` succeeds; cold launch shows spinning Chakra ≤1.5s → empty dashboard; no Firebase, no Room yet; 60fps, no jank.
+**Exit criteria:** Launchable APK shell with temple theme. No business logic.
 
-### Phase 5: Cloud Sync & Roles (Optional Firebase)
-- Google Sign-In and QR Code joining flow.
-- Cloud Firestore delta synchronization via WorkManager.
-- Global Head admin settings (TTS API key sync, role approvals, event closure).
+> **G1 description:** Smallest possible buildable app. Proves toolchain, theme, splash timing, and navigation before any data code pollutes context. Context load: ~10 files, all UI-only.
+> 🛑 **STOP — start a NEW session for G2. Update PROGRESS.md + SESSION_HANDOFF.md first.**
+
+---
+
+### GROUP G2 — Offline Data Core (Session 2)
+**Phases:**
+- P3: Room layer — `EventEntity`, `DonationEntity`, `ExpenseEntity`, `CorrectionEntity`, `ActivityEntity`, `TypeConverters`, `AppDatabase`, `EventDao`, `DonationDao`, `ExpenseDao`, `CorrectionDao`, `ActivityDao` (all list queries return `Flow`), UUID v4 ids, sync-status + version columns.
+- P4: Domain + repository — domain models (`Event/Donation/Expense/UserRole/Correction`), mappers, repository interfaces + offline-first impls (Room = single source of truth, `<10ms` write, `Dispatchers.IO`), use cases: `SaveDonation`, `SaveExpense`, `RecordCorrection`, `CalculateBalance`, `ObserveEventTotals`.
+
+**Files (create):** `core/database/*`, `core/util/{Result,Formatters}.kt`, `data/local/{entities,daos}/*`, `domain/model/*`, `domain/repository/*`, `domain/usecase/*`, `data/repository/*`, DI modules.
+**Skills:** `jetpack-compose-performance` (Room-as-Source-of-Truth + StateFlow section).
+**Verify:** `./gradlew testDebugUnitTest` + `assembleDebug`; insert donation → Room → Flow emits <10ms; no UI required yet (temporary instrumented check ok); no network calls; no deletes, only `Cancelled` flag.
+**Exit criteria:** All money writes go through Room reactively. UI still G1 placeholder but ViewModels can already `stateIn(WhileSubscribed(5000))`.
+
+> **G2 description:** The correctness-critical ledger foundation. Isolated from UI/audio so Room schema, migration strategy, and non-destructive invariants get full attention. Largest correctness payoff per token.
+> 🛑 **STOP — start a NEW session for G3. Update PROGRESS.md + SESSION_HANDOFF.md first.**
+
+---
+
+### GROUP G3 — Events + Donations + Dashboard (Session 3 — first usable app)
+**Phases:**
+- P5: Event management + dashboard — event selector/creator, current-event banner (always visible), dashboard cards (confirmed/received/pledged/non-cash totals, expenses, balance = confirmed+received cash − expenses, donor/expense counts, unsynced badge), `derivedStateOf` totals, 30-day-offline badge.
+- P6: Donation loop — `QuickDonationBar` + `DonationEntryScreen` (name + pronunciation field, amount/item/qty/unit, payment method, tags incl. custom, status, announcement toggle), `DonationListScreen` (keyed `LazyColumn` + `animateItem`, status/audio/sync badges), `DonationDetailSheet` (full details, announcement preview, correction history), sorting/filtering (newest/oldest/amount/name/status/tag/collector/date/audio/sync/corrected) + saved-filter chips.
+
+**Files (create):** `presentation/dashboard/*`, `presentation/donation/*`, `presentation/event/*` (if needed), ViewModels with single `uiState: StateFlow<UiState>`.
+**Skills:** `jetpack-compose-performance` (full file — lists, derivedStateOf, keys, animateItem).
+**Verify:** Airplane-mode test: create event → save cash + rice-bag + saree donations → list animates at 60fps, dashboard balance correct, pledged excluded; `./gradlew assembleDebug`; AGENTS.md checklist items 1–2 pass.
+**Exit criteria:** A volunteer can run a festival counter fully offline. No TTS sound yet (preview text only), no expenses yet.
+
+> **G3 description:** First half of the offline money loop (money-in). Deliberately excludes audio/expenses to keep this heavy UI session within one context. After this, the app is already field-usable.
+> 🛑 **STOP — start a NEW session for G4. Update PROGRESS.md + SESSION_HANDOFF.md first.**
+
+---
+
+### GROUP G4 — Telugu Voice + Announcement Queue (Session 4)
+**Phases:**
+- P7: Audio engine — `TeluguNumberFormatter` (5000→ఐదు వేల, 10016→పది వేల పదహారు), announcement templates (cash/material/sponsorship, TE/EN/TE+EN), `AndroidTtsClient` (`Locale("te","IN")`, `STREAM_MUSIC`), `SarvamTtsClient` (Retrofit, base64→`cacheDir/audio/donation_{id}.mp3`, existence-check before call, silent fallback to native), `DualTtsEngine` (non-blocking generation, audio-status: NotGenerated/Preparing/Ready/Failed), `AudioFocusManager` (`USAGE_ASSISTANCE_ACCESSIBILITY`, transient-may-duck) + `AudioRouteDetector` (Speaker/Bluetooth/Wired) + test-audio.
+- P8: Queue UI — `AnnouncementQueueScreen` (filters: event/status/tags/date/collector/language/sort; default = received+confirmed, no pledged/cancelled), playback controls (Play/Pause/Resume/Stop/Replay/Skip/Prev/Next/Repeat + 2s/5s/10s gap), playlist honors current sort, audio-route badge.
+
+**Files (create):** `core/tts/*`, `core/audio/*`, `data/remote/SarvamApiService.kt`, `domain/usecase/AnnounceDonation.kt`, `presentation/announcement/*`.
+**Skills:** `telugu-tts-audio` (full file) + `jetpack-compose-performance` (queue list perf only).
+**Verify:** Airplane-mode → native Telugu speaks instantly; online + key → Sarvam mp3 cached locally, replay uses cache (no re-call); Bluetooth amp ducks music, disconnect falls back to speaker; donation entry never blocks on audio; zero files in Firebase Storage.
+**Exit criteria:** Horn-speaker announcements work in noisy pandals with one-tap test.
+
+> **G4 description:** Self-contained audio subsystem. All TTS risk (pronunciation, caching, focus, fallback) is quarantined here so a bad audio change can never regress the G3 money loop. Heaviest skill-dependent session — run alone.
+> 🛑 **STOP — start a NEW session for G5. Update PROGRESS.md + SESSION_HANDOFF.md first.**
+
+---
+
+### GROUP G5 — Expenses + Ledger Safety + Reports (Session 5 — offline app complete)
+**Phases:**
+- P9: Money-out + safety — `ExpenseEntryScreen` (amount/desc/category chips/paid-by/vendor/method/date, WebP ~100KB receipt), `ExpenseListScreen`, grace-window typo edit (5 min) → `CorrectionTransaction` after (original preserved + delta + reason + author + timestamp), `Cancelled/Voided` never delete, `ActivityFeed` (donations/expenses/corrections/cancels/approvals/role-changes/imports with who/when/before-after).
+- P10: Reports — local PDF summary, CSV/Excel export, WhatsApp share text (Telugu+English totals), transaction-history screen; dashboard non-cash breakdown (separate unless estimated value given).
+
+**Files (create):** `presentation/expense/*`, `presentation/history/*`, `presentation/reports/*` (or `core/export/*`), `domain/usecase/{SaveExpense,RecordCorrection,ExportReport}.kt`, receipt compressor.
+**Skills:** `jetpack-compose-performance` (lists + export off `Dispatchers.IO` only).
+**Verify:** Edit after 5 min forces correction row, original immutable; cancel preserves row; PDF/CSV/WhatsApp generate fully offline; balance formula holds; AGENTS.md checklist items 1–4 pass.
+**Exit criteria:** 100% offline festival app is FEATURE-COMPLETE. G6 is optional.
+
+> **G5 description:** Closes the money-out loop and the fraud-safety contract. Merging this with G3/G4 would overflow context; alone it stays reviewable and lets PDF/WebP/ledger edge cases get proper tests.
+> 🛑 **STOP — start a NEW session for G6. Update PROGRESS.md + SESSION_HANDOFF.md first.**
+
+---
+
+### GROUP G6 — Optional Cloud Sync + Admin + Hardening (Session 6, last)
+**Phases:**
+- P11: Cloud — Google Sign-In (lazy, settings-only, never on launch), event QR/share-code join + approval flow, Firestore delta-sync only (`Pending Upload→Uploading→Synced/Failed/Conflict`), `WorkManager` exponential backoff, `EncryptedSharedPreferences` Sarvam key ↔ `/config/tts_settings` (head-write, member-read), `firestore.rules`, receipt WebP upload only.
+- P12: Admin + polish — `AdminTtsSettingsScreen`, `CloudSyncScreen`, role gating (global_head/organizer/member), sensitive-action PIN/re-auth, close-event, 120Hz jank pass, cold-start ≤1.5s re-check, release checklist + Play-signed AAB.
+
+**Files (create):** `data/remote/FirestoreService.kt`, `data/work/*`, `presentation/settings/*`, `firestore.rules`, `firebase.json` (if needed).
+**Skills:** none new (reuse both only for perf/audio regressions).
+**Verify:** Fresh install works with zero login (Rule #1 still holds); enable sync → deltas sync, kill network → queue → resume with backoff; quota spot-check (2000-donor festival <10% reads/writes); audio still never in Storage; full AGENTS.md §7 checklist green.
+**Exit criteria:** Multi-counter team mode works; single-counter offline mode untouched.
+
+> **G6 description:** Only networked code in the whole app, deliberately last. If quotas/Firebase ever cause trouble, G1–G5 remain a shippable offline APK. Smallest blast radius for the riskiest dependency.
+> 🛑 **DONE — final session. Mark PROGRESS.md all-green and tag release.**
