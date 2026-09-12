@@ -51,10 +51,12 @@ fun ShankaRavamNavGraph() {
                 onAddDonation = { navController.navigate(ShankaRavamRoutes.DONATION_ENTRY) },
                 onViewDonations = { navController.navigate(ShankaRavamRoutes.DONATIONS) },
                 onAnnounce = { navController.navigate(ShankaRavamRoutes.ANNOUNCEMENTS) },
-                onExpenses = { navController.navigate(ShankaRavamRoutes.EXPENSES) },
+                onAddExpense = { navController.navigate(ShankaRavamRoutes.EXPENSE_ENTRY) },
+                onViewExpenses = { navController.navigate(ShankaRavamRoutes.EXPENSES) },
                 onHistory = { navController.navigate(ShankaRavamRoutes.HISTORY) },
                 onReports = { navController.navigate(ShankaRavamRoutes.REPORTS) },
-                onSettings = { navController.navigate(ShankaRavamRoutes.CLOUD_SYNC) }
+                onSettings = { navController.navigate(ShankaRavamRoutes.ADMIN) },
+                onSync = { navController.navigate(ShankaRavamRoutes.CLOUD_SYNC) }
             )
         }
         composable(ShankaRavamRoutes.DONATION_ENTRY) {

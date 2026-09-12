@@ -30,6 +30,10 @@ class DualTtsEngine(
     fun cachedFile(donationId: String, roster: Boolean = false): File? =
         sarvam.cachedFile(donationId, roster)
 
+    /** P4 ceiling enforcement; runs on the caller's (IO) thread. Never throws. */
+    fun pruneCache(excludeIds: Set<String>, maxFiles: Int, maxAgeDays: Int): Int =
+        runCatching { sarvam.pruneCache(excludeIds, maxFiles, maxAgeDays) }.getOrDefault(0)
+
     /**
      * Best-effort background caching. Reports PREPARING/READY/FAILED through
      * [onStatus] (persisted by the caller); returns the file or null.
@@ -41,37 +45,43 @@ class DualTtsEngine(
         language: AnnouncementLanguage,
         apiKey: String,
         onStatus: suspend (AudioStatus) -> Unit,
-        roster: Boolean = false
+        roster: Boolean = false,
+        speaker: String = "meera",
+        onError: (Throwable) -> Unit = {}
     ): File? {
         sarvam.cachedFile(donation.id, roster)?.let { return it }
         if (apiKey.isBlank()) return null
-        onStatus(AudioStatus.PREPARING)
+        runCatching { onStatus(AudioStatus.PREPARING) }
         return try {
             val text = if (roster) {
                 buildRosterItemAnnouncement(donation, language)
             } else {
                 buildDonationAnnouncement(donation, eventName, language)
             }
-            val file = sarvam.getOrGenerateAudio(donation.id, text, apiKey, roster = roster)
+            val file = sarvam.getOrGenerateAudio(donation.id, text, apiKey, speaker = speaker, roster = roster)
             onStatus(AudioStatus.READY)
             file
-        } catch (_: Exception) {
-            onStatus(AudioStatus.FAILED)
+        } catch (e: Exception) {
+            runCatching { onError(e) }
+            runCatching { onStatus(AudioStatus.FAILED) }
             null
         }
     }
 
-    /** Instant offline speech (zero network, zero latency). */
+    /** Instant offline speech (zero network, zero latency). Never throws. */
     fun speakNative(text: String, onDone: () -> Unit, onError: () -> Unit) {
-        audioFocus.request()
-        native.speak(
-            text,
-            onDone = { audioFocus.abandon(); onDone() },
-            onError = { audioFocus.abandon(); onError() }
-        )
+        val safeText = text.ifBlank { AUDIO_TEST_LINE }
+        runCatching { audioFocus.request() }
+        runCatching {
+            native.speak(
+                safeText,
+                onDone = { runCatching { audioFocus.abandon() }; runCatching { onDone() } },
+                onError = { runCatching { audioFocus.abandon() }; runCatching { onError() } }
+            )
+        }.onFailure { runCatching { audioFocus.abandon() }; runCatching { onError() } }
     }
 
-    /** Highest quality for this row: cached Sarvam mp3, else native TTS. */
+    /** Highest quality for this row: cached Sarvam mp3, else native TTS. Never throws. */
     fun playBest(
         donation: Donation,
         eventName: String,
@@ -79,26 +89,43 @@ class DualTtsEngine(
         onDone: () -> Unit,
         onError: () -> Unit
     ) {
-        val cached = sarvam.cachedFile(donation.id)
-        if (cached != null) {
-            playFile(cached, onDone, onError)
-        } else {
-            speakNative(buildDonationAnnouncement(donation, eventName, language), onDone, onError)
+        runCatching {
+            val cached = sarvam.cachedFile(donation.id)
+            if (cached != null) {
+                playFile(cached, onDone, onError)
+            } else {
+                speakNative(buildDonationAnnouncement(donation, eventName, language), onDone, onError)
+            }
+        }.onFailure {
+            runCatching { speakNative(AUDIO_TEST_LINE, onDone, onError) }
+                .onFailure { runCatching { onError() } }
         }
     }
 
-    /** Plays a crisp roster line: cloud recording when cached, else native TTS. */
+    /**
+     * Plays a crisp roster line: cloud/imported roster recording when cached,
+     * else the imported full clip for that row, else native TTS. Never throws.
+     */
     fun playRosterItem(
         donation: Donation,
         language: AnnouncementLanguage,
         onDone: () -> Unit,
         onError: () -> Unit
     ) {
-        val cached = sarvam.cachedFile(donation.id, roster = true)
-        if (cached != null) {
-            playFile(cached, onDone, onError)
-        } else {
+        runCatching {
+            sarvam.cachedFile(donation.id, roster = true)?.let {
+                playFile(it, onDone, onError)
+                return
+            }
+            // Imported full clip (e.g. WhatsApp share) doubles as the roster line.
+            sarvam.cachedFile(donation.id)?.let {
+                playFile(it, onDone, onError)
+                return
+            }
             speakNative(buildRosterItemAnnouncement(donation, language), onDone, onError)
+        }.onFailure {
+            runCatching { speakNative(AUDIO_TEST_LINE, onDone, onError) }
+                .onFailure { runCatching { onError() } }
         }
     }
 
@@ -112,55 +139,58 @@ class DualTtsEngine(
     }
 
     fun playFile(file: File, onDone: () -> Unit, onError: () -> Unit) {
-        stopPlayback()
-        audioFocus.request()
+        runCatching { stopPlayback() }
+        runCatching { audioFocus.request() }
         try {
             player = MediaPlayer().apply {
                 setAudioAttributes(audioFocus.attributes)
                 setDataSource(file.absolutePath)
                 setOnCompletionListener {
-                    audioFocus.abandon()
-                    onDone()
+                    runCatching { audioFocus.abandon() }
+                    runCatching { onDone() }
                 }
                 setOnErrorListener { _, _, _ ->
-                    audioFocus.abandon()
-                    onError()
+                    runCatching { audioFocus.abandon() }
+                    runCatching { onError() }
                     true
                 }
-                setOnPreparedListener { it.start() }
+                setOnPreparedListener { runCatching { it.start() }.onFailure { runCatching { onError() } } }
                 prepareAsync()
             }
         } catch (_: Exception) {
-            audioFocus.abandon()
-            onError()
+            runCatching { audioFocus.abandon() }
+            runCatching { onError() }
         }
     }
 
-    fun pausePlayback(): Boolean {
-        val active = player
-        return if (active?.isPlaying == true) {
-            active.pause()
-            true
-        } else false
-    }
+    fun pausePlayback(): Boolean =
+        runCatching {
+            val active = player
+            if (active?.isPlaying == true) {
+                active.pause()
+                true
+            } else false
+        }.getOrDefault(false)
 
     /** True while a cached file is audibly playing (used by queue resume-poll). */
     fun isFilePlaying(): Boolean =
         runCatching { player?.isPlaying == true }.getOrDefault(false)
 
     fun resumePlayback(): Boolean {
-        val paused = player
-        return if (paused != null && !paused.isPlaying) {
-            audioFocus.request()
-            paused.start()
-            true
-        } else false
+        return runCatching {
+            val paused = player
+            if (paused != null && runCatching { !paused.isPlaying }.getOrDefault(false)) {
+                audioFocus.request()
+                paused.start()
+                true
+            } else false
+        }.getOrDefault(false)
     }
 
     fun stopAll() {
-        stopPlayback()
-        native.stop()
-        audioFocus.abandon()
+        runCatching { stopPlayback() }
+        runCatching { native.stop() }
+        runCatching { audioFocus.abandon() }
     }
 
     fun release() {

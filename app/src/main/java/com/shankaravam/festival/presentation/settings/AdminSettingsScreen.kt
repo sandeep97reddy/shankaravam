@@ -103,6 +103,9 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
     val appLanguage: StateFlow<String> = container.sessionPrefs.appLanguage
     fun setLanguage(lang: String) = container.sessionPrefs.setAppLanguage(lang)
 
+    val counterName: StateFlow<String> = container.sessionPrefs.counterName
+    fun setCounterName(name: String) = container.sessionPrefs.setCounterName(name)
+
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice.asStateFlow()
 
@@ -210,6 +213,7 @@ fun AdminSettingsScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val currentLang by viewModel.appLanguage.collectAsState()
+    val counterName by viewModel.counterName.collectAsState()
     val notice by viewModel.notice.collectAsState()
     val busy by viewModel.busy.collectAsState()
     var showCloseConfirm by remember { mutableStateOf(false) }
@@ -250,6 +254,32 @@ fun AdminSettingsScreen(
                             label = { Text("తెలుగు (Telugu)", fontWeight = FontWeight.SemiBold) }
                         )
                     }
+                }
+            }
+
+            // Counter / collector identity Card (one-time setup, stamped offline)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
+            ) {
+                var draft by remember(counterName) { mutableStateOf(counterName) }
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Counter name / కౌంటర్ పేరు", fontWeight = FontWeight.Bold)
+                    Text(
+                        "Stamped on every donation & expense on this device (works offline). Shown as Collector in History and after sync.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        label = { Text("e.g. Counter 2 - Ramesh") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedButton(
+                        onClick = { viewModel.setCounterName(draft) },
+                        enabled = draft.trim().isNotBlank() && draft.trim() != counterName
+                    ) { Text("Save counter name") }
                 }
             }
 

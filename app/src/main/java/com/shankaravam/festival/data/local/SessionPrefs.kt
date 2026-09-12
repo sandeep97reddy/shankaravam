@@ -23,9 +23,29 @@ class SessionPrefs(context: Context) {
     private val _appLanguage = MutableStateFlow(prefs.getString(KEY_APP_LANG, LANG_ENGLISH) ?: LANG_ENGLISH)
     val appLanguage: StateFlow<String> = _appLanguage.asStateFlow()
 
+    private val _counterName = MutableStateFlow(prefs.getString(KEY_COUNTER, "") ?: "")
+    val counterName: StateFlow<String> = _counterName.asStateFlow()
+
     fun setCurrentEventId(id: String?) {
         prefs.edit().apply { if (id == null) remove(KEY_EVENT) else putString(KEY_EVENT, id) }.apply()
         _currentEventId.value = id
+    }
+
+    fun setCounterName(name: String) {
+        val trimmed = name.trim()
+        prefs.edit().putString(KEY_COUNTER, trimmed).apply()
+        _counterName.value = trimmed
+    }
+
+    /**
+     * Offline attribution for every ledger row (plan P2): the one-time
+     * counter name, else a stable Counter-last4(deviceId) fallback so no
+     * row is ever blank — even if the volunteer skips the setup prompt.
+     */
+    fun attributionName(): String {
+        val name = _counterName.value.trim().ifBlank { prefs.getString(KEY_COUNTER, "")?.trim() ?: "" }
+        if (name.isNotBlank()) return name
+        return "Counter-${deviceId.takeLast(4)}"
     }
 
     fun setAppLanguage(lang: String) {
@@ -84,6 +104,25 @@ class SessionPrefs(context: Context) {
         get() = prefs.getString(KEY_SPEAKER, "meera") ?: "meera"
         set(value) = prefs.edit().putString(KEY_SPEAKER, value).apply()
 
+    /**
+     * P4 Sarvam budget: 10 cloud generations per 45-min rolling window per
+     * device. Over budget → caller falls back to native TTS silently.
+     */
+    fun takeSarvamSlot(now: Long = System.currentTimeMillis()): Boolean {
+        val window = com.shankaravam.festival.core.util.RateWindow(
+            maxCalls = SARVAM_MAX_CALLS,
+            windowMillis = SARVAM_WINDOW_MILLIS,
+            windowStart = prefs.getLong(KEY_SARVAM_WINDOW, 0L),
+            taken = prefs.getInt(KEY_SARVAM_COUNT, 0)
+        )
+        val allowed = window.takeSlot(now)
+        prefs.edit()
+            .putLong(KEY_SARVAM_WINDOW, window.windowStart)
+            .putInt(KEY_SARVAM_COUNT, window.taken)
+            .apply()
+        return allowed
+    }
+
     // ---- G6 cloud session (all inert until the user enables Cloud Sync) ----
 
     /** Stable per-install id used as creator/device attribution (plan §20). */
@@ -135,6 +174,7 @@ class SessionPrefs(context: Context) {
     companion object {
         private const val FILE = "shankaravam_prefs"
         private const val KEY_EVENT = "current_event_id"
+        private const val KEY_COUNTER = "counter_name"
         private const val KEY_APP_LANG = "app_language"
         private const val KEY_SORT = "donation_sort"
         private const val KEY_STATUS_FILTER = "donation_status_filter"
@@ -143,6 +183,22 @@ class SessionPrefs(context: Context) {
         private const val KEY_QUEUE_LANG = "queue_language"
         private const val KEY_SARVAM = "sarvam_api_key"
         private const val KEY_SPEAKER = "sarvam_speaker"
+        private const val KEY_SARVAM_WINDOW = "sarvam_window_start"
+        private const val KEY_SARVAM_COUNT = "sarvam_window_count"
+
+        /** P4 budget: 10 Sarvam calls per 45 minutes per device. */
+        const val SARVAM_MAX_CALLS = 10
+        const val SARVAM_WINDOW_MILLIS = 45L * 60L * 1000L
+
+        /** P4 cache ceiling: 300 clips / 20 days, whichever trims first. */
+        const val AUDIO_CACHE_MAX_FILES = 300
+        const val AUDIO_CACHE_MAX_AGE_DAYS = 20
+
+        /** P4 re-fetch guard: a peer's generation counts as fresh for 30 min. */
+        const val AUDIO_META_FRESH_MILLIS = 30L * 60L * 1000L
+
+        /** P4 import guard: refuse absurdly large shared clips. */
+        const val AUDIO_IMPORT_MAX_BYTES = 5L * 1024L * 1024L
         private const val KEY_NATIVE_VOICE = "native_tts_voice"
         private const val KEY_NATIVE_SPEED = "native_tts_speed"
         private const val KEY_QUEUE_ROSTER_MODE = "queue_roster_mode"

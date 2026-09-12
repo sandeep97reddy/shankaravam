@@ -116,7 +116,7 @@ val EnglishStrings = AppStrings(
     currentEvent = "Current Event",
     noEventYet = "No festival event yet",
     createFirstEventPrompt = "Create your festival event to begin",
-    createFirstEventHint = "Tap '+ New' to create e.g. Vinayaka Chavithi 2026. Works 100% offline.",
+    createFirstEventHint = "Tap '+ New' to create e.g. Vinayaka Chavithi. Works 100% offline.",
     newButton = "New",
     switchButton = "Switch",
     netBalance = "Net Balance",
@@ -128,8 +128,8 @@ val EnglishStrings = AppStrings(
     unsyncedCount = "pending sync",
     deficitWarning = "Expenses exceed collections — review before spending more.",
 
-    addDonation = "+ Add Donation",
-    addExpense = "- Add Expense",
+    addDonation = "Donate",
+    addExpense = "Expense",
 
     donationsTile = "Donations",
     donationsSubtitle = "View ledger & receipts",
@@ -209,7 +209,7 @@ val TeluguStrings = AppStrings(
     currentEvent = "ప్రస్తుత ఉత్సవం",
     noEventYet = "ఇంకా ఏ ఉత్సవమూ ఎంపిక చేయలేదు",
     createFirstEventPrompt = "ప్రారంభించడానికి నూతన ఉత్సవాన్ని సృష్టించండి",
-    createFirstEventHint = "కొత్త ఉత్సవాన్ని (ఉదా: వినాయక చవితి 2026) నమోదు చేయడానికి '+ కొత్తది' నొక్కండి. ఇది 100% ఆఫ్‌లైన్‌లో పనిచేస్తుంది.",
+    createFirstEventHint = "కొత్త ఉత్సవాన్ని (ఉదా: వినాయక చవితి) నమోదు చేయడానికి '+ కొత్తది' నొక్కండి. ఇది 100% ఆఫ్‌లైన్‌లో పనిచేస్తుంది.",
     newButton = "కొత్తది",
     switchButton = "మార్చు",
     netBalance = "నికర నిల్వ",
@@ -221,8 +221,8 @@ val TeluguStrings = AppStrings(
     unsyncedCount = "సింక్ కానివి",
     deficitWarning = "హెచ్చరిక: వసూళ్ల కంటే ఖర్చులు ఎక్కువగా ఉన్నాయి!",
 
-    addDonation = "+ విరాళం స్వీకరించు",
-    addExpense = "- ఖర్చు నమోదు చేయి",
+    addDonation = "విరాళం",
+    addExpense = "ఖర్చు",
 
     donationsTile = "విరాళాల జాబితా",
     donationsSubtitle = "రసీదులు మరియు వివరాలు",

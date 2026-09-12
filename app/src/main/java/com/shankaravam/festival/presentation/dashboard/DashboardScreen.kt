@@ -75,10 +75,10 @@ import com.shankaravam.festival.presentation.event.CurrentEventBanner
 /**
  * Redesigned, modern, uncluttered Festival Dashboard:
  * - App Name "ShankaRavam" / "శంఖారావం" at top-left with divine Sudarshana Chakra emblem
- * - 1-tap Language switcher (EN | తె) in top-right
+ * - Settings gear top-right (language lives in Admin Settings & Voice)
  * - Active event selector
  * - High-impact Financial Net Balance Card
- * - Dual Prominent Actions right at the top (+ Add Donation, - Add Expense)
+ * - Dual Prominent Actions right at the top (Donate, Expense entry)
  * - Clean 4-tile Quick Navigation Hub (Announce, Donations, Expenses, History)
  * - Designed for maximum clarity for both English-speaking and rural volunteers.
  */
@@ -87,10 +87,12 @@ fun DashboardScreen(
     onAddDonation: () -> Unit,
     onViewDonations: () -> Unit,
     onAnnounce: () -> Unit,
-    onExpenses: () -> Unit,
+    onAddExpense: () -> Unit,
+    onViewExpenses: () -> Unit,
     onHistory: () -> Unit,
     onReports: () -> Unit,
     onSettings: () -> Unit,
+    onSync: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: DashboardViewModel = containerViewModel { DashboardViewModel(it) }
 ) {
@@ -112,9 +114,6 @@ fun DashboardScreen(
         modifier = modifier,
         topBar = {
             ShankaRavamDashboardHeader(
-                onToggleLanguage = {
-                    viewModel.toggleLanguage()
-                },
                 onOpenSettings = onSettings
             )
         }
@@ -148,11 +147,11 @@ fun DashboardScreen(
                     )
                 }
 
-                // 3. Dual Top Prominent Primary Actions (+ Donation & - Expense)
+                // 3. Dual Top Prominent Primary Actions (Donate & Expense entry)
                 item {
                     DualActionHeader(
                         onAddDonation = onAddDonation,
-                        onAddExpense = onExpenses,
+                        onAddExpense = onAddExpense,
                         addDonationText = strings.addDonation,
                         addExpenseText = strings.addExpense
                     )
@@ -175,7 +174,7 @@ fun DashboardScreen(
                     QuickNavigationHub(
                         onAnnounce = onAnnounce,
                         onDonations = onViewDonations,
-                        onExpenses = onExpenses,
+                        onExpenses = onViewExpenses,
                         onHistory = onHistory,
                         announcementsTile = strings.announcementsTile,
                         announcementsSubtitle = strings.announcementsSubtitle,
@@ -192,7 +191,7 @@ fun DashboardScreen(
                 item {
                     SecondaryUtilitiesRow(
                         onReports = onReports,
-                        onSync = onSettings,
+                        onSync = onSync,
                         reportsText = strings.reportsTile,
                         syncText = strings.syncTile
                     )

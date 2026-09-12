@@ -12,14 +12,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,12 +42,10 @@ import com.shankaravam.festival.core.theme.TempleSaffron
  * Top brand header on the opening dashboard:
  * - App Name "ShankaRavam" / "శంఖారావం" at the top-left with divine Sudarshana Chakra emblem
  * - Subtitle
- * - Quick 1-tap Language Switcher toggle chip (EN | తె)
- * - Quick settings action
+ * - Quick settings action (language lives in Admin Settings & Voice)
  */
 @Composable
 fun ShankaRavamDashboardHeader(
-    onToggleLanguage: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -104,38 +98,11 @@ fun ShankaRavamDashboardHeader(
                 }
             }
 
-            // Quick Actions on the Top Right
+            // Quick Actions on the Top Right (settings only)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Language Switcher Chip (1-tap toggle between Telugu & English)
-                FilterChip(
-                    selected = true,
-                    onClick = onToggleLanguage,
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Filled.Translate,
-                            contentDescription = "Switch Language",
-                            tint = DeepMaroon,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    },
-                    label = {
-                        Text(
-                            text = strings.switchLanguage,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = DeepMaroon
-                        )
-                    },
-                    shape = RoundedCornerShape(16.dp),
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = TempleGold,
-                        selectedLabelColor = DeepMaroon
-                    )
-                )
-
                 IconButton(onClick = onOpenSettings) {
                     Icon(
                         imageVector = Icons.Filled.Settings,

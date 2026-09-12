@@ -27,7 +27,7 @@ class SaveExpenseUseCase(
         receiptPath: String? = null,
         addedBy: String = ""
     ): Outcome<Expense> {
-        if (amount <= 0) return Outcome.Err("Amount must be greater than zero")
+        if (!amount.isFinite() || amount <= 0) return Outcome.Err("Amount must be greater than zero")
         if (description.isBlank()) return Outcome.Err("Description is required")
         if (category.isBlank()) return Outcome.Err("Category is required")
 

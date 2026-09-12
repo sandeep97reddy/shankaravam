@@ -123,6 +123,7 @@ class ExpenseEntryViewModel(private val container: AppContainer) : ViewModel() {
     fun save(addedBy: String = "") {
         val eventId = currentEventId.value ?: return
         val f = _form.value
+        val who = addedBy.ifBlank { container.sessionPrefs.attributionName() }
         _form.update { it.copy(saveState = ExpenseSaveState.Saving) }
         viewModelScope.launch {
             val result = container.saveExpense(
@@ -136,7 +137,7 @@ class ExpenseEntryViewModel(private val container: AppContainer) : ViewModel() {
                 vendor = f.vendor.ifBlank { null },
                 notes = f.notes.ifBlank { null },
                 receiptPath = f.receiptPath,
-                addedBy = addedBy
+                addedBy = who
             )
             _form.update {
                 when (result) {

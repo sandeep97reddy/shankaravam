@@ -27,43 +27,64 @@ service cloud.firestore {
         && memberRole(eventId) in ['global_head', 'organizer'];
     }
 
-    // ---- event headers: active members read; collectors create/update ----
+    // Event creator (globalHeadId stamped at creation): unblocks the very
+    // first sync — a fresh event has no members yet, so isCollector alone
+    // would deadlock the creator with PERMISSION_DENIED.
+    function isEventCreator(eventId) {
+      return signedIn()
+        && get(/databases/$(database)/documents/events/$(eventId)).data.globalHeadId == request.auth.uid;
+    }
+
+    function canWriteLedger(eventId) {
+      return isCollector(eventId) || isEventCreator(eventId);
+    }
+
+    // ---- event headers: creator + active members read; creator/collectors update ----
     match /events/{eventId} {
-      allow read: if isActiveMember(eventId);
+      allow read: if isActiveMember(eventId) || isEventCreator(eventId);
       allow create: if signedIn();
-      allow update: if isCollector(eventId);
+      allow update: if canWriteLedger(eventId);
 
       // ---- ledger: collectors write, active members read; corrections append-only ----
       match /donations/{donationId} {
-        allow read: if isActiveMember(eventId);
-        allow create, update: if isCollector(eventId);
+        allow read: if isActiveMember(eventId) || isEventCreator(eventId);
+        allow create, update: if canWriteLedger(eventId);
         allow delete: if false;
       }
       match /expenses/{expenseId} {
-        allow read: if isActiveMember(eventId);
-        allow create, update: if isCollector(eventId);
+        allow read: if isActiveMember(eventId) || isEventCreator(eventId);
+        allow create, update: if canWriteLedger(eventId);
         allow delete: if false;
       }
       match /corrections/{correctionId} {
-        allow read: if isActiveMember(eventId);
-        allow create: if isCollector(eventId);
+        allow read: if isActiveMember(eventId) || isEventCreator(eventId);
+        allow create: if canWriteLedger(eventId);
         allow update, delete: if false;
       }
       match /activity/{activityId} {
-        allow read: if isActiveMember(eventId);
-        allow create: if isActiveMember(eventId);
+        allow read: if isActiveMember(eventId) || isEventCreator(eventId);
+        allow create: if isActiveMember(eventId) || isEventCreator(eventId);
         allow update, delete: if false;
       }
 
       // ---- membership: anyone signed in may file a pending request for
-      // themselves; only collectors approve / change roles / revoke ----
+      // themselves; the event creator may also claim their own active
+      // global_head seat; only collectors approve / change roles / revoke ----
       match /members/{userId} {
         allow read: if isActiveMember(eventId) || request.auth.uid == userId;
         allow create: if signedIn()
           && request.auth.uid == userId
-          && request.resource.data.status == 'pending'
-          && request.resource.data.role == 'member';
-        allow update: if isCollector(eventId);
+          && (
+            (
+              request.resource.data.status == 'pending'
+              && request.resource.data.role == 'member'
+            ) || (
+              isEventCreator(eventId)
+              && request.resource.data.status == 'active'
+              && request.resource.data.role == 'global_head'
+            )
+          );
+        allow update: if canWriteLedger(eventId);
         allow delete: if false;
       }
     }
@@ -75,11 +96,14 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // ---- shared voice key: readable by collectors, writable by global head ----
-    // (The head uid is stored on the event doc; first publisher claims it.)
+    // ---- shared voice key: readable by any signed-in collector device,
+    // writable only with an audit identity (client gates Publish to the head;
+    // per-event head-gating needs a per-event config path — see UI_FIX_PLAN P4).
+    // Audio itself never goes here (AGENTS.md Rule #2). ----
     match /config/tts_settings {
       allow read: if signedIn();
-      allow write: if signedIn();
+      allow write: if signedIn()
+        && request.resource.data.updatedBy == request.auth.uid;
     }
   }
 }

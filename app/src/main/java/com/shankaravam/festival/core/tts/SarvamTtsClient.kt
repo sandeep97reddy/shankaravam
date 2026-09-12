@@ -62,9 +62,43 @@ class SarvamTtsClient(
     private fun audioDir(): File =
         File(context.cacheDir, "audio").apply { if (!exists()) mkdirs() }
 
+    /**
+     * P4 cache ceiling: drops clips older than [maxAgeDays], then the oldest
+     * beyond [maxFiles]. Only our `donation_*.mp3` files; never throws.
+     * Returns the deleted count.
+     */
+    fun pruneCache(excludeIds: Set<String>, maxFiles: Int, maxAgeDays: Int): Int = runCatching {
+        val cutoff = System.currentTimeMillis() - maxAgeDays * 24L * 60L * 60L * 1000L
+        val excluded = excludeIds.flatMap {
+            setOf(cacheFileName(it, false), cacheFileName(it, true))
+        }.toSet()
+        val ours = audioDir().listFiles()
+            ?.filter { it.isFile && it.name.startsWith("donation_") && it.name.endsWith(".mp3") }
+            .orEmpty()
+        var deleted = 0
+        selectPruneVictims(ours, maxFiles, cutoff, excluded).forEach {
+            if (runCatching { it.delete() }.getOrDefault(false)) deleted++
+        }
+        deleted
+    }.getOrDefault(0)
+
     companion object {
         /** Pure filename mapping — unit-tested (no Android needed). */
         fun cacheFileName(donationId: String, roster: Boolean): String =
             if (roster) "donation_${donationId}_roster.mp3" else "donation_${donationId}.mp3"
+
+        /** Pure victim selection — unit-tested (no Android needed). */
+        fun selectPruneVictims(
+            files: List<File>,
+            maxFiles: Int,
+            cutoffMillis: Long,
+            excludeNames: Set<String>
+        ): List<File> {
+            val eligible = files.filter { it.name !in excludeNames }
+            val aged = eligible.filter { it.lastModified() < cutoffMillis }
+            val rest = (eligible - aged.toSet()).sortedBy { it.lastModified() }
+            val overCount = (rest.size - maxFiles).coerceAtLeast(0)
+            return aged + rest.take(overCount)
+        }
     }
 }

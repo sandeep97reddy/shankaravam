@@ -23,7 +23,7 @@ data class EventUiState(
 )
 
 class EventViewModel(
-    container: AppContainer,
+    private val container: AppContainer,
     val prefs: SessionPrefs
 ) : ViewModel() {
     private val eventsRepo = container.eventRepository
@@ -45,6 +45,10 @@ class EventViewModel(
     ): Boolean {
         if (name.isBlank()) return false
         val now = System.currentTimeMillis()
+        val who = addedBy.ifBlank { prefs.attributionName() }
+        // Head identity: signed-in uid wins, else this install's device id.
+        // Rules recognize globalHeadId as the event creator (see firestore.rules).
+        val ownerId = container.authRepository.user.value?.uid ?: prefs.deviceId
         val event = Event(
             id = newRecordId(),
             name = name.trim(),
@@ -52,19 +56,23 @@ class EventViewModel(
             location = location.trim(),
             startDateMillis = now,
             endDateMillis = null,
+            globalHeadId = ownerId,
+            creatorId = ownerId,
+            deviceId = prefs.deviceId,
             createdAt = now,
             updatedAt = now,
             syncStatus = SyncStatus.LOCAL_ONLY
         )
         viewModelScope.launch {
             eventsRepo.save(event)
+            prefs.setMyRole(event.id, SessionPrefs.ROLE_GLOBAL_HEAD)
             activityRepo.log(
                 ActivityRecord(
                     id = newRecordId(),
                     eventId = event.id,
                     actionType = ActivityActions.EVENT_CREATED,
                     details = event.name,
-                    actorId = addedBy,
+                    actorId = who,
                     timestamp = now
                 )
             )

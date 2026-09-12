@@ -7,6 +7,7 @@ import com.shankaravam.festival.domain.model.SyncStatus
 import com.google.firebase.Firebase
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.firestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -42,15 +43,24 @@ class FirestoreSyncService(
             var conflicts = 0
             val eventRef = events().document(eventId)
 
+            // Event header first: joiners resolve codes to an id, but the doc
+            // itself was never uploaded — Device B saw an empty dashboard.
+            runCatching {
+                val local = database.eventDao().observeEvent(eventId).first()
+                if (local != null) {
+                    eventRef.set(FirestoreMappers.eventToMap(local)).await()
+                }
+            }
+
             database.donationDao().pendingSync().forEach { row ->
                 eventRef.collection("donations").document(row.id)
-                    .set(FirestoreMappers.donationToMap(row)).await()
+                    .set(FirestoreMappers.donationToMap(row, prefs.deviceId)).await()
                 database.donationDao().updateSyncState(row.id, SyncStatus.SYNCED.name)
                 uploaded++
             }
             database.expenseDao().pendingSync().forEach { row ->
                 eventRef.collection("expenses").document(row.id)
-                    .set(FirestoreMappers.expenseToMap(row)).await()
+                    .set(FirestoreMappers.expenseToMap(row, prefs.deviceId)).await()
                 database.expenseDao().updateSyncState(row.id, SyncStatus.SYNCED.name)
                 uploaded++
             }
@@ -125,13 +135,34 @@ class FirestoreSyncService(
 
     // ---- sharing / membership ----
 
-    /** Publish the invite code (plan §7): code doc + event header for joiners. */
+    /** Publish the invite code (plan §7): code doc + event header + own head seat. */
     suspend fun publishShareCode(eventId: String, code: String, eventName: String, uid: String): Outcome<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val fs: FirebaseFirestore = Firebase.firestore
                 fs.collection("codes").document(code.uppercase())
                     .set(mapOf("eventId" to eventId, "eventName" to eventName, "createdBy" to uid)).await()
+                // Header so joiners can pull the event into their Room.
+                runCatching {
+                    val local = database.eventDao().observeEvent(eventId).first()
+                    if (local != null) {
+                        fs.collection("events").document(eventId)
+                            .set(FirestoreMappers.eventToMap(local)).await()
+                    }
+                }
+                // Own head seat: rules only let the creator (globalHeadId)
+                // self-register as active/global_head — this unblocks isCollector.
+                runCatching {
+                    fs.collection("events").document(eventId)
+                        .collection("members").document(uid)
+                        .set(
+                            FirestoreMappers.memberToMap(
+                                role = "global_head", status = "active",
+                                approvedBy = uid, joinedAt = System.currentTimeMillis()
+                            )
+                        ).await()
+                }
+                prefs.setMyRole(eventId, SessionPrefs.ROLE_GLOBAL_HEAD)
                 prefs.putShareCode(eventId, code.uppercase())
                 prefs.putShareCodeReverse(code.uppercase(), eventId)
             }.fold(
@@ -140,7 +171,7 @@ class FirestoreSyncService(
             )
         }
 
-    /** Join by typed code: resolves the event, then files a pending membership. */
+    /** Join by typed code: pull the header into Room, then file a pending membership. */
     suspend fun requestToJoin(code: String, uid: String): Outcome<String> =
         withContext(Dispatchers.IO) {
             runCatching {
@@ -148,6 +179,12 @@ class FirestoreSyncService(
                 val codeDoc = Firebase.firestore.collection("codes").document(normalized).get().await()
                 val eventId = codeDoc.getString("eventId")
                     ?: throw IllegalStateException("Invite code not found.")
+                // Header into Room so the dashboard leaves its empty state.
+                val header = Firebase.firestore.collection("events").document(eventId).get().await()
+                val remote = header.data?.let { FirestoreMappers.eventFromMap(eventId, it) }
+                    ?: throw IllegalStateException("Event no longer shared.")
+                database.eventDao().upsert(remote)
+                prefs.setCurrentEventId(eventId)
                 Firebase.firestore.collection("events").document(eventId)
                     .collection("members").document(uid)
                     .set(
@@ -213,6 +250,43 @@ class FirestoreSyncService(
             onSuccess = { Outcome.Ok(Unit) },
             onFailure = { Outcome.Err(it.message ?: "Could not update member.") }
         )
+    }
+
+    /**
+     * P4 re-fetch guard: which exact rendering (hash of text+language+speaker
+     * +roster) was cloud-generated, when, and by whom. Firestore-only —
+     * never Room (no migration). Merge-write touches only these keys so
+     * updatedAt/version (and sync comparisons) never see it as a ledger edit.
+     */
+    data class AudioMeta(val hash: String, val generatedAt: Long, val generatedBy: String)
+
+    suspend fun readAudioMeta(eventId: String, donationId: String): AudioMeta? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val doc = events().document(eventId)
+                    .collection("donations").document(donationId).get().await()
+                val hash = doc.getString("audioHash") ?: return@runCatching null
+                AudioMeta(
+                    hash = hash,
+                    generatedAt = doc.getLong("audioGeneratedAt") ?: 0L,
+                    generatedBy = doc.getString("audioGeneratedBy") ?: ""
+                )
+            }.getOrNull()
+        }
+
+    /** Best-effort stamp after a successful generation. Never throws. */
+    suspend fun stampAudioMeta(eventId: String, donationId: String, meta: AudioMeta) {
+        runCatching {
+            events().document(eventId).collection("donations").document(donationId)
+                .set(
+                    mapOf(
+                        "audioHash" to meta.hash,
+                        "audioGeneratedAt" to meta.generatedAt,
+                        "audioGeneratedBy" to meta.generatedBy
+                    ),
+                    SetOptions.merge()
+                ).await()
+        }
     }
 
     /** Global-head-only TTS key sync (plan §13): read for all, write for head. */

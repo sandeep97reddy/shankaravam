@@ -24,11 +24,14 @@ class FirestoreMappersTest {
 
     @Test
     fun donation_round_trip_preserves_ledger_fields() {
-        val map = FirestoreMappers.donationToMap(donation())
+        val map = FirestoreMappers.donationToMap(donation(), "device-123")
         // Local-only artifacts must never be uploaded.
         assertFalse(map.containsKey("audioStatus"))
         assertFalse(map.containsKey("notes"))
         assertFalse(map.containsKey("syncStatus"))
+        // Attribution: addedBy is the counter name, deviceId is the real install id.
+        assertEquals("collector", map["addedBy"])
+        assertEquals("device-123", map["deviceId"])
 
         val back = FirestoreMappers.donationFromMap("d1", "e1", map)
         assertNotNull(back)
@@ -44,6 +47,25 @@ class FirestoreMappersTest {
     @Test
     fun donation_from_map_rejects_missing_donor() {
         assertNull(FirestoreMappers.donationFromMap("d", "e", mapOf("amount" to 5.0)))
+    }
+
+    @Test
+    fun event_header_round_trip_for_joiners() {
+        val map = mapOf(
+            "name" to "Vinayaka Chavithi",
+            "templeName" to "Siva Temple",
+            "location" to "Main Road",
+            "status" to "active",
+            "globalHeadId" to "uid-head",
+            "createdAt" to 1000L,
+            "updatedAt" to 2000L
+        )
+        val back = FirestoreMappers.eventFromMap("e1", map)
+        assertNotNull(back)
+        assertEquals("Vinayaka Chavithi", back.name)
+        assertEquals("uid-head", back.globalHeadId)
+        assertEquals("SYNCED", back.syncStatus)
+        assertNull(FirestoreMappers.eventFromMap("e", mapOf("templeName" to "x")))
     }
 
     @Test

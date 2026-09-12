@@ -144,11 +144,11 @@ fun buildRosterItemAnnouncement(
     val teluguName = donation.pronunciationText?.ifBlank { null } ?: donation.donorName
     val honorific = honorificTe(donation)
     val telugu = if (!donation.isNonCash) {
-        "$honorific $teluguName గారు, ${TeluguNumberFormatter.wordsForAmount(donation.amount)}."
+        "$honorific $teluguName గారు, ${safeWordsForAmount(donation.amount)}."
     } else {
         val item = donation.itemDescription?.ifBlank { null } ?: "సేవ"
         val qty = donation.quantity?.let { q ->
-            if (q % 1.0 == 0.0 && q < 100_000) "${TeluguNumberFormatter.wordsForNumber(q.toLong())} " else "$q "
+            if (q.isFinite() && q >= 0 && q % 1.0 == 0.0 && q < 100_000) "${safeWordsForNumber(q.toLong())} " else if (q.isFinite() && q >= 0) "$q " else ""
         } ?: ""
         val unit = donation.unit?.ifBlank { null }?.let { "$it " } ?: ""
         "$honorific $teluguName గారు, $qty$unit$item."
@@ -197,11 +197,11 @@ private fun teluguSingleAnnouncement(donation: Donation, name: String, event: St
     val honorific = honorificTe(donation)
     return if (!donation.isNonCash) {
         "$honorific $name గారు $event కోసం " +
-            "${TeluguNumberFormatter.wordsForAmount(donation.amount)} విరాళంగా అందించారు. $thanks"
+            "${safeWordsForAmount(donation.amount)} విరాళంగా అందించారు. $thanks"
     } else {
         val item = donation.itemDescription?.ifBlank { null } ?: "సేవ"
         val qty = donation.quantity?.let { q ->
-            if (q % 1.0 == 0.0 && q < 100_000) "${TeluguNumberFormatter.wordsForNumber(q.toLong())} " else "$q "
+            if (q.isFinite() && q >= 0 && q % 1.0 == 0.0 && q < 100_000) "${safeWordsForNumber(q.toLong())} " else if (q.isFinite() && q >= 0) "$q " else ""
         } ?: ""
         val unit = donation.unit?.ifBlank { null }?.let { "$it " } ?: ""
         "$honorific $name గారు $event కోసం $qty$unit$item విరాళంగా అందించారు. $thanks"
@@ -226,3 +226,10 @@ private fun englishSingleAnnouncement(donation: Donation, event: String): String
 
 /** Short line spoken before any public test so the organizer can check levels. */
 const val AUDIO_TEST_LINE = "పరీక్ష. ఆడియో సరిగ్గా పనిచేస్తోంది."
+
+/** Crash-proof wrappers: formatters never throw now, this guards any future regression. */
+private fun safeWordsForAmount(amount: Double): String =
+    runCatching { TeluguNumberFormatter.wordsForAmount(amount) }.getOrDefault("సున్నా రూపాయలు")
+
+private fun safeWordsForNumber(n: Long): String =
+    runCatching { TeluguNumberFormatter.wordsForNumber(n) }.getOrDefault("సున్నా")

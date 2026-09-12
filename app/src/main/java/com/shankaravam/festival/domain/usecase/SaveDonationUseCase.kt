@@ -39,7 +39,8 @@ class SaveDonationUseCase(
         addedBy: String = ""
     ): Outcome<Donation> {
         if (donorName.isBlank()) return Outcome.Err("Donor name is required")
-        if (amount < 0) return Outcome.Err("Amount cannot be negative")
+        if (!amount.isFinite() || amount < 0) return Outcome.Err("Amount cannot be negative")
+        if (quantity != null && (!quantity.isFinite() || quantity < 0)) return Outcome.Err("Quantity is invalid")
         if (isNonCash && itemDescription.isNullOrBlank()) {
             return Outcome.Err("Item description is required for non-cash donations")
         }

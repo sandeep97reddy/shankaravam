@@ -220,9 +220,9 @@ private fun CreateEventModernDialog(
     var error by remember { mutableStateOf(false) }
 
     val festivalPresets = if (strings.languageCode == "te") {
-        listOf("వినాయక చవితి 2026", "శ్రీరామ నవమి", "దేవీ నవరాత్రులు", "హనుమాన్ జయంతి", "మహా శివరాత్రి")
+        listOf("వినాయక చవితి", "శ్రీరామ నవమి", "దేవీ నవరాత్రులు", "హనుమాన్ జయంతి", "మహా శివరాత్రి")
     } else {
-        listOf("Vinayaka Chavithi 2026", "Sri Rama Navami", "Devi Navaratri", "Hanuman Jayanthi", "Maha Shivaratri")
+        listOf("Vinayaka Chavithi", "Sri Rama Navami", "Devi Navaratri", "Hanuman Jayanthi", "Maha Shivaratri")
     }
 
     AlertDialog(
@@ -276,7 +276,7 @@ private fun CreateEventModernDialog(
                     onValueChange = { name = it; error = false },
                     label = strings.eventNameLabel,
                     isRequired = true,
-                    placeholder = if (strings.languageCode == "te") "ఉదా: వినాయక చవితి 2026" else "e.g. Vinayaka Chavithi 2026",
+                    placeholder = if (strings.languageCode == "te") "ఉదా: వినాయక చవితి" else "e.g. Vinayaka Chavithi",
                     leadingIcon = Icons.Filled.Festival,
                     singleLine = true,
                     isError = error,

@@ -26,9 +26,9 @@ object TeluguNumberFormatter {
         6 to "అరవై", 7 to "డెబ్బై", 8 to "ఎనభై", 9 to "తొంభై"
     )
 
-    /** Words for a non-negative whole number (0..999,99,99,999). */
+    /** Words for a whole number. Never throws — invalid input falls back to zero. */
     fun wordsForNumber(n: Long): String {
-        require(n >= 0) { "negative numbers are not announced" }
+        if (n < 0) return ONES[0]
         if (n < 20) return ONES[n.toInt()]
         if (n < 100) {
             val ten = TENS[(n / 10).toInt()]!!
@@ -63,9 +63,9 @@ object TeluguNumberFormatter {
         return withRemainder(head, rem)
     }
 
-    /** "ఐదు వేల రూపాయలు", "నూట ఒక రూపాయి", "వెయ్యి నూట పదహారు రూపాయలు" */
+    /** "ఐదు వేల రూపాయలు", "నూట ఒక రూపాయి", "వెయ్యి నూట పదహారు రూపాయలు". Never throws. */
     fun wordsForAmount(amount: Double): String {
-        require(amount >= 0) { "negative amounts are not announced" }
+        if (!amount.isFinite() || amount < 0) return "సున్నా రూపాయలు"
         val whole = amount.toLong()
         var paise = ((amount - whole) * 100).roundToLong()
         var rupees = whole

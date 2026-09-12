@@ -71,7 +71,8 @@ fun DonationDetailSheet(
                 if (donation.isNonCash) {
                     listOfNotNull(
                         donation.quantity?.let { q ->
-                            (if (q % 1.0 == 0.0) q.toLong().toString() else q.toString())
+                            if (!q.isFinite()) null
+                            else (if (q % 1.0 == 0.0) q.toLong().toString() else q.toString())
                         },
                         donation.unit,
                         donation.itemDescription
@@ -97,7 +98,8 @@ fun DonationDetailSheet(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        buildAnnouncementPreview(donation, eventName.ifBlank { "ఉత్సవం" }),
+                        runCatching { buildAnnouncementPreview(donation, eventName.ifBlank { "ఉత్సవం" }) }
+                            .getOrDefault("పరీక్ష. ఆడియో సరిగ్గా పనిచేస్తోంది."),
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
@@ -106,6 +108,8 @@ fun DonationDetailSheet(
             CorrectionHistory(donationId = donation.id)
 
             SinglePlayButton(donation = donation, eventName = eventName)
+
+            ImportAudioButton(donation = donation)
 
             CorrectEntryButton(donation = donation)
             Spacer(Modifier.height(4.dp))
@@ -167,8 +171,9 @@ private fun SinglePlayButton(donation: Donation, eventName: String) {
     val container = rememberContainer()
     var playing by remember(donation.id) { mutableStateOf(false) }
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+    val nativeReady by container.ttsEngine.nativeReady.collectAsState(initial = false)
     DisposableEffect(donation.id) {
-        onDispose { container.ttsEngine.stopAll() }
+        onDispose { runCatching { container.ttsEngine.stopAll() } }
     }
     val language = when (container.sessionPrefs.queueLanguage) {
         SessionPrefs.LANG_ENGLISH -> AnnouncementLanguage.ENGLISH
@@ -177,23 +182,78 @@ private fun SinglePlayButton(donation: Donation, eventName: String) {
     }
     Button(
         onClick = {
-            if (playing) {
-                container.ttsEngine.stopAll()
-                playing = false
-            } else {
-                playing = true
-                container.ttsEngine.playBest(
-                    donation,
-                    eventName,
-                    language,
-                    onDone = { mainHandler.post { playing = false } },
-                    onError = { mainHandler.post { playing = false } }
-                )
-            }
+            runCatching {
+                if (playing) {
+                    container.ttsEngine.stopAll()
+                    playing = false
+                } else {
+                    playing = true
+                    container.ttsEngine.playBest(
+                        donation,
+                        eventName,
+                        language,
+                        onDone = { mainHandler.post { playing = false } },
+                        onError = { mainHandler.post { playing = false } }
+                    )
+                }
+            }.onFailure { mainHandler.post { playing = false } }
         },
         modifier = Modifier.fillMaxWidth()
     ) {
-        Text(if (playing) "Stop preview" else "Play announcement")
+        Text(if (playing) "Stop preview" else if (nativeReady) "Play announcement" else "Loading Telugu voice…")
+    }
+}
+
+/**
+ * Shared-clip import (P4): picks one audio file (e.g. WhatsApp share —
+ * human-recorded or Sarvam, bytes are bytes) into this row's full-clip slot.
+ * Roster mode falls back to it when no _roster.mp3 exists. Never throws.
+ */
+@Composable
+private fun ImportAudioButton(donation: Donation) {
+    val container = rememberContainer()
+    val scope = rememberCoroutineScope()
+    var importing by remember(donation.id) { mutableStateOf(false) }
+    var error by remember(donation.id) { mutableStateOf<String?>(null) }
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        importing = true
+        error = null
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val failure = runCatching {
+                val dir = java.io.File(container.appContext.cacheDir, "audio")
+                    .apply { if (!exists()) mkdirs() }
+                val dest = java.io.File(dir, "donation_${donation.id}.mp3")
+                container.appContext.contentResolver.openInputStream(uri)?.use { input ->
+                    dest.outputStream().use { output -> input.copyTo(output) }
+                } ?: throw java.io.IOException("Could not read that file")
+                if (dest.length() == 0L) throw java.io.IOException("Empty audio file")
+                if (dest.length() > com.shankaravam.festival.data.local.SessionPrefs.AUDIO_IMPORT_MAX_BYTES) {
+                    runCatching { dest.delete() }
+                    throw java.io.IOException("File too large (5 MB max)")
+                }
+                container.donationRepository.updateAudioStatus(
+                    donation.id,
+                    com.shankaravam.festival.domain.model.AudioStatus.READY
+                )
+            }.exceptionOrNull()
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                importing = false
+                error = failure?.message
+            }
+        }
+    }
+    OutlinedButton(
+        onClick = { picker.launch("audio/*") },
+        enabled = !importing,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(if (importing) "Importing…" else "Import shared audio")
+    }
+    error?.let {
+        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
     }
 }
 

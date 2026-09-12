@@ -38,6 +38,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -76,6 +77,10 @@ fun AnnouncementQueueScreen(
     viewModel: AnnouncementQueueViewModel = containerViewModel { AnnouncementQueueViewModel(it) }
 ) {
     val state by viewModel.uiState.collectAsState()
+    val importReport by viewModel.importReport.collectAsState()
+    val rosterPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents()
+    ) { uris -> viewModel.importRosterClips(uris) }
 
     Scaffold(
         modifier = modifier,
@@ -103,6 +108,13 @@ fun AnnouncementQueueScreen(
         ) {
             item { RouteCard(state.route.displayName(), state.testingAudio, state.nativeReady) { viewModel.testAudio() } }
             item { VoiceSettingsCard() }
+            item {
+                RosterImportCard(
+                    report = importReport,
+                    onPick = { rosterPicker.launch("audio/*") },
+                    onDismissReport = { viewModel.consumeImportReport() }
+                )
+            }
             item {
                 TransportCard(
                     state = state,
@@ -188,15 +200,15 @@ private fun VoiceSettingsCard() {
     val container = rememberContainer()
     val prefs = remember { container.sessionPrefs }
     val secureKeys = remember { container.secureKeys }
-    var key by remember { mutableStateOf(secureKeys.getSarvamKey()) }
+    var draft by remember { mutableStateOf(secureKeys.getSarvamKey()) }
     var speaker by remember { mutableStateOf(prefs.sarvamSpeaker) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Voice", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             OutlinedTextField(
-                value = key,
-                onValueChange = { key = it; secureKeys.setSarvamKey(it) },
+                value = draft,
+                onValueChange = { draft = it },
                 label = { Text("Sarvam API key (optional)") },
                 placeholder = { Text("Empty = offline voice") },
                 singleLine = true,
@@ -204,6 +216,23 @@ private fun VoiceSettingsCard() {
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth()
             )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        secureKeys.setSarvamKey(draft)
+                        prefs.sarvamSpeaker = speaker
+                    },
+                    enabled = draft.trim() != secureKeys.getSarvamKey().trim(),
+                    modifier = Modifier.weight(1f)
+                ) { Text("Save key") }
+                OutlinedButton(
+                    onClick = {
+                        secureKeys.setSarvamKey("")
+                        draft = ""
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Clear") }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("meera", "arvind").forEach { option ->
                     FilterChip(
@@ -217,6 +246,30 @@ private fun VoiceSettingsCard() {
                 "Cloud audio is cached on this device only — never uploaded. Key is stored encrypted.",
                 style = MaterialTheme.typography.bodySmall
             )
+        }
+    }
+}
+
+@Composable
+private fun RosterImportCard(
+    report: String?,
+    onPick: () -> Unit,
+    onDismissReport: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Shared roster clips", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Pick shared mp3 clips in one batch — each is matched to a donor by name. Unmatched files are reported, never force-attached.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            OutlinedButton(onClick = onPick, modifier = Modifier.fillMaxWidth()) {
+                Text("Import roster clips")
+            }
+            report?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = onDismissReport) { Text("Dismiss") }
+            }
         }
     }
 }

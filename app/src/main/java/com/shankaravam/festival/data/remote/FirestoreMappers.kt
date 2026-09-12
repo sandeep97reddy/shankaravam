@@ -16,7 +16,7 @@ object FirestoreMappers {
 
     // ---- donations ----
 
-    fun donationToMap(e: DonationEntity): Map<String, Any?> = mapOf(
+    fun donationToMap(e: DonationEntity, deviceId: String = ""): Map<String, Any?> = mapOf(
         "donorName" to e.donorName,
         "pronunciationText" to e.pronunciationText,
         "honorific" to e.honorific,
@@ -31,7 +31,7 @@ object FirestoreMappers {
         "status" to e.status,
         "announcementEnabled" to e.announcementEnabled,
         "addedBy" to e.addedBy,
-        "deviceId" to e.addedBy,
+        "deviceId" to deviceId,
         "createdAt" to e.createdAt,
         "updatedAt" to e.updatedAt,
         "version" to e.version
@@ -68,7 +68,7 @@ object FirestoreMappers {
 
     // ---- expenses ----
 
-    fun expenseToMap(e: ExpenseEntity): Map<String, Any?> = mapOf(
+    fun expenseToMap(e: ExpenseEntity, deviceId: String = ""): Map<String, Any?> = mapOf(
         "amount" to e.amount,
         "description" to e.description,
         "category" to e.category,
@@ -77,6 +77,7 @@ object FirestoreMappers {
         "paymentMethod" to e.paymentMethod,
         "vendor" to e.vendor,
         "addedBy" to e.addedBy,
+        "deviceId" to deviceId,
         "createdAt" to e.createdAt,
         "updatedAt" to e.updatedAt,
         "status" to e.status,
@@ -132,6 +133,29 @@ object FirestoreMappers {
         "createdAt" to e.createdAt,
         "updatedAt" to e.updatedAt
     )
+
+    /** Joiner-side pull: never null for a valid header doc; local-only columns reset. */
+    fun eventFromMap(id: String, map: Map<String, Any?>): EventEntity? {
+        val name = map["name"] as? String ?: return null
+        val now = System.currentTimeMillis()
+        return EventEntity(
+            id = id,
+            name = name,
+            templeName = map["templeName"] as? String ?: "",
+            location = map["location"] as? String ?: "",
+            startDateMillis = (map["startDate"] as? Number)?.toLong(),
+            endDateMillis = (map["endDate"] as? Number)?.toLong(),
+            defaultLanguage = "te",
+            status = ((map["status"] as? String)?.uppercase() ?: "ACTIVE"),
+            globalHeadId = map["globalHeadId"] as? String ?: "",
+            creatorId = "",
+            deviceId = "",
+            createdAt = (map["createdAt"] as? Number)?.toLong() ?: now,
+            updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: now,
+            version = 1L,
+            syncStatus = "SYNCED"
+        )
+    }
 
     // ---- members / codes / config ----
 

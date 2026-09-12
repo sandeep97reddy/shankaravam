@@ -90,6 +90,7 @@ class ExpenseListViewModel(private val container: AppContainer) : ViewModel() {
             error.value = "Cancelling expenses needs a collector role."
             return
         }
+        val who = actor.ifBlank { container.sessionPrefs.attributionName() }
         viewModelScope.launch {
             val now = System.currentTimeMillis()
             repo.cancel(expense.id, now)
@@ -99,7 +100,7 @@ class ExpenseListViewModel(private val container: AppContainer) : ViewModel() {
                     eventId = expense.eventId,
                     actionType = ActivityActions.RECORD_CANCELLED,
                     details = expense.id,
-                    actorId = actor,
+                    actorId = who,
                     timestamp = now
                 )
             )
@@ -112,6 +113,7 @@ class ExpenseListViewModel(private val container: AppContainer) : ViewModel() {
             error.value = "Fixing entries needs a collector role."
             return
         }
+        val who = actor.ifBlank { container.sessionPrefs.attributionName() }
         viewModelScope.launch {
             when (
                 val result = container.correctRecord(
@@ -122,7 +124,7 @@ class ExpenseListViewModel(private val container: AppContainer) : ViewModel() {
                     addedTimeMillis = expense.addedTime,
                     newAmount = newAmount,
                     reason = reason,
-                    correctedBy = actor
+                    correctedBy = who
                 ) {
                     val now = System.currentTimeMillis()
                     repo.save(

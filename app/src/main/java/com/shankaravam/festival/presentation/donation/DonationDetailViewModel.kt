@@ -36,6 +36,7 @@ class DonationDetailViewModel(
         if (!AccessPolicy.canCorrect(roleOf(container.sessionPrefs.myRole(donation.eventId)))) {
             return Outcome.Err("Fixing entries needs a collector role.")
         }
+        val who = actor.ifBlank { container.sessionPrefs.attributionName() }
         return container.correctRecord(
             eventId = donation.eventId,
             targetRecordId = donation.id,
@@ -44,7 +45,7 @@ class DonationDetailViewModel(
             addedTimeMillis = donation.addedTime,
             newAmount = newAmount,
             reason = reason,
-            correctedBy = actor
+            correctedBy = who
         ) {
             val now = System.currentTimeMillis()
             container.donationRepository.save(

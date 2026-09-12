@@ -5,9 +5,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.shankaravam.festival.core.audio.AudioRoute
 import com.shankaravam.festival.core.tts.AnnouncementLanguage
+import com.shankaravam.festival.core.tts.ClipDonor
 import com.shankaravam.festival.core.tts.FestivalPreset
+import com.shankaravam.festival.core.tts.audioHashFor
 import com.shankaravam.festival.core.tts.buildClosingAnnouncement
+import com.shankaravam.festival.core.tts.buildDonationAnnouncement
 import com.shankaravam.festival.core.tts.buildOpeningAnnouncement
+import com.shankaravam.festival.core.tts.buildRosterItemAnnouncement
+import com.shankaravam.festival.core.tts.matchRosterClips
 import com.shankaravam.festival.core.tts.presetForEventName
 import com.shankaravam.festival.data.local.SessionPrefs
 import com.shankaravam.festival.di.AppContainer
@@ -62,7 +67,7 @@ data class QueueUiState(
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class AnnouncementQueueViewModel(container: AppContainer) : ViewModel() {
+class AnnouncementQueueViewModel(private val container: AppContainer) : ViewModel() {
 
     private val prefs: SessionPrefs = container.sessionPrefs
     private val engine = container.ttsEngine
@@ -70,6 +75,7 @@ class AnnouncementQueueViewModel(container: AppContainer) : ViewModel() {
     private val donationRepo = container.donationRepository
     private val eventRepo = container.eventRepository
     private val secureKeys = container.secureKeys
+    private val syncService = container.syncService
 
     private val sort = MutableStateFlow(prefs.queueSort)
     private val language = MutableStateFlow(prefs.queueLanguage)
@@ -86,6 +92,10 @@ class AnnouncementQueueViewModel(container: AppContainer) : ViewModel() {
     private val gapSeconds = MutableStateFlow(prefs.queueGapSeconds)
     private val testingAudio = MutableStateFlow(false)
     private val prefetchRemaining = MutableStateFlow(0)
+
+    private val _importReport = MutableStateFlow<String?>(null)
+    val importReport: StateFlow<String?> = _importReport.asStateFlow()
+    fun consumeImportReport() { _importReport.value = null }
 
     private var playedIntro = false
 
@@ -255,8 +265,8 @@ class AnnouncementQueueViewModel(container: AppContainer) : ViewModel() {
     fun pause() {
         playJob?.cancel()
         playJob = null
-        engine.pausePlayback()
-        engine.native.stop()
+        runCatching { engine.pausePlayback() }
+        runCatching { engine.native.stop() }
         isPaused.value = true
         isPlaying.value = false
     }
@@ -264,7 +274,7 @@ class AnnouncementQueueViewModel(container: AppContainer) : ViewModel() {
     fun stop() {
         playJob?.cancel()
         playJob = null
-        engine.stopAll()
+        runCatching { engine.stopAll() }
         isPlaying.value = false
         isPaused.value = false
         playedIntro = false
@@ -416,7 +426,7 @@ class AnnouncementQueueViewModel(container: AppContainer) : ViewModel() {
     }
 
     private fun resume() {
-        if (engine.resumePlayback()) {
+        if (runCatching { engine.resumePlayback() }.getOrDefault(false)) {
             isPlaying.value = true
             isPaused.value = false
             playJob = viewModelScope.launch {
@@ -458,6 +468,69 @@ class AnnouncementQueueViewModel(container: AppContainer) : ViewModel() {
         }
     }
 
+    /**
+     * Batch roster-clip import (P4): the announcer multi-picks shared clips
+     * (WhatsApp, human-recorded or Sarvam — bytes are bytes). Files match rows
+     * by donor name; leftovers are reported, never force-attached. The queue
+     * then plays them one by one with zero extra wiring.
+     */
+    fun importRosterClips(uris: List<android.net.Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val rows = uiState.value.queue
+            if (rows.isEmpty()) {
+                _importReport.value = "Queue is empty — nothing to match."
+                return@launch
+            }
+            val names = uris.map { uri -> displayNameOf(uri) ?: "clip" }
+            val result = matchRosterClips(
+                fileNames = names,
+                donors = rows.map {
+                    ClipDonor(it.id, it.donorName, it.pronunciationText)
+                }
+            )
+            var ok = 0
+            result.matched.forEach { (fileIndex, donationId) ->
+                if (copyUriToRosterSlot(uris[fileIndex], donationId)) {
+                    runCatching {
+                        donationRepo.updateAudioStatus(
+                            donationId,
+                            com.shankaravam.festival.domain.model.AudioStatus.READY
+                        )
+                    }
+                    ok++
+                }
+            }
+            val missed = result.unmatched.mapNotNull { names.getOrNull(it) }.take(5)
+            _importReport.value = buildString {
+                append("Matched $ok of ${uris.size} clips.")
+                if (missed.isNotEmpty()) append(" Unmatched: ${missed.joinToString(", ")}.")
+                if (result.unmatched.size > missed.size) append(" (+${result.unmatched.size - missed.size} more).")
+            }
+        }
+    }
+
+    private fun displayNameOf(uri: android.net.Uri): String? = runCatching {
+        container.appContext.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
+        }
+    }.getOrNull()
+
+    private fun copyUriToRosterSlot(uri: android.net.Uri, donationId: String): Boolean = runCatching {
+        val dir = java.io.File(container.appContext.cacheDir, "audio")
+            .apply { if (!exists()) mkdirs() }
+        val dest = java.io.File(dir, "donation_${donationId}_roster.mp3")
+        container.appContext.contentResolver.openInputStream(uri)?.use { input ->
+            dest.outputStream().use { output -> input.copyTo(output) }
+        } ?: return false
+        if (dest.length() == 0L || dest.length() > SessionPrefs.AUDIO_IMPORT_MAX_BYTES) {
+            runCatching { dest.delete() }
+            return false
+        }
+        true
+    }.getOrDefault(false)
+
     /** Background Sarvam prefetch for rows missing cache (silent; never blocks UI). */
     private fun prefetchWhenIdle() {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -468,7 +541,15 @@ class AnnouncementQueueViewModel(container: AppContainer) : ViewModel() {
                 // plain pref directly — migration clears it.
                 val key = secureKeys.getSarvamKey()
                 if (key.isBlank() || !state.hasEvent) return@collect
+                runCatching {
+                    engine.pruneCache(
+                        excludeIds = setOfNotNull(state.current?.id),
+                        maxFiles = SessionPrefs.AUDIO_CACHE_MAX_FILES,
+                        maxAgeDays = SessionPrefs.AUDIO_CACHE_MAX_AGE_DAYS
+                    )
+                }
                 val roster = prefs.queueRosterMode
+                val speaker = prefs.sarvamSpeaker
                 val missing = state.queue
                     .filter { it.id !in lastIds || engine.cachedFile(it.id, roster) == null }
                     .filter { engine.cachedFile(it.id, roster) == null }
@@ -479,18 +560,73 @@ class AnnouncementQueueViewModel(container: AppContainer) : ViewModel() {
                 }
                 lastIds = state.queue.map { it.id }.toSet()
                 prefetchRemaining.value = missing.size
+                // P4.5 guard only when sync is on: needs a Firestore read.
+                val guardEventId = if (prefs.cloudSyncEnabled) prefs.currentEventId.value else null
                 for (donation in missing) {
                     if (engine.cachedFile(donation.id, roster) != null) continue
-                    engine.ensureCached(
+                    val lang = languageOf()
+                    // P4.5 re-fetch guard: a peer generated this exact rendering
+                    // within 30 min → skip the call, native covers playback.
+                    if (guardEventId != null) {
+                        val hash = runCatching {
+                            val text = if (roster) buildRosterItemAnnouncement(donation, lang)
+                            else buildDonationAnnouncement(donation, state.eventName, lang)
+                            audioHashFor(text, lang.name, speaker, roster)
+                        }.getOrNull()
+                        val fresh = hash != null && runCatching {
+                            syncService.readAudioMeta(guardEventId, donation.id)
+                        }.getOrNull()?.let { meta ->
+                            meta.hash == hash &&
+                                System.currentTimeMillis() - meta.generatedAt <
+                                SessionPrefs.AUDIO_META_FRESH_MILLIS
+                        } == true
+                        if (fresh) {
+                            prefetchRemaining.value = (prefetchRemaining.value - 1).coerceAtLeast(0)
+                            continue
+                        }
+                    }
+                    // P4 budget: 10 cloud calls per 45 min per device; the rest
+                    // stay on native Telugu until the window resets.
+                    if (!prefs.takeSarvamSlot()) {
+                        prefetchRemaining.value = 0
+                        break
+                    }
+                    val file = engine.ensureCached(
                         donation = donation,
                         eventName = state.eventName,
-                        language = languageOf(),
+                        language = lang,
                         apiKey = key,
                         onStatus = { status ->
                             donationRepo.updateAudioStatus(donation.id, status)
                         },
-                        roster = roster
+                        roster = roster,
+                        speaker = speaker
                     )
+                    // Simple circuit-breaker: any Sarvam/network failure stops
+                    // this pass instead of burning the remaining rows. Native
+                    // TTS covers playback; the next queue change retries.
+                    if (file == null) {
+                        prefetchRemaining.value = 0
+                        break
+                    }
+                    // Stamp the generation so peers skip their duplicate call.
+                    if (guardEventId != null) {
+                        val by = container.authRepository.user.value?.uid
+                            ?: prefs.attributionName()
+                        runCatching {
+                            val text = if (roster) buildRosterItemAnnouncement(donation, lang)
+                            else buildDonationAnnouncement(donation, state.eventName, lang)
+                            syncService.stampAudioMeta(
+                                guardEventId,
+                                donation.id,
+                                com.shankaravam.festival.data.remote.FirestoreSyncService.AudioMeta(
+                                    hash = audioHashFor(text, lang.name, speaker, roster),
+                                    generatedAt = System.currentTimeMillis(),
+                                    generatedBy = by
+                                )
+                            )
+                        }
+                    }
                     prefetchRemaining.value = (prefetchRemaining.value - 1).coerceAtLeast(0)
                 }
             }

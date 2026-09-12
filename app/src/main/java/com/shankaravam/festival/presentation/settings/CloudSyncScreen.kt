@@ -49,6 +49,7 @@ import com.shankaravam.festival.core.theme.TempleGold
 import com.shankaravam.festival.core.util.Outcome
 import com.shankaravam.festival.core.util.generateShareCode
 import com.shankaravam.festival.core.util.isValidShareCode
+import com.shankaravam.festival.data.local.SessionPrefs
 import com.shankaravam.festival.data.remote.CloudMember
 import com.shankaravam.festival.data.remote.CloudUser
 import com.shankaravam.festival.data.work.SyncWorker
@@ -86,7 +87,13 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
     val uiState: StateFlow<UiState> =
         container.sessionPrefs.currentEventId.flatMapLatest { eventId ->
             if (eventId == null) {
-                flowOf(UiState(user = container.authRepository.user.value))
+                flowOf(
+                    UiState(
+                        user = container.authRepository.user.value,
+                        configured = container.authRepository.isConfigured,
+                        syncEnabled = container.sessionPrefs.cloudSyncEnabled
+                    )
+                )
             } else {
                 combine(
                     container.eventRepository.observeEvent(eventId),
@@ -166,8 +173,8 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
             _busy.value = "code"
             val code = container.sessionPrefs.shareCodeFor(event.id) ?: generateShareCode()
             // First publisher becomes global head on this device.
-            if (container.sessionPrefs.myRole(event.id) == "organizer") {
-                container.sessionPrefs.setMyRole(event.id, "global_head")
+            if (container.sessionPrefs.myRole(event.id) == SessionPrefs.ROLE_ORGANIZER) {
+                container.sessionPrefs.setMyRole(event.id, SessionPrefs.ROLE_GLOBAL_HEAD)
             }
             when (
                 val result = container.syncService.publishShareCode(event.id, code, event.name, uid)
@@ -189,7 +196,7 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
             _busy.value = "join"
             when (val result = container.syncService.requestToJoin(code, uid)) {
                 is Outcome.Ok -> {
-                    container.sessionPrefs.setMyRole(result.value, "member")
+                    container.sessionPrefs.setMyRole(result.value, SessionPrefs.ROLE_MEMBER)
                     _notice.value = "Request sent — the organizer approves you as collector."
                     onJoined(result.value)
                 }
@@ -329,6 +336,29 @@ fun CloudSyncScreen(
             }
             val event = state.event
             val user = state.user
+            if (event == null) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("No event yet", fontWeight = FontWeight.Bold)
+                        Text(
+                            "Create your festival event on the dashboard first — " +
+                                "invites and multi-counter sync unlock after that. " +
+                                "Everything still works 100% offline meanwhile.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            } else if (user == null) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Sign in to sync “${event.name}”", fontWeight = FontWeight.Bold)
+                        Text(
+                            "Use the Account card above. Collectors approve each other after signing in.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
             if (event != null && user != null) {
                 InviteCard(
                     eventName = event.name,
@@ -353,9 +383,9 @@ fun CloudSyncScreen(
                         }
                     )
                 }
-                OutlinedButton(onClick = onOpenAdmin, modifier = Modifier.fillMaxWidth()) {
-                    Text("Voice & admin settings")
-                }
+            }
+            OutlinedButton(onClick = onOpenAdmin, modifier = Modifier.fillMaxWidth()) {
+                Text("Voice & admin settings")
             }
             notice?.let {
                 Card(modifier = Modifier.fillMaxWidth()) {

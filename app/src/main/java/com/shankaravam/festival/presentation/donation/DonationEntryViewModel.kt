@@ -85,6 +85,7 @@ class DonationEntryViewModel(container: AppContainer) : ViewModel() {
     fun save(addedBy: String = "") {
         val eventId = currentEventId.value ?: return
         val f = _form.value
+        val who = addedBy.ifBlank { prefs.attributionName() }
         _form.update { it.copy(saveState = SaveState.Saving) }
         viewModelScope.launch {
             val result = saveDonation(
@@ -102,7 +103,7 @@ class DonationEntryViewModel(container: AppContainer) : ViewModel() {
                 status = f.status,
                 announcementEnabled = f.announcementEnabled,
                 notes = f.notes.ifBlank { null },
-                addedBy = addedBy
+                addedBy = who
             )
             _form.update {
                 when (result) {
