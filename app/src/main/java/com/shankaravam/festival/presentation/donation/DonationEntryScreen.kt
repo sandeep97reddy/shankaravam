@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -49,6 +50,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -66,11 +68,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shankaravam.festival.core.i18n.appStrings
 import com.shankaravam.festival.core.theme.TempleSaffron
+import com.shankaravam.festival.core.util.formatInr
 import com.shankaravam.festival.domain.model.DonationStatus
 import com.shankaravam.festival.domain.model.HONORIFICS
 import com.shankaravam.festival.presentation.common.ModernTextField
 import com.shankaravam.festival.presentation.common.QuickAmountRow
 import com.shankaravam.festival.presentation.common.TempleAppBar
+import com.shankaravam.festival.presentation.common.RevokedAccessBanner
 import com.shankaravam.festival.presentation.common.containerViewModel
 
 /**
@@ -113,6 +117,31 @@ fun DonationEntryScreen(
         },
         snackbarHost = { SnackbarHost(snackbar) }
     ) { padding ->
+        // 0b. Duplicate-entry guard dialog (feature #6).
+        form.duplicatePrompt?.let { dup ->
+            val gift = dup.itemLabel ?: formatInr(dup.amount)
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissDuplicate() },
+                title = { Text("రెండుసార్లు ఎంట్రీ? / Possible duplicate") },
+                text = {
+                    Text(
+                        "${dup.donorName.trim()} — $gift, just ${dup.secondsAgo}s ago. " +
+                            "Add another donation, or cancel the double-tap?"
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.confirmDuplicateSave() }) {
+                        Text("అవును, నమోదు చేయి / Add another")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.dismissDuplicate() }) {
+                        Text("రద్దు / Cancel")
+                    }
+                }
+            )
+        }
+
         if (eventId == null) {
             Column(
                 Modifier.fillMaxSize().padding(padding).padding(24.dp),
@@ -136,6 +165,9 @@ fun DonationEntryScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            // 0. Revoked-access notice (renders nothing unless revoked).
+            RevokedAccessBanner(eventId = eventId)
+
             // 1. Donor Name (Required *)
             ModernTextField(
                 value = form.donorName,

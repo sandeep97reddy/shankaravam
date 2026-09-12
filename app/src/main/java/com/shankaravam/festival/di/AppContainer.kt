@@ -84,7 +84,8 @@ class AppContainer(context: Context) {
                 sessionPrefs.nativeTtsVoice to sessionPrefs.nativeTtsSpeed
             },
             SarvamTtsClient(appContext),
-            audioFocus
+            audioFocus,
+            chimeEnabled = { sessionPrefs.playTempleChime }
         )
     }
 

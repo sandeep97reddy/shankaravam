@@ -27,6 +27,8 @@ interface DonationRepository {
     /** G6 sync bookkeeping — never bumps version (sync is not a ledger edit). */
     suspend fun updateSyncState(id: String, status: SyncStatus)
     suspend fun pendingSync(): List<Donation>
+    /** Newest row for the duplicate guard — O(1), never observes. */
+    suspend fun latestForEvent(eventId: String): Donation?
 }
 
 interface ExpenseRepository {

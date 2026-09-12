@@ -68,6 +68,7 @@ import com.shankaravam.festival.core.theme.TempleSaffron
 import com.shankaravam.festival.core.util.formatInr
 import com.shankaravam.festival.domain.usecase.BalanceSnapshot
 import com.shankaravam.festival.presentation.common.ShankaRavamDashboardHeader
+import com.shankaravam.festival.presentation.common.RevokedAccessBanner
 import com.shankaravam.festival.presentation.common.containerViewModel
 import com.shankaravam.festival.presentation.common.derivedTotal
 import com.shankaravam.festival.presentation.event.CurrentEventBanner
@@ -128,6 +129,11 @@ fun DashboardScreen(
             // 1. Current Event Selector Banner
             item {
                 CurrentEventBanner()
+            }
+
+            // 1b. Revoked-access notice (renders nothing unless revoked).
+            item {
+                RevokedAccessBanner(eventId = state.event?.id)
             }
 
             if (state.event == null) {

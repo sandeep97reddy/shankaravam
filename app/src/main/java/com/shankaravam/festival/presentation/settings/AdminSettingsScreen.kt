@@ -136,6 +136,14 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
     private val _speed = MutableStateFlow(container.sessionPrefs.nativeTtsSpeed)
     val speed: StateFlow<Float> = _speed.asStateFlow()
 
+    private val _chime = MutableStateFlow(container.sessionPrefs.playTempleChime)
+    val chimeEnabled: StateFlow<Boolean> = _chime.asStateFlow()
+
+    fun setChimeEnabled(enabled: Boolean) {
+        _chime.value = enabled
+        container.sessionPrefs.playTempleChime = enabled
+    }
+
     fun setNativeVoice(name: String?) {
         _selectedVoice.value = name
         container.sessionPrefs.nativeTtsVoice = name
@@ -332,6 +340,7 @@ fun AdminSettingsScreen(
 
             val selectedVoice by viewModel.selectedVoice.collectAsState()
             val speed by viewModel.speed.collectAsState()
+            val chime by viewModel.chimeEnabled.collectAsState()
             val teluguVoices by viewModel.nativeVoices.collectAsState()
             NativeVoiceCard(
                 voices = teluguVoices,
@@ -339,7 +348,9 @@ fun AdminSettingsScreen(
                 speed = speed,
                 onSelectVoice = { viewModel.setNativeVoice(it) },
                 onSetSpeed = { viewModel.setSpeed(it) },
-                onTestVoice = { viewModel.testNativeSpeech() }
+                onTestVoice = { viewModel.testNativeSpeech() },
+                chimeEnabled = chime,
+                onSetChime = { viewModel.setChimeEnabled(it) }
             )
 
             if (AccessPolicy.canCloseEvent(state.role)) {
@@ -452,7 +463,9 @@ private fun NativeVoiceCard(
     speed: Float,
     onSelectVoice: (String?) -> Unit,
     onSetSpeed: (Float) -> Unit,
-    onTestVoice: () -> Unit
+    onTestVoice: () -> Unit,
+    chimeEnabled: Boolean,
+    onSetChime: (Boolean) -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -514,6 +527,12 @@ private fun NativeVoiceCard(
                 Spacer(Modifier.width(8.dp))
                 Text("Test Voice: శ్రీ రెడబోతు సందీప్ రెడ్డి గారు")
             }
+
+            FilterChip(
+                selected = chimeEnabled,
+                onClick = { onSetChime(!chimeEnabled) },
+                label = { Text("Temple bell before announcements / గంట నాదం") }
+            )
         }
     }
 }

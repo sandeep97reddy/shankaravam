@@ -38,7 +38,9 @@ data class DonationFormState(
     val status: DonationStatus = DonationStatus.RECEIVED,
     val announcementEnabled: Boolean = true,
     val notes: String = "",
-    val saveState: SaveState = SaveState.Idle
+    val saveState: SaveState = SaveState.Idle,
+    /** Set when the 60 s duplicate guard fires — the dialog owns it. */
+    val duplicatePrompt: DuplicateInfo? = null
 ) {
     val canSave: Boolean
         get() = saveState != SaveState.Saving &&
@@ -54,6 +56,7 @@ val TAG_SUGGESTIONS = listOf(
 
 class DonationEntryViewModel(container: AppContainer) : ViewModel() {
     private val saveDonation = container.saveDonation
+    private val donationRepo = container.donationRepository
     val currentEventId: StateFlow<String?> = container.sessionPrefs.currentEventId
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
@@ -66,10 +69,22 @@ class DonationEntryViewModel(container: AppContainer) : ViewModel() {
         _form.update {
             // Any edit after an error clears the error; after Saved stays until consumed.
             val next = transform(it)
-            if (it.saveState is SaveState.Error && next.saveState is SaveState.Error) {
-                next.copy(saveState = SaveState.Idle)
-            } else next
+            // Any form edit also retires a stale duplicate prompt (feature #6).
+            val unprompted = if (next.duplicatePrompt != null) next.copy(duplicatePrompt = null) else next
+            if (it.saveState is SaveState.Error && unprompted.saveState is SaveState.Error) {
+                unprompted.copy(saveState = SaveState.Idle)
+            } else unprompted
         }
+    }
+
+    /** Dialog "Add another": writes despite the guard. "Cancel" dismisses. */
+    fun confirmDuplicateSave() {
+        if (_form.value.duplicatePrompt == null) return
+        save(confirmed = true)
+    }
+
+    fun dismissDuplicate() {
+        _form.update { it.copy(duplicatePrompt = null) }
     }
 
     fun toggleTag(tag: String) = _form.update {
@@ -82,12 +97,34 @@ class DonationEntryViewModel(container: AppContainer) : ViewModel() {
         else it.copy(tags = it.tags + tag, newTagText = "")
     }
 
-    fun save(addedBy: String = "") {
+    /**
+     * Save with the 60 s duplicate guard (feature #6): first tap surfaces a
+     * confirm dialog instead of writing; [confirmDuplicateSave] re-enters
+     * with [confirmed] and writes. Any form edit clears a stale prompt.
+     */
+    fun save(addedBy: String = "", confirmed: Boolean = false) {
         val eventId = currentEventId.value ?: return
         val f = _form.value
+        if (f.duplicatePrompt != null && !confirmed) return
         val who = addedBy.ifBlank { prefs.attributionName() }
-        _form.update { it.copy(saveState = SaveState.Saving) }
+        _form.update { it.copy(saveState = SaveState.Saving, duplicatePrompt = null) }
         viewModelScope.launch {
+            if (!confirmed) {
+                val recent = runCatching { donationRepo.latestForEvent(eventId) }.getOrNull()
+                val dup = findDuplicateCandidate(
+                    recent = recent,
+                    donorName = f.donorName,
+                    amount = f.amountText.toDoubleOrNull() ?: 0.0,
+                    itemDescription = f.itemDescription.ifBlank { null },
+                    isNonCash = f.isNonCash,
+                    status = f.status,
+                    now = System.currentTimeMillis()
+                )
+                if (dup != null) {
+                    _form.update { it.copy(saveState = SaveState.Idle, duplicatePrompt = dup) }
+                    return@launch
+                }
+            }
             val result = saveDonation(
                 eventId = eventId,
                 donorName = f.donorName,

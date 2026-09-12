@@ -25,6 +25,20 @@ Legend: ⬜ todo · 🟡 in_progress · ✅ done · ⏭️ skipped (G6 may ship 
 - **S1** rules hardening (Google-pinned admin, escalation/overwrite/TTS seals, least-privilege `roleOf`) · **S2** foundation (`AdminConfig`, `CloudMember`, merge-safe mappers, scoped head override, auth-owned flag) · **S3** membership flows (admin auto-elevate, presence touch, unified roster, `setMemberRole`) · **S4** head-only team directory + Verified badges + admin-only Publish · **S5** `AdminConfigTest` (12 tests) + this pointer
 - **Next:** `firebase deploy --only firestore:rules` → two-device manual matrix (ADMIN_HEAD_PLAN App.B / S5.3)
 
+## Temple Enhancements Batch (6 features) — ✅ done 12-09-2026
+- **Status:** implemented + `assembleDebug` + `testDebugUnitTest` 85/85 green (no rules redeploy needed)
+- **#1** revoked banner (`common/AccessBanner.kt`, Dashboard + DonationEntry, EN/TE strings) · **#2** 10-day expiring + head-closeable invite codes (`isCodeLive`, grandfathering, `closeShareCode`, InviteCard button; enforcement client-side, stated in code) · **#3** repeat-last CUT — already shipped as `replay()` + transport button · **#4** temple bell chime (pure WAV synth via existing `playFile` path, toggle in Settings & Voice, pause/stop-safe) · **#5** WhatsApp receipt (no gothram — never collected; UUID short-ref; DetailSheet button; entry-screen placement skipped — screen pops on save) · **#6** 60 s duplicate guard (same donor+gift+status, cash + non-cash, confirm dialog)
+- **Tests:** +`ShareCodesTest` expiry matrix, +`TempleChimeTest` (WAV header/decay/bake-once), +`ReceiptFormatterTest`, +`DuplicateGuardTest`
+- **Next:** on-device pass — chime through the horn speaker, WhatsApp share from the ledger, revoke→banner, close-code→rejoin-rejected
+
+## Review Patch Batch (P0–P2) — ✅ done 12-09-2026
+- **Status:** `assembleDebug` + `testDebugUnitTest` 86/86 green
+- **P0** manifest `<package com.whatsapp/w4b>` visibility (detection actually works on API 30+ now) · reactive `codeTick` in CloudSync VM (InviteCard flips live on publish AND close)
+- **P1** direct WhatsApp launch with untargeted-chooser fallback + Activity-aware NEW_TASK · ThreadLocal receipt date format · clock-skew guard (`age < 0` never flags, seconds never negative) · `DonationDao.latestForEvent` O(1) wired through repo + fake
+- **P2** focus held across chime→speech handoff (`abandonOnDone=false`; errors always abandon) · roster items skip the chime (intro/outro/full announcements keep it)
+- **Tests:** +clock-skew boundary tests in `DuplicateGuardTest`
+- **Next:** on-device — WhatsApp direct-open, no ducking bounce on the horn, invite publish/close flips without leaving the screen
+
 ## Non-Negotiables (final verification, G6)
 - [x] Offline-first: fresh install works with zero login, Room = UI source of truth (Firebase guarded, sync off by default)
 - [x] Free tier: zero audio in Firebase Storage (maps exclude it), delta sync only, receipts WebP ~100KB

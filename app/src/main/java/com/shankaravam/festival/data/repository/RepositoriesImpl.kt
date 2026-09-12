@@ -64,6 +64,9 @@ class DonationRepositoryImpl(private val dao: DonationDao) : DonationRepository 
 
     override suspend fun pendingSync(): List<Donation> =
         withContext(Dispatchers.IO) { dao.pendingSync().map { it.toDomain() } }
+
+    override suspend fun latestForEvent(eventId: String): Donation? =
+        withContext(Dispatchers.IO) { dao.latestForEvent(eventId)?.toDomain() }
 }
 
 class ExpenseRepositoryImpl(private val dao: ExpenseDao) : ExpenseRepository {

@@ -98,6 +98,13 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
         val myCode: String? = null
     )
 
+    /**
+     * P0 fix: the invite code lives in SharedPreferences (not a Flow), so
+     * publish/close bumps this tick to force [uiState] to re-read it.
+     * Without this the InviteCard shows a stale code until remount.
+     */
+    private val codeTick = MutableStateFlow(0)
+
     val uiState: StateFlow<UiState> =
         container.sessionPrefs.currentEventId.flatMapLatest { eventId ->
             if (eventId == null) {
@@ -111,8 +118,9 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
             } else {
                 combine(
                     container.eventRepository.observeEvent(eventId),
-                    container.authRepository.user
-                ) { event: Event?, user: CloudUser? ->
+                    container.authRepository.user,
+                    codeTick
+                ) { event: Event?, user: CloudUser?, _ ->
                     UiState(
                         event = event,
                         user = user,
@@ -201,6 +209,28 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
                     _notice.value = "Saved offline — invite publishes on next sync. (${result.message})"
                 }
             }
+            codeTick.value += 1
+            _busy.value = null
+        }
+    }
+
+    /**
+     * Close the live invite code (feature #2, head-only): flips the cloud doc
+     * to closed and forgets the local mapping so the next publish mints a
+     * fresh code. Republishing re-opens by design (fresh 10-day window).
+     */
+    fun closeCode(eventId: String, code: String) {
+        if (!isHeadNow(eventId)) return
+        viewModelScope.launch {
+            _busy.value = "closecode"
+            when (val result = container.syncService.closeShareCode(code)) {
+                is Outcome.Ok -> {
+                    container.sessionPrefs.clearShareCode(eventId)
+                    _notice.value = "Invite closed — counters can no longer join with it."
+                }
+                is Outcome.Err -> _notice.value = result.message
+            }
+            codeTick.value += 1
             _busy.value = null
         }
     }
@@ -481,7 +511,10 @@ fun CloudSyncScreen(
                     eventName = event.name,
                     code = state.myCode,
                     busy = busy == "code",
-                    onPublish = { viewModel.publishCode(event, user.uid) }
+                    onPublish = { viewModel.publishCode(event, user.uid) },
+                    canClose = viewModel.isHeadNow(event.id),
+                    closing = busy == "closecode",
+                    onClose = { state.myCode?.let { viewModel.closeCode(event.id, it) } }
                 )
                 JoinCard(
                     code = joinCode,
@@ -529,7 +562,15 @@ fun CloudSyncScreen(
 }
 
 @Composable
-private fun InviteCard(eventName: String, code: String?, busy: Boolean, onPublish: () -> Unit) {
+private fun InviteCard(
+    eventName: String,
+    code: String?,
+    busy: Boolean,
+    onPublish: () -> Unit,
+    canClose: Boolean,
+    closing: Boolean,
+    onClose: () -> Unit
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             Modifier.padding(14.dp),
@@ -550,6 +591,14 @@ private fun InviteCard(eventName: String, code: String?, busy: Boolean, onPublis
                 )
                 Text(code, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Text("Collectors type this code — or scan — in Cloud sync.", style = MaterialTheme.typography.bodySmall)
+                Text("Codes expire 10 days after publishing.", style = MaterialTheme.typography.bodySmall)
+                // Head-only 1-tap close (feature #2): hidden from everyone
+                // else — closing is a head power, like the team directory.
+                if (canClose) {
+                    OutlinedButton(onClick = onClose, enabled = !closing) {
+                        Text(if (closing) "Closing…" else "Close invite")
+                    }
+                }
             }
         }
     }

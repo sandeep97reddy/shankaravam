@@ -26,12 +26,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import com.shankaravam.festival.core.tts.AnnouncementLanguage
+import com.shankaravam.festival.core.util.buildWhatsAppReceipt
 import com.shankaravam.festival.core.util.formatInr
 import com.shankaravam.festival.data.local.SessionPrefs
 import com.shankaravam.festival.domain.model.Donation
 import com.shankaravam.festival.presentation.common.containerViewModel
 import com.shankaravam.festival.presentation.common.rememberContainer
+import com.shankaravam.festival.presentation.common.shareTextViaWhatsApp
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -110,6 +113,8 @@ fun DonationDetailSheet(
             SinglePlayButton(donation = donation, eventName = eventName)
 
             ImportAudioButton(donation = donation)
+
+            WhatsAppReceiptButton(donation = donation, eventName = eventName)
 
             CorrectEntryButton(donation = donation)
             Spacer(Modifier.height(4.dp))
@@ -201,6 +206,27 @@ private fun SinglePlayButton(donation: Donation, eventName: String) {
         modifier = Modifier.fillMaxWidth()
     ) {
         Text(if (playing) "Stop preview" else if (nativeReady) "Play announcement" else "Loading Telugu voice…")
+    }
+}
+
+/**
+ * 1-tap WhatsApp digital receipt (feature #5): the record's own attribution
+ * ([Donation.addedBy]) is the counter truth — not whoever happens to hold
+ * the phone when sharing.
+ */
+@Composable
+private fun WhatsAppReceiptButton(donation: Donation, eventName: String) {
+    val context = LocalContext.current
+    OutlinedButton(
+        onClick = {
+            shareTextViaWhatsApp(
+                context,
+                buildWhatsAppReceipt(donation, eventName, donation.addedBy)
+            )
+        },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text("Share receipt on WhatsApp / వాట్సాప్ రసీదు")
     }
 }
 

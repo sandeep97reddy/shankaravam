@@ -1,6 +1,10 @@
 package com.shankaravam.festival.data.remote
 
+import com.shankaravam.festival.core.util.CODE_STATUS_ACTIVE
+import com.shankaravam.festival.core.util.CODE_STATUS_CLOSED
+import com.shankaravam.festival.core.util.CODE_TTL_MILLIS
 import com.shankaravam.festival.core.util.Outcome
+import com.shankaravam.festival.core.util.isCodeLive
 import com.shankaravam.festival.data.local.AppDatabase
 import com.shankaravam.festival.data.local.SessionPrefs
 import com.shankaravam.festival.domain.model.AdminConfig
@@ -178,13 +182,28 @@ class FirestoreSyncService(
 
     // ---- sharing / membership ----
 
-    /** Publish the invite code (plan §7): code doc + event header + own head seat. */
+    /**
+     * Publish the invite code (plan §7): code doc + event header + own head seat.
+     * Each (re)publish stamps a fresh 10-day window ([CODE_TTL_MILLIS]) and
+     * re-opens a previously closed code — republishing IS the re-open path.
+     * No rules change needed: create/update already pass for the creator.
+     */
     suspend fun publishShareCode(eventId: String, code: String, eventName: String, uid: String): Outcome<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val fs: FirebaseFirestore = Firebase.firestore
+                val now = System.currentTimeMillis()
                 fs.collection("codes").document(code.uppercase())
-                    .set(mapOf("eventId" to eventId, "eventName" to eventName, "createdBy" to uid)).await()
+                    .set(
+                        mapOf(
+                            "eventId" to eventId,
+                            "eventName" to eventName,
+                            "createdBy" to uid,
+                            "createdAt" to now,
+                            "expiresAt" to now + CODE_TTL_MILLIS,
+                            "status" to CODE_STATUS_ACTIVE
+                        )
+                    ).await()
                 // Header so joiners can pull the event into their Room.
                 runCatching {
                     val local = database.eventDao().observeEvent(eventId).first()
@@ -223,6 +242,23 @@ class FirestoreSyncService(
         }
 
     /**
+     * Close an invite code (feature #2): flips status to closed so
+     * [requestToJoin] rejects it. Rules already allow this for the creator
+     * or the master admin — the VM gates the button to the head. Merge-write
+     * preserves eventId/createdBy/expiry for audit.
+     */
+    suspend fun closeShareCode(code: String): Outcome<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                Firebase.firestore.collection("codes").document(code.trim().uppercase())
+                    .set(mapOf("status" to CODE_STATUS_CLOSED), SetOptions.merge()).await()
+            }.fold(
+                onSuccess = { Outcome.Ok(Unit) },
+                onFailure = { Outcome.Err(it.message ?: "Could not close invite.") }
+            )
+        }
+
+    /**
      * Join by typed code (S3.1): file membership FIRST, then pull the header.
      * Identity is stamped for the team directory (tag-only device id); the
      * whitelisted admin auto-activates as head via the S1 rules clause.
@@ -242,6 +278,13 @@ class FirestoreSyncService(
                 val codeDoc = Firebase.firestore.collection("codes").document(normalized).get().await()
                 val eventId = codeDoc.getString("eventId")
                     ?: throw IllegalStateException("Invite code not found.")
+                // Expiry/closure gate (feature #2): enforced here, client-side,
+                // for cooperative volunteers — the codes rules intentionally stay
+                // untouched (no redeploy). Pre-expiry codes lack both fields and
+                // grandfather as live (see isCodeLive).
+                if (!isCodeLive(codeDoc.getString("status"), codeDoc.getLong("expiresAt"), System.currentTimeMillis())) {
+                    throw IllegalStateException("Invite code has expired or was closed by the head.")
+                }
                 prefs.markCloudEvent(eventId)
 
                 // Identity: explicit params win, else the live auth user.

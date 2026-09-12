@@ -33,6 +33,8 @@ private class FakeDonationRepository : DonationRepository {
         now: Long
     ) = Unit
     override suspend fun pendingSync(): List<Donation> = saved.toList()
+    override suspend fun latestForEvent(eventId: String): Donation? =
+        saved.filter { it.eventId == eventId }.maxByOrNull { it.createdAt }
 }
 
 private class FakeActivityRepository : ActivityRepository {

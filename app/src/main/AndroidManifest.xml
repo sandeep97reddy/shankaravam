@@ -11,6 +11,10 @@
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
+        <!-- P0 fix: without these, getPackageInfo(WHATSAPP) always throws on
+             API 30+ and receipt sharing silently degrades to the chooser. -->
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
     </queries>
 
     <application

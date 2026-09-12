@@ -15,6 +15,14 @@ interface DonationDao {
     @Query("SELECT * FROM donations WHERE id = :id")
     fun observeById(id: String): Flow<DonationEntity?>
 
+    /**
+     * P1 fix: the duplicate guard needs exactly one row. Loading the whole
+     * event ledger (observeForEvent + maxBy) is O(N) memory per save tap —
+     * this is O(1). createdAt (not addedTime) matches the guard's clock.
+     */
+    @Query("SELECT * FROM donations WHERE eventId = :eventId ORDER BY createdAt DESC LIMIT 1")
+    suspend fun latestForEvent(eventId: String): DonationEntity?
+
     /** Rows awaiting WorkManager delta upload (G6). Suspend: one-shot, never observed by UI. */
     @Query("SELECT * FROM donations WHERE syncStatus IN ('LOCAL_ONLY','PENDING_UPLOAD','SYNC_FAILED') ORDER BY createdAt ASC")
     suspend fun pendingSync(): List<DonationEntity>

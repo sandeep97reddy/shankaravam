@@ -20,10 +20,14 @@ class DualTtsEngine(
     context: Context,
     val native: AndroidTtsClient,
     private val sarvam: SarvamTtsClient,
-    private val audioFocus: AudioFocusManager
+    private val audioFocus: AudioFocusManager,
+    /** Device-local toggle (Settings & Voice); default on for immersion. */
+    private val chimeEnabled: () -> Boolean = { true }
 ) {
     private val appContext = context.applicationContext
     private var player: MediaPlayer? = null
+    /** True while the 800 ms chime owns the player — pause() won't grab it. */
+    @Volatile private var inChime = false
 
     val nativeReady: StateFlow<Boolean> = native.ready
 
@@ -81,6 +85,48 @@ class DualTtsEngine(
         }.onFailure { runCatching { audioFocus.abandon() }; runCatching { onError() } }
     }
 
+    /**
+     * Temple chime gate (feature #4): plays the baked bell WAV first, then
+     * [action]. Same player, same focus, same routing — and stopAll() kills a
+     * mid-chime announcement like any other. Falls straight through to
+     * [action] when the toggle is off, [chime] is false, or the bake failed.
+     * Never throws. playTestLine deliberately bypasses this (dry voice), and
+     * roster items pass chime=false — a bell every ~3 s would fatigue a pandal;
+     * the opening intro keeps the immersion.
+     *
+     * Focus is held across the handoff (P2 fix): the chime stage plays with
+     * abandonOnDone=false, so background music never un-ducks for a beat
+     * between bell and speech. request() is idempotent, so the speech stage
+     * re-request is a no-op that keeps ownership continuous.
+     */
+    private fun withChime(
+        onDone: () -> Unit,
+        onError: () -> Unit,
+        chime: Boolean = true,
+        action: () -> Unit
+    ) {
+        val chimeFile = if (chime && runCatching { chimeEnabled() }.getOrDefault(true)) {
+            ensureChimeFile(File(appContext.cacheDir, "audio"))
+        } else null
+        if (chimeFile == null) {
+            runCatching { action() }.onFailure { runCatching { onError() } }
+            return
+        }
+        inChime = true
+        playFileInternal(
+            chimeFile,
+            abandonOnDone = false,
+            onDone = {
+                inChime = false
+                runCatching { action() }.onFailure { runCatching { onError() } }
+            },
+            onError = {
+                inChime = false
+                runCatching { onError() }
+            }
+        )
+    }
+
     /** Highest quality for this row: cached Sarvam mp3, else native TTS. Never throws. */
     fun playBest(
         donation: Donation,
@@ -89,16 +135,18 @@ class DualTtsEngine(
         onDone: () -> Unit,
         onError: () -> Unit
     ) {
-        runCatching {
-            val cached = sarvam.cachedFile(donation.id)
-            if (cached != null) {
-                playFile(cached, onDone, onError)
-            } else {
-                speakNative(buildDonationAnnouncement(donation, eventName, language), onDone, onError)
+        withChime(onDone, onError) {
+            runCatching {
+                val cached = sarvam.cachedFile(donation.id)
+                if (cached != null) {
+                    playFile(cached, onDone, onError)
+                } else {
+                    speakNative(buildDonationAnnouncement(donation, eventName, language), onDone, onError)
+                }
+            }.onFailure {
+                runCatching { speakNative(AUDIO_TEST_LINE, onDone, onError) }
+                    .onFailure { runCatching { onError() } }
             }
-        }.onFailure {
-            runCatching { speakNative(AUDIO_TEST_LINE, onDone, onError) }
-                .onFailure { runCatching { onError() } }
         }
     }
 
@@ -112,20 +160,22 @@ class DualTtsEngine(
         onDone: () -> Unit,
         onError: () -> Unit
     ) {
-        runCatching {
-            sarvam.cachedFile(donation.id, roster = true)?.let {
-                playFile(it, onDone, onError)
-                return
+        withChime(onDone, onError, chime = false) {
+            runCatching {
+                sarvam.cachedFile(donation.id, roster = true)?.let {
+                    playFile(it, onDone, onError)
+                    return@withChime
+                }
+                // Imported full clip (e.g. WhatsApp share) doubles as the roster line.
+                sarvam.cachedFile(donation.id)?.let {
+                    playFile(it, onDone, onError)
+                    return@withChime
+                }
+                speakNative(buildRosterItemAnnouncement(donation, language), onDone, onError)
+            }.onFailure {
+                runCatching { speakNative(AUDIO_TEST_LINE, onDone, onError) }
+                    .onFailure { runCatching { onError() } }
             }
-            // Imported full clip (e.g. WhatsApp share) doubles as the roster line.
-            sarvam.cachedFile(donation.id)?.let {
-                playFile(it, onDone, onError)
-                return
-            }
-            speakNative(buildRosterItemAnnouncement(donation, language), onDone, onError)
-        }.onFailure {
-            runCatching { speakNative(AUDIO_TEST_LINE, onDone, onError) }
-                .onFailure { runCatching { onError() } }
         }
     }
 
@@ -135,10 +185,24 @@ class DualTtsEngine(
         onDone: () -> Unit,
         onError: () -> Unit
     ) {
-        speakNative(text, onDone, onError)
+        withChime(onDone, onError) { speakNative(text, onDone, onError) }
     }
 
     fun playFile(file: File, onDone: () -> Unit, onError: () -> Unit) {
+        playFileInternal(file, abandonOnDone = true, onDone = onDone, onError = onError)
+    }
+
+    /**
+     * P2 fix: [abandonOnDone]=false keeps focus held when a chained stage
+     * follows (chime → speech). Errors ALWAYS abandon — a dead stage must
+     * never strand focus. The public [playFile] keeps classic behavior.
+     */
+    private fun playFileInternal(
+        file: File,
+        abandonOnDone: Boolean,
+        onDone: () -> Unit,
+        onError: () -> Unit
+    ) {
         runCatching { stopPlayback() }
         runCatching { audioFocus.request() }
         try {
@@ -151,7 +215,7 @@ class DualTtsEngine(
                 setAudioAttributes(audioFocus.attributes)
                 setDataSource(file.absolutePath)
                 setOnCompletionListener {
-                    runCatching { audioFocus.abandon() }
+                    if (abandonOnDone) runCatching { audioFocus.abandon() }
                     runCatching { onDone() }
                 }
                 setOnErrorListener { _, _, _ ->
@@ -170,6 +234,10 @@ class DualTtsEngine(
 
     fun pausePlayback(): Boolean =
         runCatching {
+            // The 800 ms chime is never grabbed mid-ring: pausing it would
+            // strand the queued speech (resume-poll sees a dead player and
+            // skips ahead). The VM restarts the item instead.
+            if (inChime) return false
             val active = player
             if (active?.isPlaying == true) {
                 active.pause()
@@ -193,6 +261,7 @@ class DualTtsEngine(
     }
 
     fun stopAll() {
+        inChime = false
         runCatching { stopPlayback() }
         runCatching { native.stop() }
         runCatching { audioFocus.abandon() }

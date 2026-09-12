@@ -91,6 +91,11 @@ class SessionPrefs(context: Context) {
         get() = prefs.getBoolean(KEY_QUEUE_ROSTER_MODE, true)
         set(value) = prefs.edit().putBoolean(KEY_QUEUE_ROSTER_MODE, value).apply()
 
+    /** Temple bell before announcements (feature #4): on by default. */
+    var playTempleChime: Boolean
+        get() = prefs.getBoolean(KEY_TEMPLE_CHIME, true)
+        set(value) = prefs.edit().putBoolean(KEY_TEMPLE_CHIME, value).apply()
+
     var queueFestivalPreset: String
         get() = prefs.getString(KEY_QUEUE_PRESET, "VINAYAKA_CHAVITHI") ?: "VINAYAKA_CHAVITHI"
         set(value) = prefs.edit().putString(KEY_QUEUE_PRESET, value).apply()
@@ -208,6 +213,17 @@ class SessionPrefs(context: Context) {
         prefs.edit().putString(KEY_CODE_REV + code.uppercase(), eventId).apply()
     }
 
+    /**
+     * Forget the local invite mapping (feature #2, after the head closes the
+     * code). The Invite card flips back to "Create invite code", which mints a
+     * FRESH code — a closed cloud code is never silently resurrected.
+     */
+    fun clearShareCode(eventId: String) {
+        val code = shareCodeFor(eventId)
+        prefs.edit().remove(KEY_CODE + eventId).apply()
+        if (code != null) prefs.edit().remove(KEY_CODE_REV + code.uppercase()).apply()
+    }
+
     companion object {
         private const val FILE = "shankaravam_prefs"
         private const val KEY_EVENT = "current_event_id"
@@ -239,6 +255,7 @@ class SessionPrefs(context: Context) {
         private const val KEY_NATIVE_VOICE = "native_tts_voice"
         private const val KEY_NATIVE_SPEED = "native_tts_speed"
         private const val KEY_QUEUE_ROSTER_MODE = "queue_roster_mode"
+        private const val KEY_TEMPLE_CHIME = "temple_chime"
         private const val KEY_QUEUE_PRESET = "queue_festival_preset"
         private const val KEY_DEVICE = "device_id"
         private const val KEY_SYNC_ENABLED = "cloud_sync_enabled"
