@@ -28,3 +28,16 @@ val RadiantGoldLight = Color(0xFFFEF3C7)
 val MutedSlate = Color(0xFF6B7280)
 val RequiredRed = Color(0xFFE11D48)
 
+// Roomy, Light & Airy Surface Tokens
+val LuminousSurface = Color(0xFFFFFFFF)
+val RoomyBackground = Color(0xFFFFFDF9)
+val SoftCardSurface = Color(0xFFFAFAF7)
+val HairlineBorder = Color(0xFFEDE8DF)
+
+// Soft airy icon washes (temple palette, high contrast foreground)
+val SaffronWash = Color(0xFFFFF7ED)
+val EmeraldWash = Color(0xFFF0FDF4)
+val CrimsonWash = Color(0xFFFEF2F2)
+val GoldWash = Color(0xFFFEFCE8)
+val MaroonWash = Color(0xFFFAF2F3)
+

@@ -35,6 +35,8 @@ import androidx.compose.ui.unit.sp
 import com.shankaravam.festival.R
 import com.shankaravam.festival.core.i18n.appStrings
 import com.shankaravam.festival.core.theme.DeepMaroon
+import com.shankaravam.festival.core.theme.SacredCharcoal
+import com.shankaravam.festival.core.theme.SaffronWash
 import com.shankaravam.festival.core.theme.TempleGold
 import com.shankaravam.festival.core.theme.TempleSaffron
 
@@ -51,9 +53,9 @@ fun ShankaRavamDashboardHeader(
 ) {
     val strings = appStrings()
     Surface(
-        color = DeepMaroon,
+        color = MaterialTheme.colorScheme.surface,
         modifier = modifier.fillMaxWidth(),
-        shadowElevation = 4.dp
+        shadowElevation = 1.dp
     ) {
         Row(
             modifier = Modifier
@@ -71,14 +73,14 @@ fun ShankaRavamDashboardHeader(
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(40.dp)
                         .clip(CircleShape)
-                        .background(TempleGold.copy(alpha = 0.15f))
+                        .background(SaffronWash)
                 ) {
                     Image(
                         painter = painterResource(id = R.drawable.ic_sudarshana_chakra),
                         contentDescription = "ShankaRavam Logo",
-                        modifier = Modifier.size(30.dp)
+                        modifier = Modifier.size(32.dp)
                     )
                 }
                 Column {
@@ -86,29 +88,38 @@ fun ShankaRavamDashboardHeader(
                         text = strings.appName,
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        color = TempleGold,
+                        color = DeepMaroon,
                         letterSpacing = 0.2.sp
                     )
                     Text(
                         text = strings.appSubtitle,
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.8f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp
                     )
                 }
             }
 
-            // Quick Actions on the Top Right (settings only)
+            // Quick Actions on the Top Right (settings)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                IconButton(onClick = onOpenSettings) {
-                    Icon(
-                        imageVector = Icons.Filled.Settings,
-                        contentDescription = "Settings",
-                        tint = Color.White
-                    )
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(SaffronWash)
+                ) {
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(
+                            imageVector = Icons.Filled.Settings,
+                            contentDescription = "Settings",
+                            tint = TempleSaffron,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
         }
@@ -117,6 +128,7 @@ fun ShankaRavamDashboardHeader(
 
 /**
  * Standard app bar for child screens with back arrow and customizable actions.
+ * Light, roomy surface with crisp SacredCharcoal typography and Saffron accents.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -132,7 +144,8 @@ fun TempleAppBar(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                color = SacredCharcoal
             )
         },
         navigationIcon = {
@@ -141,17 +154,17 @@ fun TempleAppBar(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Back",
-                        tint = TempleGold
+                        tint = DeepMaroon
                     )
                 }
             }
         },
         actions = actions,
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = DeepMaroon,
-            titleContentColor = TempleGold,
-            navigationIconContentColor = TempleGold,
-            actionIconContentColor = TempleGold
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = SacredCharcoal,
+            navigationIconContentColor = DeepMaroon,
+            actionIconContentColor = DeepMaroon
         )
     )
 }

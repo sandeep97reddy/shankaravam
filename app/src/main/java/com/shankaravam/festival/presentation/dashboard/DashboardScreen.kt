@@ -59,10 +59,13 @@ import androidx.compose.ui.unit.sp
 import com.shankaravam.festival.core.i18n.appStrings
 import com.shankaravam.festival.core.theme.CrimsonRose
 import com.shankaravam.festival.core.theme.CrimsonRoseLight
+import com.shankaravam.festival.core.theme.CrimsonWash
 import com.shankaravam.festival.core.theme.DeepMaroon
 import com.shankaravam.festival.core.theme.EmeraldGreen
 import com.shankaravam.festival.core.theme.EmeraldGreenLight
+import com.shankaravam.festival.core.theme.GoldWash
 import com.shankaravam.festival.core.theme.RadiantGold
+import com.shankaravam.festival.core.theme.SaffronWash
 import com.shankaravam.festival.core.theme.TempleGold
 import com.shankaravam.festival.core.theme.TempleSaffron
 import com.shankaravam.festival.core.util.formatInr
@@ -550,7 +553,7 @@ private fun QuickNavigationHub(
                 subtitle = donationsSubtitle,
                 icon = Icons.AutoMirrored.Filled.List,
                 iconTint = TempleSaffron,
-                iconBackground = TempleSaffron.copy(alpha = 0.12f),
+                iconBackground = SaffronWash,
                 onClick = onDonations,
                 modifier = Modifier.weight(1f)
             )
@@ -559,7 +562,7 @@ private fun QuickNavigationHub(
                 subtitle = announcementsSubtitle,
                 icon = Icons.AutoMirrored.Filled.VolumeUp,
                 iconTint = TempleSaffron,
-                iconBackground = TempleSaffron.copy(alpha = 0.16f),
+                iconBackground = SaffronWash,
                 onClick = onAnnounce,
                 modifier = Modifier.weight(1f)
             )
@@ -574,7 +577,7 @@ private fun QuickNavigationHub(
                 subtitle = expensesSubtitle,
                 icon = Icons.AutoMirrored.Filled.ReceiptLong,
                 iconTint = CrimsonRose,
-                iconBackground = CrimsonRoseLight,
+                iconBackground = CrimsonWash,
                 onClick = onExpenses,
                 modifier = Modifier.weight(1f)
             )
@@ -583,7 +586,7 @@ private fun QuickNavigationHub(
                 subtitle = historySubtitle,
                 icon = Icons.Filled.History,
                 iconTint = RadiantGold,
-                iconBackground = RadiantGold.copy(alpha = 0.12f),
+                iconBackground = GoldWash,
                 onClick = onHistory,
                 modifier = Modifier.weight(1f)
             )

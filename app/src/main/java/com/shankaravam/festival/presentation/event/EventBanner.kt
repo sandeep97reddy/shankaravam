@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shankaravam.festival.core.i18n.appStrings
 import com.shankaravam.festival.core.theme.DeepMaroon
+import com.shankaravam.festival.core.theme.SaffronWash
 import com.shankaravam.festival.core.theme.TempleGold
 import com.shankaravam.festival.core.theme.TempleSaffron
 import com.shankaravam.festival.presentation.common.ModernTextField
@@ -86,7 +87,7 @@ fun CurrentEventBanner(
         ) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = TempleSaffron.copy(alpha = 0.12f),
+                color = SaffronWash,
                 modifier = Modifier.size(44.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -103,7 +104,7 @@ fun CurrentEventBanner(
                 Text(
                     text = strings.currentEvent.uppercase(),
                     style = MaterialTheme.typography.labelSmall,
-                    color = TempleSaffron,
+                    color = DeepMaroon,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 0.5.sp
                 )

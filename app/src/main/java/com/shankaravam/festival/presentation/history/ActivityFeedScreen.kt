@@ -59,10 +59,14 @@ import com.shankaravam.festival.core.export.ReportContent
 import com.shankaravam.festival.core.i18n.appStrings
 import com.shankaravam.festival.core.theme.CrimsonRose
 import com.shankaravam.festival.core.theme.CrimsonRoseLight
+import com.shankaravam.festival.core.theme.CrimsonWash
 import com.shankaravam.festival.core.theme.EmeraldGreen
 import com.shankaravam.festival.core.theme.EmeraldGreenLight
+import com.shankaravam.festival.core.theme.EmeraldWash
+import com.shankaravam.festival.core.theme.GoldWash
 import com.shankaravam.festival.core.theme.RadiantGold
 import com.shankaravam.festival.core.theme.RadiantGoldLight
+import com.shankaravam.festival.core.theme.SaffronWash
 import com.shankaravam.festival.core.theme.TempleSaffron
 import com.shankaravam.festival.core.util.formatInr
 import com.shankaravam.festival.di.AppContainer
@@ -431,10 +435,10 @@ fun RichTransactionCard(
                         .clip(CircleShape)
                         .background(
                             when (item.type) {
-                                TransactionType.DONATION -> EmeraldGreenLight
-                                TransactionType.EXPENSE -> CrimsonRoseLight
-                                TransactionType.CORRECTION -> RadiantGoldLight
-                                TransactionType.SYSTEM -> TempleSaffron.copy(alpha = 0.12f)
+                                TransactionType.DONATION -> EmeraldWash
+                                TransactionType.EXPENSE -> CrimsonWash
+                                TransactionType.CORRECTION -> GoldWash
+                                TransactionType.SYSTEM -> SaffronWash
                             }
                         )
                 ) {
