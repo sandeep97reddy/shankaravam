@@ -2,7 +2,9 @@ package com.shankaravam.festival.presentation.settings
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,10 +14,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -26,17 +31,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -55,7 +65,11 @@ import com.shankaravam.festival.data.remote.CloudUser
 import com.shankaravam.festival.data.work.SyncWorker
 import com.shankaravam.festival.di.AppContainer
 import com.shankaravam.festival.domain.model.AccessPolicy
+import com.shankaravam.festival.domain.model.AdminConfig
 import com.shankaravam.festival.domain.model.Event
+import com.shankaravam.festival.domain.model.MemberPresence
+import com.shankaravam.festival.domain.model.UserRole
+import com.shankaravam.festival.domain.model.presenceOf
 import com.shankaravam.festival.domain.model.roleOf
 import com.shankaravam.festival.presentation.common.containerViewModel
 import com.google.zxing.BarcodeFormat
@@ -194,10 +208,18 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
     fun join(code: String, uid: String, onJoined: (String) -> Unit) {
         viewModelScope.launch {
             _busy.value = "join"
-            when (val result = container.syncService.requestToJoin(code, uid)) {
+            // Service owns role+status (incl. whitelisted-admin elevation) —
+            // the VM must NOT blindly overwrite with MEMBER (S3.1).
+            val me = container.authRepository.user.value
+            when (val result = container.syncService.requestToJoin(code, uid, me?.email, me?.displayName)) {
                 is Outcome.Ok -> {
-                    container.sessionPrefs.setMyRole(result.value, SessionPrefs.ROLE_MEMBER)
-                    _notice.value = "Request sent — the organizer approves you as collector."
+                    _notice.value = if (container.sessionPrefs.myStatus(result.value) == SessionPrefs.STATUS_ACTIVE
+                        && container.sessionPrefs.myRole(result.value) == SessionPrefs.ROLE_GLOBAL_HEAD
+                    ) {
+                        "Welcome back, Head — the team directory is unlocked."
+                    } else {
+                        "Request sent — the organizer approves you as collector."
+                    }
                     onJoined(result.value)
                 }
                 is Outcome.Err -> _notice.value = result.message
@@ -209,8 +231,10 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
     fun refreshPending(eventId: String) {
         viewModelScope.launch {
             _busy.value = "pending"
-            when (val result = container.syncService.pendingMembers(eventId)) {
-                is Outcome.Ok -> _pending.value = result.value
+            // Single roster query (S3.3) + client-side partition — no composite
+            // index needed. Full-team view lands in S4 on the same call.
+            when (val result = container.syncService.fetchAllMembers(eventId)) {
+                is Outcome.Ok -> _pending.value = result.value.filter { it.status == "pending" }
                 is Outcome.Err -> _notice.value = result.message
             }
             _busy.value = null
@@ -221,13 +245,84 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             _busy.value = "approve:${member.userId}"
             when (
-                val result = container.syncService.setMember(
+                val result = container.syncService.setMemberRole(
                     eventId, member.userId, asRole, "active", approvedBy
                 )
             ) {
                 is Outcome.Ok -> {
                     _pending.value = _pending.value.filterNot { it.userId == member.userId }
                     _notice.value = "Approved as $asRole."
+                }
+                is Outcome.Err -> _notice.value = result.message
+            }
+            _busy.value = null
+        }
+    }
+
+    // ---- Connected Team (S4, head-only) ----
+
+    private val _teamMembers = MutableStateFlow<List<CloudMember>>(emptyList())
+    val teamMembers: StateFlow<List<CloudMember>> = _teamMembers.asStateFlow()
+
+    /**
+     * Head-now check: cached active/global_head on THIS event. The whitelisted
+     * admin override is already folded into myRole() (cloud-scoped, S2.3), so
+     * no raw-email check here — the member doc is the truth. Volunteers,
+     * viewers and pending/revoked never pass, so the roster is never fetched
+     * nor shown for them (Rule #1).
+     */
+    fun isHeadNow(eventId: String): Boolean =
+        roleOf(container.sessionPrefs.myRole(eventId)) == UserRole.GLOBAL_HEAD
+            && container.sessionPrefs.myStatus(eventId) == SessionPrefs.STATUS_ACTIVE
+
+    fun refreshMembers(eventId: String) {
+        if (!isHeadNow(eventId)) return
+        viewModelScope.launch {
+            _busy.value = "team"
+            when (val result = container.syncService.fetchAllMembers(eventId)) {
+                is Outcome.Ok -> {
+                    _teamMembers.value = result.value
+                    _pending.value = result.value.filter { it.status == "pending" }
+                    // Own-row enforcement (S3.5 VM side): the roster is truth.
+                    val me = container.authRepository.user.value?.uid
+                    result.value.firstOrNull { it.userId == me }?.let {
+                        container.sessionPrefs.setMyRole(eventId, it.role)
+                        container.sessionPrefs.setMyStatus(eventId, it.status)
+                    }
+                }
+                is Outcome.Err -> {
+                    _notice.value =
+                        if ("permission" in result.message.lowercase()) "Only the head can view the team."
+                        else result.message
+                }
+            }
+            _busy.value = null
+        }
+    }
+
+    fun setMemberRole(eventId: String, member: CloudMember, role: String, status: String) {
+        if (!isHeadNow(eventId)) return
+        viewModelScope.launch {
+            _busy.value = "role:${member.userId}"
+            val me = container.authRepository.user.value?.uid ?: ""
+            when (
+                val result = container.syncService.setMemberRole(
+                    eventId, member.userId, role, status, me
+                )
+            ) {
+                is Outcome.Ok -> {
+                    val cleanRole = role.trim().lowercase()
+                    val cleanStatus = status.trim().lowercase()
+                    _teamMembers.value = _teamMembers.value.map {
+                        if (it.userId == member.userId) it.copy(role = cleanRole, status = cleanStatus)
+                        else it
+                    }
+                    _pending.value = _teamMembers.value.filter { it.status == "pending" }
+                    _notice.value = when {
+                        cleanStatus == SessionPrefs.STATUS_REVOKED -> "Access revoked."
+                        cleanRole == SessionPrefs.ROLE_ORGANIZER -> "Collector access granted."
+                        else -> "Viewer access granted."
+                    }
                 }
                 is Outcome.Err -> _notice.value = result.message
             }
@@ -248,6 +343,7 @@ fun CloudSyncScreen(
     val busy by viewModel.busy.collectAsState()
     val notice by viewModel.notice.collectAsState()
     val pending by viewModel.pending.collectAsState()
+    val team by viewModel.teamMembers.collectAsState()
     val signInIntent by viewModel.signInIntent.collectAsState()
     var joinCode by remember { mutableStateOf("") }
 
@@ -259,6 +355,13 @@ fun CloudSyncScreen(
             signInLauncher.launch(it)
             viewModel.consumeSignInIntent()
         }
+    }
+    // Head-only auto-load (S4.2): keys on gate + event, so no fetch loop and
+    // zero roster reads for volunteers (Rule #1).
+    val headEventId = state.event?.id
+    val headNow = headEventId != null && state.user != null && viewModel.isHeadNow(headEventId)
+    androidx.compose.runtime.LaunchedEffect(headNow, headEventId) {
+        if (headNow) viewModel.refreshMembers(headEventId!!)
     }
 
     Scaffold(
@@ -305,7 +408,21 @@ fun CloudSyncScreen(
                             Text(if (busy == "signin") "Signing in…" else "Sign in with Google")
                         }
                     } else {
-                        Text(user.displayName ?: user.email ?: user.uid)
+                        if (AdminConfig.isGlobalHeadEmail(user.email)) {
+                            val ev = state.event
+                            val verified = ev != null && viewModel.isHeadNow(ev.id)
+                            Text(
+                                "👑 Global Head Admin • ${user.email ?: ""}",
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                if (verified) "Verified on “${ev.name}”."
+                                else "Head powers unlock on your festivals after sync.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        } else {
+                            Text(user.displayName ?: user.email ?: user.uid)
+                        }
                         OutlinedButton(onClick = { viewModel.signOut() }) { Text("Sign out") }
                     }
                 }
@@ -380,6 +497,19 @@ fun CloudSyncScreen(
                         onRefresh = { viewModel.refreshPending(event.id) },
                         onApprove = { member, role ->
                             viewModel.approve(event.id, member, role, user.uid)
+                        }
+                    )
+                }
+                // Strictly head-only: hidden from volunteers, collectors and
+                // viewers alike (Rule #1). Data loads via headNow effect above.
+                if (viewModel.isHeadNow(event.id)) {
+                    ConnectedCountersCard(
+                        team = team,
+                        selfUid = user.uid,
+                        busyKey = busy,
+                        onRefresh = { viewModel.refreshMembers(event.id) },
+                        onSetRole = { member, role, status ->
+                            viewModel.setMemberRole(event.id, member, role, status)
                         }
                     )
                 }
@@ -483,6 +613,192 @@ private fun ApprovalsCard(
                 Text("No pending requests.", style = MaterialTheme.typography.bodySmall)
             }
         }
+    }
+}
+
+/**
+ * Exclusive Global Head directory (S4.2): live presence, counter identity and
+ * 1-tap Collector/Viewer/Revoke. Rendered ONLY under [CloudSyncViewModel.isHeadNow];
+ * the VM likewise refuses to fetch or act for anyone else (Rule #1).
+ *
+ * Perf: parent is a vertically-scrolled Column, so rows are a keyed forEach
+ * (no nested lazy); presence labels derive from a minute-ticked clock via
+ * derivedStateOf — no per-frame time math in composition.
+ */
+@Composable
+private fun ConnectedCountersCard(
+    team: List<CloudMember>,
+    selfUid: String,
+    busyKey: String?,
+    onRefresh: () -> Unit,
+    onSetRole: (CloudMember, String, String) -> Unit
+) {
+    var revokeTarget by remember { mutableStateOf<CloudMember?>(null) }
+    // Local badge clock: re-ages labels each minute, zero network.
+    var nowTick by remember { mutableStateOf(System.currentTimeMillis()) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(60_000)
+            nowTick = System.currentTimeMillis()
+        }
+    }
+    val rows by remember(team, nowTick) {
+        derivedStateOf { team.map { it to presenceOf(it.lastActiveAt, nowTick) } }
+    }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Connected team & counters (${team.size})", fontWeight = FontWeight.SemiBold)
+                OutlinedButton(onClick = onRefresh, enabled = busyKey != "team") {
+                    Text(if (busyKey == "team") "…" else "Refresh")
+                }
+            }
+            Text(
+                "Collectors take money & announce • Viewers audit totals only.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            if (rows.isEmpty()) {
+                Text("No counters yet — share the invite code above.", style = MaterialTheme.typography.bodySmall)
+            }
+            rows.forEach { (member, presence) ->
+                key(member.userId) {
+                    TeamRow(
+                        member = member,
+                        presence = presence,
+                        isSelf = member.userId == selfUid,
+                        actionsEnabled = busyKey != "role:${member.userId}",
+                        onCollector = {
+                            onSetRole(member, SessionPrefs.ROLE_ORGANIZER, SessionPrefs.STATUS_ACTIVE)
+                        },
+                        onViewer = {
+                            onSetRole(member, SessionPrefs.ROLE_MEMBER, SessionPrefs.STATUS_ACTIVE)
+                        },
+                        onRevoke = { revokeTarget = member }
+                    )
+                }
+            }
+        }
+    }
+    revokeTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { revokeTarget = null },
+            title = { Text("Revoke access?") },
+            text = {
+                Text(
+                    "“${target.counterName ?: target.displayName ?: target.email ?: "this counter"}” " +
+                        "loses cloud access instantly. Their past donations stay in the ledger."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onSetRole(target, target.role, SessionPrefs.STATUS_REVOKED)
+                    revokeTarget = null
+                }) { Text("Revoke") }
+            },
+            dismissButton = { TextButton(onClick = { revokeTarget = null }) { Text("Keep") } }
+        )
+    }
+}
+
+@Composable
+private fun TeamRow(
+    member: CloudMember,
+    presence: MemberPresence,
+    isSelf: Boolean,
+    actionsEnabled: Boolean,
+    onCollector: () -> Unit,
+    onViewer: () -> Unit,
+    onRevoke: () -> Unit
+) {
+    val title =
+        (member.counterName?.takeIf { it.isNotBlank() }
+            ?: member.displayName?.takeIf { it.isNotBlank() }
+            ?: "Unknown counter") +
+            (member.deviceTag?.takeIf { it.isNotBlank() }?.let { " (#$it)" } ?: "")
+    val presenceLabel = when (presence) {
+        MemberPresence.ACTIVE_NOW -> "Active now"
+        MemberPresence.IDLE -> "Idle"
+        MemberPresence.OFFLINE -> "Offline"
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            PresenceDot(presence)
+            Spacer(Modifier.size(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(
+                    "${member.email ?: "…${member.userId.takeLast(4)}"} • $presenceLabel",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+            }
+            RoleBadge(role = member.role, status = member.status)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = onCollector,
+                enabled = actionsEnabled,
+                modifier = Modifier.weight(1f)
+            ) { Text("Collector", maxLines = 1) }
+            OutlinedButton(
+                onClick = onViewer,
+                enabled = actionsEnabled,
+                modifier = Modifier.weight(1f)
+            ) { Text("Viewer", maxLines = 1) }
+            if (isSelf) {
+                OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) {
+                    Text("You", maxLines = 1)
+                }
+            } else {
+                OutlinedButton(
+                    onClick = onRevoke,
+                    enabled = actionsEnabled,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Revoke", maxLines = 1) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PresenceDot(presence: MemberPresence) {
+    val color = when (presence) {
+        MemberPresence.ACTIVE_NOW -> Color(0xFF2E7D32)
+        MemberPresence.IDLE -> Color(0xFFF9A825)
+        MemberPresence.OFFLINE -> Color(0xFF9E9E9E)
+    }
+    Box(modifier = Modifier.size(8.dp).background(color, CircleShape))
+}
+
+@Composable
+private fun RoleBadge(role: String, status: String) {
+    val (label, bg, fg) = when {
+        status == SessionPrefs.STATUS_REVOKED ->
+            Triple("Revoked", Color(0xFFB71C1C), Color.White)
+        status == SessionPrefs.STATUS_PENDING ->
+            Triple("Pending approval", TempleGold, DeepMaroon)
+        role == SessionPrefs.ROLE_GLOBAL_HEAD ->
+            Triple("Global Head", TempleGold, DeepMaroon)
+        role == SessionPrefs.ROLE_ORGANIZER ->
+            Triple("Collector", Color(0xFF2E7D32), Color.White)
+        else -> Triple(
+            "Viewer",
+            MaterialTheme.colorScheme.surfaceVariant,
+            MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+    Surface(color = bg, contentColor = fg, shape = RoundedCornerShape(10.dp)) {
+        Text(
+            label,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1
+        )
     }
 }
 

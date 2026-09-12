@@ -148,9 +148,46 @@ class SessionPrefs(context: Context) {
         prefs.edit().putLong(KEY_LAST_SYNC + eventId, millis).apply()
     }
 
-    /** Local role cache per event (plan §6). Default ORGANIZER keeps offline behavior. */
-    fun myRole(eventId: String): String =
-        prefs.getString(KEY_ROLE + eventId, ROLE_ORGANIZER) ?: ROLE_ORGANIZER
+    /**
+     * Whitelisted-admin flag (ADMIN_HEAD_PLAN S2.3). Owned ONLY by
+     * AuthRepository's auth-state listener — never set from ViewModels.
+     * Cleared on sign-out (null user). Global across events on purpose; the
+     * per-event scope gate lives in [myRole] via [isCloudEvent].
+     */
+    var isGlobalHeadUser: Boolean
+        get() = prefs.getBoolean(KEY_HEAD_USER, false)
+        set(value) = prefs.edit().putBoolean(KEY_HEAD_USER, value).apply()
+
+    /**
+     * Local membership-status cache per event (plan §6 + ADMIN_HEAD_PLAN).
+     * Orthogonal to role: revoke is a status, never a role string (S1 seal).
+     * Defaults ACTIVE so pre-cloud offline events keep full counter powers.
+     */
+    fun myStatus(eventId: String): String =
+        prefs.getString(KEY_STATUS + eventId, STATUS_ACTIVE) ?: STATUS_ACTIVE
+
+    fun setMyStatus(eventId: String, status: String) {
+        prefs.edit().putString(KEY_STATUS + eventId, status).apply()
+    }
+
+    /** True once this event has touched cloud (published or joined). */
+    fun isCloudEvent(eventId: String): Boolean =
+        prefs.getBoolean(KEY_CLOUD + eventId, false)
+
+    fun markCloudEvent(eventId: String) {
+        prefs.edit().putBoolean(KEY_CLOUD + eventId, true).apply()
+    }
+
+    /**
+     * Local role cache per event (plan §6). Default ORGANIZER keeps offline
+     * behavior. The admin override is SCOPED to cloud-joined events: signing
+     * in as the whitelisted head never elevates local-only events (Rule #1).
+     * Revoke is NOT handled here — callers gate on [myStatus] (S3).
+     */
+    fun myRole(eventId: String): String {
+        if (isGlobalHeadUser && isCloudEvent(eventId)) return ROLE_GLOBAL_HEAD
+        return prefs.getString(KEY_ROLE + eventId, ROLE_ORGANIZER) ?: ROLE_ORGANIZER
+    }
 
     fun setMyRole(eventId: String, role: String) {
         prefs.edit().putString(KEY_ROLE + eventId, role).apply()
@@ -207,12 +244,19 @@ class SessionPrefs(context: Context) {
         private const val KEY_SYNC_ENABLED = "cloud_sync_enabled"
         private const val KEY_LAST_SYNC = "last_sync_"
         private const val KEY_ROLE = "my_role_"
+        private const val KEY_STATUS = "member_status_"
+        private const val KEY_CLOUD = "cloud_event_"
+        private const val KEY_HEAD_USER = "is_global_head_user"
         private const val KEY_CODE = "share_code_"
         private const val KEY_CODE_REV = "share_code_rev_"
 
         const val ROLE_GLOBAL_HEAD = "global_head"
         const val ROLE_ORGANIZER = "organizer"
         const val ROLE_MEMBER = "member"
+
+        const val STATUS_ACTIVE = "active"
+        const val STATUS_PENDING = "pending"
+        const val STATUS_REVOKED = "revoked"
 
         const val SORT_NEWEST = "newest"
         const val SORT_OLDEST = "oldest"

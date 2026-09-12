@@ -462,14 +462,16 @@ fun RichTransactionCard(
                         text = item.title,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        maxLines = 1
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                     item.subtitle?.let { sub ->
                         Text(
                             text = sub,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -480,6 +482,7 @@ fun RichTransactionCard(
                         text = amt,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
                         color = when (item.isPositive) {
                             true -> EmeraldGreen
                             false -> CrimsonRose
@@ -489,13 +492,16 @@ fun RichTransactionCard(
                 }
             }
 
-            // Bottom Row: Collector & Time on left, Sync Status Badge on right
+            // Bottom Row: Collector & Time (flex, ellipsized) + Sync Status Badge (fixed).
+            // The collector/device name used to wrap into many lines and stretch
+            // the card; it now truncates and the badge always keeps its own lane.
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
+                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
@@ -510,14 +516,23 @@ fun RichTransactionCard(
                             text = "$collectorLabel: ${item.collector}",
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
-                        Text("•", color = MaterialTheme.colorScheme.outline)
+                        Text(
+                            "•",
+                            color = MaterialTheme.colorScheme.outline,
+                            maxLines = 1
+                        )
                     }
                     Text(
                         text = ReportContent.formatTime(item.timestamp),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                 }
 
@@ -579,6 +594,7 @@ private fun SyncStatusBadge(
             },
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
+            maxLines = 1,
             color = when {
                 isSynced -> EmeraldGreen
                 isPending -> RadiantGold

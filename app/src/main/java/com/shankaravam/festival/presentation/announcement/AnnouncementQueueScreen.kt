@@ -49,6 +49,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,12 +59,15 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shankaravam.festival.core.audio.displayName
+import com.shankaravam.festival.core.theme.CrimsonRose
 import com.shankaravam.festival.core.theme.DeepMaroon
 import com.shankaravam.festival.core.theme.TempleGold
+import com.shankaravam.festival.core.theme.TempleSaffron
 import com.shankaravam.festival.data.local.SessionPrefs
 import com.shankaravam.festival.presentation.common.containerViewModel
 import com.shankaravam.festival.presentation.common.rememberContainer
 import com.shankaravam.festival.presentation.donation.DonationCard
+import kotlinx.coroutines.launch
 
 /**
  * Announcement queue (plan §11): route badge + test audio, cloud-key row,
@@ -78,6 +82,7 @@ fun AnnouncementQueueScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val importReport by viewModel.importReport.collectAsState()
+    val playbackError by viewModel.playbackError.collectAsState()
     val rosterPicker = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents()
     ) { uris -> viewModel.importRosterClips(uris) }
@@ -118,6 +123,8 @@ fun AnnouncementQueueScreen(
             item {
                 TransportCard(
                     state = state,
+                    playbackError = playbackError,
+                    onClearError = { viewModel.clearPlaybackError() },
                     onPlay = { viewModel.play() },
                     onPause = { viewModel.pause() },
                     onStop = { viewModel.stop() },
@@ -178,7 +185,11 @@ private fun RouteCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null)
+            Icon(
+                Icons.AutoMirrored.Filled.VolumeUp,
+                contentDescription = null,
+                tint = TempleSaffron
+            )
             Column(Modifier.weight(1f)) {
                 Text(routeName, fontWeight = FontWeight.SemiBold)
                 Text(
@@ -199,9 +210,22 @@ private fun RouteCard(
 private fun VoiceSettingsCard() {
     val container = rememberContainer()
     val prefs = remember { container.sessionPrefs }
-    val secureKeys = remember { container.secureKeys }
-    var draft by remember { mutableStateOf(secureKeys.getSarvamKey()) }
+    val scope = rememberCoroutineScope()
+    // EncryptedSharedPreferences/MasterKey init + reads can hit slow keystore
+    // disk I/O — keep ALL of it off the composition thread. The screen used to
+    // read the key inside `remember`, stalling open on slow devices (ANR that
+    // looks exactly like "tap Announce → app closed itself").
+    var storedKey by remember { mutableStateOf<String?>(null) } // null = still loading
+    var draft by remember { mutableStateOf("") }
     var speaker by remember { mutableStateOf(prefs.sarvamSpeaker) }
+
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        val loaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { container.secureKeys.getSarvamKey() }.getOrDefault("")
+        }
+        storedKey = loaded
+        draft = loaded
+    }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -210,7 +234,8 @@ private fun VoiceSettingsCard() {
                 value = draft,
                 onValueChange = { draft = it },
                 label = { Text("Sarvam API key (optional)") },
-                placeholder = { Text("Empty = offline voice") },
+                placeholder = { Text(if (storedKey == null) "Loading…" else "Empty = offline voice") },
+                enabled = storedKey != null,
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
@@ -219,17 +244,29 @@ private fun VoiceSettingsCard() {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = {
-                        secureKeys.setSarvamKey(draft)
+                        val snapshot = draft
                         prefs.sarvamSpeaker = speaker
+                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            runCatching { container.secureKeys.setSarvamKey(snapshot) }
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                storedKey = snapshot.trim()
+                            }
+                        }
                     },
-                    enabled = draft.trim() != secureKeys.getSarvamKey().trim(),
+                    enabled = storedKey != null && draft.trim() != (storedKey ?: "").trim(),
                     modifier = Modifier.weight(1f)
                 ) { Text("Save key") }
                 OutlinedButton(
                     onClick = {
-                        secureKeys.setSarvamKey("")
                         draft = ""
+                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            runCatching { container.secureKeys.setSarvamKey("") }
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                storedKey = ""
+                            }
+                        }
                     },
+                    enabled = storedKey != null,
                     modifier = Modifier.weight(1f)
                 ) { Text("Clear") }
             }
@@ -278,6 +315,8 @@ private fun RosterImportCard(
 @Composable
 private fun TransportCard(
     state: QueueUiState,
+    playbackError: String?,
+    onClearError: () -> Unit,
     onPlay: () -> Unit,
     onPause: () -> Unit,
     onStop: () -> Unit,
@@ -307,6 +346,21 @@ private fun TransportCard(
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold
             )
+            playbackError?.let { error ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = CrimsonRose,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = onClearError) { Text("Dismiss") }
+                }
+            }
             if (state.prefetchRemaining > 0) {
                 Text(
                     "Preparing cloud audio… (${state.prefetchRemaining} left, offline voice fills gaps)",

@@ -552,8 +552,8 @@ private fun QuickNavigationHub(
                 title = announcementsTile,
                 subtitle = announcementsSubtitle,
                 icon = Icons.AutoMirrored.Filled.VolumeUp,
-                iconTint = DeepMaroon,
-                iconBackground = DeepMaroon.copy(alpha = 0.12f),
+                iconTint = TempleSaffron,
+                iconBackground = TempleSaffron.copy(alpha = 0.16f),
                 onClick = onAnnounce,
                 modifier = Modifier.weight(1f)
             )

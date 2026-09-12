@@ -5,6 +5,8 @@ package com.shankaravam.festival.data.remote
 import android.content.Context
 import android.content.Intent
 import com.shankaravam.festival.core.util.Outcome
+import com.shankaravam.festival.data.local.SessionPrefs
+import com.shankaravam.festival.domain.model.AdminConfig
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
@@ -29,7 +31,10 @@ data class CloudUser(val uid: String, val email: String?, val displayName: Strin
  * Classic sign-in-intent flow (play-services-auth): stable across Credential
  * Manager library moves, and the result handler stays unit-testable.
  */
-class AuthRepository(private val appContext: Context) {
+class AuthRepository(
+    private val appContext: Context,
+    private val sessionPrefs: SessionPrefs
+) {
 
     /** Null on builds without Firebase config — all calls below then no-op gracefully. */
     private val auth: FirebaseAuth? = runCatching { Firebase.auth }.getOrNull()
@@ -39,8 +44,21 @@ class AuthRepository(private val appContext: Context) {
     private val _user = MutableStateFlow(auth?.currentUser?.toCloudUser())
     val user: StateFlow<CloudUser?> = _user.asStateFlow()
 
+    /**
+     * Sole owner of SessionPrefs.isGlobalHeadUser (ADMIN_HEAD_PLAN S2.4).
+     * Fires immediately on register (covers cold start) and on every change
+     * incl. token refresh (diffed write) and sign-out (null → false).
+     * UI gating only — firestore.rules is the boundary.
+     */
     private val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
-        _user.value = firebaseAuth.currentUser?.toCloudUser()
+        val cloud = firebaseAuth.currentUser?.toCloudUser()
+        _user.value = cloud
+        runCatching {
+            val headsUp = AdminConfig.isGlobalHeadEmail(cloud?.email)
+            if (sessionPrefs.isGlobalHeadUser != headsUp) {
+                sessionPrefs.isGlobalHeadUser = headsUp
+            }
+        }
     }
 
     init {
@@ -75,7 +93,13 @@ class AuthRepository(private val appContext: Context) {
                 result.user?.toCloudUser()
                     ?: throw IllegalStateException("Sign-in returned no user.")
             }.fold(
-                onSuccess = { Outcome.Ok(it) },
+                onSuccess = { cloud ->
+                    // Belt-and-braces alongside the listener (timing-safe).
+                    runCatching {
+                        sessionPrefs.isGlobalHeadUser = AdminConfig.isGlobalHeadEmail(cloud.email)
+                    }
+                    Outcome.Ok(cloud)
+                },
                 onFailure = { Outcome.Err(it.message ?: "Google sign-in failed.") }
             )
         }

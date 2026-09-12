@@ -54,6 +54,7 @@ import com.shankaravam.festival.di.AppContainer
 import com.shankaravam.festival.domain.model.AccessPolicy
 import com.shankaravam.festival.domain.model.ActivityActions
 import com.shankaravam.festival.domain.model.ActivityRecord
+import com.shankaravam.festival.domain.model.AdminConfig
 import com.shankaravam.festival.domain.model.Event
 import com.shankaravam.festival.domain.model.UserRole
 import com.shankaravam.festival.domain.model.roleOf
@@ -78,13 +79,21 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
         val event: Event? = null,
         val role: UserRole = UserRole.ORGANIZER,
         val encrypted: Boolean = false,
-        val cloudUser: String? = null
+        val cloudUser: String? = null,
+        val cloudEmail: String? = null
     )
 
     val uiState: StateFlow<UiState> =
         container.sessionPrefs.currentEventId.flatMapLatest { eventId ->
             if (eventId == null) {
-                flowOf(UiState(encrypted = container.secureKeys.isEncrypted))
+                val user = container.authRepository.user.value
+                flowOf(
+                    UiState(
+                        encrypted = container.secureKeys.isEncrypted,
+                        cloudUser = user?.uid,
+                        cloudEmail = user?.email
+                    )
+                )
             } else {
                 combine(
                     container.eventRepository.observeEvent(eventId),
@@ -94,7 +103,8 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
                         event = event,
                         role = roleOf(container.sessionPrefs.myRole(eventId)),
                         encrypted = container.secureKeys.isEncrypted,
-                        cloudUser = user?.uid
+                        cloudUser = user?.uid,
+                        cloudEmail = user?.email
                     )
                 }
             }
@@ -293,7 +303,15 @@ fun AdminSettingsScreen(
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Your role: ${state.role.name.lowercase().replace('_', ' ')}", fontWeight = FontWeight.Bold)
+                    // S4.4: whitelisted head gets the Verified line; everyone
+                    // else keeps the plain role label (Rule #1: no login push).
+                    val isHeadAdmin = state.role == UserRole.GLOBAL_HEAD
+                        && AdminConfig.isGlobalHeadEmail(state.cloudEmail)
+                    Text(
+                        if (isHeadAdmin) "👑 Global Head (Admin: ${AdminConfig.GLOBAL_HEAD_EMAIL}) • Verified"
+                        else "Your role: ${state.role.name.lowercase().replace('_', ' ')}",
+                        fontWeight = FontWeight.Bold
+                    )
                     Text(
                         if (state.encrypted) "Voice key storage: encrypted ✓" else "Voice key storage: plain (no keystore)",
                         style = MaterialTheme.typography.bodySmall
@@ -302,7 +320,11 @@ fun AdminSettingsScreen(
             }
             VoiceKeyCard(
                 busy = busy,
-                canManageKeys = AccessPolicy.canManageKeys(state.role),
+                // S1 model (a): /config/tts_settings is master-admin-only, so
+                // Publish unlocks solely for the whitelisted head. Pull/save
+                // stay available to all (read is signed-in, keystore is local).
+                canPublish = AccessPolicy.canManageKeys(state.role)
+                    && AdminConfig.isGlobalHeadEmail(state.cloudEmail),
                 onSaveLocal = { key, speaker -> viewModel.saveKeyLocally(key, speaker) },
                 onPush = { key, speaker -> viewModel.pushKey(key, speaker) },
                 onPull = { viewModel.pullKey() }
@@ -363,7 +385,7 @@ fun AdminSettingsScreen(
 @Composable
 private fun VoiceKeyCard(
     busy: Boolean,
-    canManageKeys: Boolean,
+    canPublish: Boolean,
     onSaveLocal: (String, String) -> Unit,
     onPush: (String, String) -> Unit,
     onPull: () -> Unit
@@ -410,10 +432,10 @@ private fun VoiceKeyCard(
             }
             Button(
                 onClick = { onPush(key, speaker) },
-                enabled = canManageKeys && key.isNotBlank() && !busy,
+                enabled = canPublish && key.isNotBlank() && !busy,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(if (canManageKeys) "Publish for collectors (head only)" else "Publish: head only")
+                Text(if (canPublish) "Publish for collectors (head only)" else "Publish: head only")
             }
             Text(
                 "Publishing writes /config/tts_settings (head-write rule). Audio itself never leaves devices.",

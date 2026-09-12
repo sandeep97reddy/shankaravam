@@ -48,16 +48,25 @@ class AndroidTtsClient(
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
             )
-        val result = engine.setLanguage(Locale.Builder().setLanguage("te").setRegion("IN").build())
-        _ready.value = result != TextToSpeech.LANG_MISSING_DATA &&
-            result != TextToSpeech.LANG_NOT_SUPPORTED
-        // Re-apply the user's saved voice + speed (Admin choices persist here).
-        runCatching {
-            savedSettings?.invoke()?.let { (voiceName, rate) ->
-                setSpeechRate(rate)
-                if (voiceName != null) setVoiceByName(voiceName)
+
+            val teLocale = Locale.Builder().setLanguage("te").setRegion("IN").build()
+            val result = runCatching { engine.setLanguage(teLocale) }.getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
+            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                // If Telugu voice pack is not pre-installed on this device yet, fall back to default so audio still works
+                val fallbackResult = runCatching { engine.setLanguage(Locale.getDefault()) }.getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
+                _ready.value = fallbackResult != TextToSpeech.LANG_MISSING_DATA && fallbackResult != TextToSpeech.LANG_NOT_SUPPORTED
+            } else {
+                _ready.value = true
             }
-        }
+
+            // Re-apply the user's saved voice + speed (Admin choices persist here).
+            runCatching {
+                savedSettings?.invoke()?.let { (voiceName, rate) ->
+                    setSpeechRate(rate)
+                    if (voiceName != null) setVoiceByName(voiceName)
+                }
+            }
+
             engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) = Unit
                 override fun onDone(utteranceId: String?) {
@@ -76,7 +85,7 @@ class AndroidTtsClient(
         }
     }
 
-    /** Fire-and-forget speak. Returns false when offline TTS is unavailable. */
+    /** Fire-and-forget speak. Returns false when offline TTS is unavailable. Never throws. */
     fun speak(
         text: String,
         onDone: () -> Unit = {},
@@ -89,7 +98,10 @@ class AndroidTtsClient(
         }
         val utteranceId = UUID.randomUUID().toString()
         pending[utteranceId] = Pending(onDone, onError)
-        val result = engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        val result = runCatching {
+            engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        }.getOrDefault(TextToSpeech.ERROR)
+
         if (result != TextToSpeech.SUCCESS) {
             pending.remove(utteranceId)
             onError()
@@ -99,7 +111,7 @@ class AndroidTtsClient(
     }
 
     fun stop() {
-        tts?.stop()
+        runCatching { tts?.stop() }
         pending.clear()
     }
 
@@ -134,7 +146,7 @@ class AndroidTtsClient(
 
     fun shutdown() {
         stop()
-        tts?.shutdown()
+        runCatching { tts?.shutdown() }
         tts = null
     }
 }

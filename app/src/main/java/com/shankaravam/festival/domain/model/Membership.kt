@@ -1,10 +1,13 @@
 package com.shankaravam.festival.domain.model
 
-/** Plan §6 roles. Local default is ORGANIZER so offline use never degrades. */
+/** Plan §6 roles. Offline default (SessionPrefs.myRole) is ORGANIZER so offline
+ * use never degrades — but unknown/corrupt strings fall back to MEMBER
+ * (least privilege, S1 seal): "revoked"/"viewer"/typos must never grant
+ * counter powers. */
 enum class UserRole { GLOBAL_HEAD, ORGANIZER, MEMBER }
 
 fun roleOf(name: String?): UserRole =
-    runCatching { UserRole.valueOf(name?.uppercase() ?: "") }.getOrDefault(UserRole.ORGANIZER)
+    runCatching { UserRole.valueOf(name?.uppercase() ?: "") }.getOrDefault(UserRole.MEMBER)
 
 enum class MemberStatus { ACTIVE, PENDING, REVOKED }
 
@@ -25,4 +28,33 @@ object AccessPolicy {
     fun canApproveMembers(role: UserRole): Boolean = role != UserRole.MEMBER
     fun canCloseEvent(role: UserRole): Boolean = role != UserRole.MEMBER
     fun canManageKeys(role: UserRole): Boolean = role == UserRole.GLOBAL_HEAD
+    fun canViewTeamRoster(role: UserRole): Boolean = role == UserRole.GLOBAL_HEAD
+    fun canManageMembers(role: UserRole): Boolean = role == UserRole.GLOBAL_HEAD
+}
+
+/**
+ * Master-admin whitelist (ADMIN_HEAD_PLAN S2.1). Single source for the
+ * whitelisted email — firestore.rules carries the same literal as the
+ * server-side boundary. Client use is UI gating ONLY, never authorization.
+ */
+object AdminConfig {
+    const val GLOBAL_HEAD_EMAIL = "sandeepreddyr97@gmail.com"
+
+    /** Presence windows: <15m active, 15m–2h idle, beyond offline. */
+    const val ACTIVE_WINDOW_MILLIS = 15L * 60L * 1000L
+    const val IDLE_WINDOW_MILLIS = 2L * 60L * 60L * 1000L
+
+    fun isGlobalHeadEmail(email: String?): Boolean =
+        !email.isNullOrBlank() &&
+            email.trim().lowercase(java.util.Locale.ROOT) == GLOBAL_HEAD_EMAIL
+}
+
+enum class MemberPresence { ACTIVE_NOW, IDLE, OFFLINE }
+
+/** Pure + unit-testable (inject `now` in tests). Future timestamps heal to ACTIVE_NOW. */
+fun presenceOf(lastActiveAt: Long, now: Long = System.currentTimeMillis()): MemberPresence = when {
+    lastActiveAt <= 0L -> MemberPresence.OFFLINE
+    now - lastActiveAt < AdminConfig.ACTIVE_WINDOW_MILLIS -> MemberPresence.ACTIVE_NOW
+    now - lastActiveAt < AdminConfig.IDLE_WINDOW_MILLIS -> MemberPresence.IDLE
+    else -> MemberPresence.OFFLINE
 }

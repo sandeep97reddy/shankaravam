@@ -97,6 +97,23 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
     val importReport: StateFlow<String?> = _importReport.asStateFlow()
     fun consumeImportReport() { _importReport.value = null }
 
+    /**
+     * Last playback failure, shown inline in the transport card. A safety net:
+     * NO throwable from the announce path may ever kill the process — it lands
+     * here as a visible message instead of "the app closed itself".
+     */
+    private val _playbackError = MutableStateFlow<String?>(null)
+    val playbackError: StateFlow<String?> = _playbackError.asStateFlow()
+    fun clearPlaybackError() { _playbackError.value = null }
+
+    private fun failPlayback(e: Throwable) {
+        isPlaying.value = false
+        isPaused.value = false
+        runCatching { engine.stopAll() }
+        _playbackError.value =
+            "Announcement stopped (${e.message ?: "audio error"}). Try again — offline voice covers gaps."
+    }
+
     private var playedIntro = false
 
     init {
@@ -253,57 +270,73 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
     // ---- transport ----
 
     fun play() {
-        val state = uiState.value
-        if (state.queue.isEmpty() || state.isPlaying && !state.isPaused) return
-        if (state.isPaused) {
-            resume()
-            return
-        }
-        playAt(if (state.index in state.queue.indices) state.index else 0)
+        runCatching {
+            val state = uiState.value
+            if (state.queue.isEmpty() || state.isPlaying && !state.isPaused) return
+            clearPlaybackError()
+            if (state.isPaused) {
+                resume()
+                return
+            }
+            playAt(if (state.index in state.queue.indices) state.index else 0)
+        }.onFailure { failPlayback(it) }
     }
 
     fun pause() {
-        playJob?.cancel()
-        playJob = null
-        runCatching { engine.pausePlayback() }
-        runCatching { engine.native.stop() }
-        isPaused.value = true
-        isPlaying.value = false
-    }
-
-    fun stop() {
-        playJob?.cancel()
-        playJob = null
-        runCatching { engine.stopAll() }
-        isPlaying.value = false
-        isPaused.value = false
-        playedIntro = false
-    }
-
-    fun next() {
-        val state = uiState.value
-        if (state.queue.isEmpty()) return
-        val nextIndex = state.index + 1
-        if (nextIndex > state.queue.lastIndex) {
-            if (state.repeat) playAt(0) else stop()
-        } else {
-            playAt(nextIndex)
+        runCatching {
+            playJob?.cancel()
+            playJob = null
+            engine.pausePlayback()
+            engine.native.stop()
+            isPaused.value = true
+            isPlaying.value = false
         }
     }
 
+    fun stop() {
+        runCatching {
+            playJob?.cancel()
+            playJob = null
+            engine.stopAll()
+            isPlaying.value = false
+            isPaused.value = false
+            playedIntro = false
+            clearPlaybackError()
+        }
+    }
+
+    fun next() {
+        runCatching {
+            val state = uiState.value
+            if (state.queue.isEmpty()) return
+            val nextIndex = state.index + 1
+            if (nextIndex > state.queue.lastIndex) {
+                if (state.repeat) playAt(0) else stop()
+            } else {
+                playAt(nextIndex)
+            }
+        }.onFailure { failPlayback(it) }
+    }
+
     fun previous() {
-        val state = uiState.value
-        if (state.queue.isEmpty()) return
-        playAt((state.index - 1).coerceAtLeast(0))
+        runCatching {
+            val state = uiState.value
+            if (state.queue.isEmpty()) return
+            playAt((state.index - 1).coerceAtLeast(0))
+        }.onFailure { failPlayback(it) }
     }
 
     fun replay() {
-        val state = uiState.value
-        if (state.index in state.queue.indices) playAt(state.index) else play()
+        runCatching {
+            val state = uiState.value
+            if (state.index in state.queue.indices) playAt(state.index) else play()
+        }.onFailure { failPlayback(it) }
     }
 
     fun jumpTo(position: Int) {
-        if (position in uiState.value.queue.indices) playAt(position)
+        runCatching {
+            if (position in uiState.value.queue.indices) playAt(position)
+        }.onFailure { failPlayback(it) }
     }
 
     fun toggleRepeat() {
@@ -324,11 +357,17 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
 
     fun testAudio() {
         if (uiState.value.isPlaying || uiState.value.testingAudio) return
+        clearPlaybackError()
         testingAudio.value = true
-        engine.playTestLine(
-            onDone = { testingAudio.value = false },
-            onError = { testingAudio.value = false }
-        )
+        runCatching {
+            engine.playTestLine(
+                onDone = { testingAudio.value = false },
+                onError = { testingAudio.value = false }
+            )
+        }.onFailure {
+            testingAudio.value = false
+            failPlayback(it)
+        }
     }
 
     // ---- queue options (persisted) ----
@@ -376,7 +415,19 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
         isPlaying.value = true
         isPaused.value = false
 
+        // Safety net: any unexpected throwable becomes an inline error,
+        // never an uncaught coroutine exception (process death).
         playJob = viewModelScope.launch {
+            runCatching { playSequence(state, item, position) }
+                .onFailure { failPlayback(it) }
+        }
+    }
+
+    private suspend fun playSequence(
+        state: QueueUiState,
+        item: Donation,
+        position: Int
+    ) {
             // Opening Announcement: spoken once at start of Roster Mode
             if (state.rosterMode && position == 0 && !playedIntro) {
                 playedIntro = true
@@ -420,9 +471,8 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                 cont.invokeOnCancellation { engine.stopAll() }
             }
 
-            delay(gapSeconds.value * 1000L)
-            advance()
-        }
+        delay(gapSeconds.value * 1000L)
+        advance()
     }
 
     private fun resume() {
@@ -430,9 +480,11 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
             isPlaying.value = true
             isPaused.value = false
             playJob = viewModelScope.launch {
-                while (engine.isFilePlaying()) delay(500)
-                delay(gapSeconds.value * 1000L)
-                advance()
+                runCatching {
+                    while (engine.isFilePlaying()) delay(500)
+                    delay(gapSeconds.value * 1000L)
+                    advance()
+                }.onFailure { failPlayback(it) }
             }
         } else {
             val at = uiState.value.index
@@ -448,15 +500,17 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
             } else {
                 if (state.rosterMode) {
                     playJob = viewModelScope.launch {
-                        val outroText = buildClosingAnnouncement(languageOf())
-                        kotlinx.coroutines.suspendCancellableCoroutine { cont ->
-                            engine.speakPhrase(
-                                outroText,
-                                onDone = { if (cont.isActive) cont.resume(Unit) {} },
-                                onError = { if (cont.isActive) cont.resume(Unit) {} }
-                            )
-                            cont.invokeOnCancellation { engine.stopAll() }
-                        }
+                        runCatching {
+                            val outroText = buildClosingAnnouncement(languageOf())
+                            kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+                                engine.speakPhrase(
+                                    outroText,
+                                    onDone = { if (cont.isActive) cont.resume(Unit) {} },
+                                    onError = { if (cont.isActive) cont.resume(Unit) {} }
+                                )
+                                cont.invokeOnCancellation { engine.stopAll() }
+                            }
+                        }.onFailure { failPlayback(it); return@launch }
                         stop()
                     }
                 } else {
@@ -536,98 +590,100 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             var lastIds: Set<String> = emptySet()
             uiState.collect { state ->
-                // Single source for the key: the encrypted store (falls back to
-                // plain prefs on devices without a keystore). Never read the
-                // plain pref directly — migration clears it.
-                val key = secureKeys.getSarvamKey()
-                if (key.isBlank() || !state.hasEvent) return@collect
                 runCatching {
-                    engine.pruneCache(
-                        excludeIds = setOfNotNull(state.current?.id),
-                        maxFiles = SessionPrefs.AUDIO_CACHE_MAX_FILES,
-                        maxAgeDays = SessionPrefs.AUDIO_CACHE_MAX_AGE_DAYS
-                    )
-                }
-                val roster = prefs.queueRosterMode
-                val speaker = prefs.sarvamSpeaker
-                val missing = state.queue
-                    .filter { it.id !in lastIds || engine.cachedFile(it.id, roster) == null }
-                    .filter { engine.cachedFile(it.id, roster) == null }
-                    .take(50)
-                if (missing.isEmpty()) {
-                    prefetchRemaining.value = 0
-                    return@collect
-                }
-                lastIds = state.queue.map { it.id }.toSet()
-                prefetchRemaining.value = missing.size
-                // P4.5 guard only when sync is on: needs a Firestore read.
-                val guardEventId = if (prefs.cloudSyncEnabled) prefs.currentEventId.value else null
-                for (donation in missing) {
-                    if (engine.cachedFile(donation.id, roster) != null) continue
-                    val lang = languageOf()
-                    // P4.5 re-fetch guard: a peer generated this exact rendering
-                    // within 30 min → skip the call, native covers playback.
-                    if (guardEventId != null) {
-                        val hash = runCatching {
-                            val text = if (roster) buildRosterItemAnnouncement(donation, lang)
-                            else buildDonationAnnouncement(donation, state.eventName, lang)
-                            audioHashFor(text, lang.name, speaker, roster)
-                        }.getOrNull()
-                        val fresh = hash != null && runCatching {
-                            syncService.readAudioMeta(guardEventId, donation.id)
-                        }.getOrNull()?.let { meta ->
-                            meta.hash == hash &&
-                                System.currentTimeMillis() - meta.generatedAt <
-                                SessionPrefs.AUDIO_META_FRESH_MILLIS
-                        } == true
-                        if (fresh) {
-                            prefetchRemaining.value = (prefetchRemaining.value - 1).coerceAtLeast(0)
-                            continue
+                    // Single source for the key: the encrypted store (falls back to
+                    // plain prefs on devices without a keystore). Never read the
+                    // plain pref directly — migration clears it.
+                    val key = secureKeys.getSarvamKey()
+                    if (key.isBlank() || !state.hasEvent) return@runCatching
+                    runCatching {
+                        engine.pruneCache(
+                            excludeIds = setOfNotNull(state.current?.id),
+                            maxFiles = SessionPrefs.AUDIO_CACHE_MAX_FILES,
+                            maxAgeDays = SessionPrefs.AUDIO_CACHE_MAX_AGE_DAYS
+                        )
+                    }
+                    val roster = prefs.queueRosterMode
+                    val speaker = prefs.sarvamSpeaker
+                    val missing = state.queue
+                        .filter { it.id !in lastIds || engine.cachedFile(it.id, roster) == null }
+                        .filter { engine.cachedFile(it.id, roster) == null }
+                        .take(50)
+                    if (missing.isEmpty()) {
+                        prefetchRemaining.value = 0
+                        return@runCatching
+                    }
+                    lastIds = state.queue.map { it.id }.toSet()
+                    prefetchRemaining.value = missing.size
+                    // P4.5 guard only when sync is on: needs a Firestore read.
+                    val guardEventId = if (prefs.cloudSyncEnabled) prefs.currentEventId.value else null
+                    for (donation in missing) {
+                        if (engine.cachedFile(donation.id, roster) != null) continue
+                        val lang = languageOf()
+                        // P4.5 re-fetch guard: a peer generated this exact rendering
+                        // within 30 min → skip the call, native covers playback.
+                        if (guardEventId != null) {
+                            val hash = runCatching {
+                                val text = if (roster) buildRosterItemAnnouncement(donation, lang)
+                                else buildDonationAnnouncement(donation, state.eventName, lang)
+                                audioHashFor(text, lang.name, speaker, roster)
+                            }.getOrNull()
+                            val fresh = hash != null && runCatching {
+                                syncService.readAudioMeta(guardEventId, donation.id)
+                            }.getOrNull()?.let { meta ->
+                                meta.hash == hash &&
+                                    System.currentTimeMillis() - meta.generatedAt <
+                                    SessionPrefs.AUDIO_META_FRESH_MILLIS
+                            } == true
+                            if (fresh) {
+                                prefetchRemaining.value = (prefetchRemaining.value - 1).coerceAtLeast(0)
+                                continue
+                            }
                         }
-                    }
-                    // P4 budget: 10 cloud calls per 45 min per device; the rest
-                    // stay on native Telugu until the window resets.
-                    if (!prefs.takeSarvamSlot()) {
-                        prefetchRemaining.value = 0
-                        break
-                    }
-                    val file = engine.ensureCached(
-                        donation = donation,
-                        eventName = state.eventName,
-                        language = lang,
-                        apiKey = key,
-                        onStatus = { status ->
-                            donationRepo.updateAudioStatus(donation.id, status)
-                        },
-                        roster = roster,
-                        speaker = speaker
-                    )
-                    // Simple circuit-breaker: any Sarvam/network failure stops
-                    // this pass instead of burning the remaining rows. Native
-                    // TTS covers playback; the next queue change retries.
-                    if (file == null) {
-                        prefetchRemaining.value = 0
-                        break
-                    }
-                    // Stamp the generation so peers skip their duplicate call.
-                    if (guardEventId != null) {
-                        val by = container.authRepository.user.value?.uid
-                            ?: prefs.attributionName()
-                        runCatching {
-                            val text = if (roster) buildRosterItemAnnouncement(donation, lang)
-                            else buildDonationAnnouncement(donation, state.eventName, lang)
-                            syncService.stampAudioMeta(
-                                guardEventId,
-                                donation.id,
-                                com.shankaravam.festival.data.remote.FirestoreSyncService.AudioMeta(
-                                    hash = audioHashFor(text, lang.name, speaker, roster),
-                                    generatedAt = System.currentTimeMillis(),
-                                    generatedBy = by
+                        // P4 budget: 10 cloud calls per 45 min per device; the rest
+                        // stay on native Telugu until the window resets.
+                        if (!prefs.takeSarvamSlot()) {
+                            prefetchRemaining.value = 0
+                            break
+                        }
+                        val file = engine.ensureCached(
+                            donation = donation,
+                            eventName = state.eventName,
+                            language = lang,
+                            apiKey = key,
+                            onStatus = { status ->
+                                donationRepo.updateAudioStatus(donation.id, status)
+                            },
+                            roster = roster,
+                            speaker = speaker
+                        )
+                        // Simple circuit-breaker: any Sarvam/network failure stops
+                        // this pass instead of burning the remaining rows. Native
+                        // TTS covers playback; the next queue change retries.
+                        if (file == null) {
+                            prefetchRemaining.value = 0
+                            break
+                        }
+                        // Stamp the generation so peers skip their duplicate call.
+                        if (guardEventId != null) {
+                            val by = container.authRepository.user.value?.uid
+                                ?: prefs.attributionName()
+                            runCatching {
+                                val text = if (roster) buildRosterItemAnnouncement(donation, lang)
+                                else buildDonationAnnouncement(donation, state.eventName, lang)
+                                syncService.stampAudioMeta(
+                                    guardEventId,
+                                    donation.id,
+                                    com.shankaravam.festival.data.remote.FirestoreSyncService.AudioMeta(
+                                        hash = audioHashFor(text, lang.name, speaker, roster),
+                                        generatedAt = System.currentTimeMillis(),
+                                        generatedBy = by
+                                    )
                                 )
-                            )
+                            }
                         }
+                        prefetchRemaining.value = (prefetchRemaining.value - 1).coerceAtLeast(0)
                     }
-                    prefetchRemaining.value = (prefetchRemaining.value - 1).coerceAtLeast(0)
                 }
             }
         }

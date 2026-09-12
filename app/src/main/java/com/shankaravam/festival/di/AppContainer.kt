@@ -91,7 +91,7 @@ class AppContainer(context: Context) {
     // G6 cloud graph. All inert until the user enables Cloud Sync in Settings;
     // Firebase getters are guarded so builds without google-services.json run fine.
     val secureKeys: SecureKeyStore by lazy { SecureKeyStore(appContext, sessionPrefs) }
-    val authRepository: AuthRepository by lazy { AuthRepository(appContext) }
+    val authRepository: AuthRepository by lazy { AuthRepository(appContext, sessionPrefs) }
     val syncService: FirestoreSyncService by lazy {
         FirestoreSyncService(database, sessionPrefs)
     }

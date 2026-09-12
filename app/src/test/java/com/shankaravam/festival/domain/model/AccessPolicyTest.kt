@@ -40,9 +40,13 @@ class AccessPolicyTest {
     }
 
     @Test
-    fun unknown_role_names_fall_back_to_organizer() {
-        assertTrue(roleOf(null) == UserRole.ORGANIZER)
-        assertTrue(roleOf("super_admin") == UserRole.ORGANIZER)
+    fun unknown_role_names_fall_back_to_member_least_privilege() {
+        assertTrue(roleOf(null) == UserRole.MEMBER)
+        assertTrue(roleOf("super_admin") == UserRole.MEMBER)
+        assertTrue(roleOf("revoked") == UserRole.MEMBER)
+        assertTrue(roleOf("collector") == UserRole.MEMBER)
         assertTrue(roleOf("member") == UserRole.MEMBER)
+        assertTrue(roleOf("organizer") == UserRole.ORGANIZER)
+        assertTrue(roleOf("global_head") == UserRole.GLOBAL_HEAD)
     }
 }

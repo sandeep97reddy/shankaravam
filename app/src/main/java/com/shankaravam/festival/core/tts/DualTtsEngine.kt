@@ -142,6 +142,11 @@ class DualTtsEngine(
         runCatching { stopPlayback() }
         runCatching { audioFocus.request() }
         try {
+            if (!file.exists() || file.length() == 0L) {
+                runCatching { audioFocus.abandon() }
+                runCatching { onError() }
+                return
+            }
             player = MediaPlayer().apply {
                 setAudioAttributes(audioFocus.attributes)
                 setDataSource(file.absolutePath)
@@ -157,7 +162,7 @@ class DualTtsEngine(
                 setOnPreparedListener { runCatching { it.start() }.onFailure { runCatching { onError() } } }
                 prepareAsync()
             }
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             runCatching { audioFocus.abandon() }
             runCatching { onError() }
         }

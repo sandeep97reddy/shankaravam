@@ -1,13 +1,27 @@
 rules_version = '2';
 
-// ShankaRavam — Spark Free Tier rules (plan §13, §22).
+// ShankaRavam — Spark Free Tier rules (plan §13, §22; ADMIN_HEAD_PLAN S1–S5).
 // Deploy with: firebase deploy --only firestore:rules
 // Money collections are delta-synced from Room; audio NEVER goes here.
+// Master admin: sandeepreddyr97@gmail.com (Google-provider + verified pinned;
+// client AdminConfig is UI gating only — this file is the boundary).
 service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn() {
       return request.auth != null;
+    }
+
+    // S1 master-admin whitelist (ADMIN_HEAD_PLAN S1.1). Email alone is NOT
+    // proof of Google login (email/password providers can claim any address),
+    // so the rule pins the Google provider + verified flag. Client-side
+    // AdminConfig.isGlobalHeadEmail() is UI gating only — this is the boundary.
+    function isGlobalAdmin() {
+      return signedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email.lower() == 'sandeepreddyr97@gmail.com'
+        && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'google.com';
     }
 
     function memberRole(eventId) {
@@ -39,9 +53,24 @@ service cloud.firestore {
       return isCollector(eventId) || isEventCreator(eventId);
     }
 
-    // ---- event headers: creator + active members read; creator/collectors update ----
+    // S1: collectors may approve a PENDING request to active collector/viewer,
+    // but NOTHING else — no head promotion, no revoke, no edits to active
+    // members. Head/creator path below covers those. Keeps multi-counter
+    // approval working while the head is offline (ADMIN_HEAD_PLAN S1.2).
+    function isApprovePendingToActive(eventId) {
+      return isCollector(eventId)
+        && resource.data.status == 'pending'
+        && request.resource.data.status == 'active'
+        && request.resource.data.role in ['organizer', 'member'];
+    }
+
+    // ---- event headers: active members + creator read; doc-holding members
+    // (incl. pending joiners, S3 addendum) may read the header so a second
+    // Google account's join resolves after filing membership. Ledger reads
+    // below stay active-only — pending still can't see money. ----
     match /events/{eventId} {
-      allow read: if isActiveMember(eventId) || isEventCreator(eventId);
+      allow read: if isActiveMember(eventId) || isEventCreator(eventId)
+        || (signedIn() && exists(/databases/$(database)/documents/events/$(eventId)/members/$(request.auth.uid)));
       allow create: if signedIn();
       allow update: if canWriteLedger(eventId);
 
@@ -67,11 +96,14 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
-      // ---- membership: anyone signed in may file a pending request for
-      // themselves; the event creator may also claim their own active
-      // global_head seat; only collectors approve / change roles / revoke ----
+      // ---- membership (S1 hardened): self file pending/member; creator claims
+      // own active/global_head seat; whitelisted admin auto-claims head on any
+      // festival; updates are head/creator full-manage, collectors approve
+      // pending→active (organizer/member only), self may merge-touch presence
+      // + identity keys without changing role/status. No deletes. ----
       match /members/{userId} {
-        allow read: if isActiveMember(eventId) || request.auth.uid == userId;
+        allow read: if signedIn()
+          && (isActiveMember(eventId) || request.auth.uid == userId || isGlobalAdmin());
         allow create: if signedIn()
           && request.auth.uid == userId
           && (
@@ -82,28 +114,46 @@ service cloud.firestore {
               isEventCreator(eventId)
               && request.resource.data.status == 'active'
               && request.resource.data.role == 'global_head'
+            ) || (
+              isGlobalAdmin()
+              && request.resource.data.status == 'active'
+              && request.resource.data.role == 'global_head'
             )
           );
-        allow update: if canWriteLedger(eventId);
+        allow update: if isGlobalAdmin() || isEventCreator(eventId)
+          || isApprovePendingToActive(eventId)
+          || (
+            signedIn() && request.auth.uid == userId
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['lastActiveAt', 'counterName', 'deviceTag', 'displayName', 'email'])
+            && request.resource.data.role == resource.data.role
+            && request.resource.data.status == resource.data.status
+          );
         allow delete: if false;
       }
     }
 
-    // ---- invite codes: signed-in users resolve a code, collectors publish ----
+    // ---- invite codes (S1): anyone signed in resolves; first publisher owns
+    // (createdBy == self); only the creator or the master admin may overwrite.
+    // Second publisher's bare .set() is an update and correctly fails. ----
     match /codes/{code} {
       allow read: if signedIn();
-      allow create, update: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isGlobalAdmin()
+        || (signedIn() && resource.data.createdBy == request.auth.uid);
       allow delete: if false;
     }
 
-    // ---- shared voice key: readable by any signed-in collector device,
-    // writable only with an audit identity (client gates Publish to the head;
-    // per-event head-gating needs a per-event config path — see UI_FIX_PLAN P4).
+    // ---- shared voice key (S1 model (a): global singleton, master-admin-only
+    // writes). Readable by any signed-in device so the announcer can pull.
+    // Non-admin heads see a graceful "saved on this device only" fallback
+    // until S4 re-gates the Publish button. Per-event keys need a per-event
+    // config path (deferred — see UI_FIX_PLAN P4).
     // Audio itself never goes here (AGENTS.md Rule #2). ----
     match /config/tts_settings {
       allow read: if signedIn();
-      allow write: if signedIn()
-        && request.resource.data.updatedBy == request.auth.uid;
+      allow write: if isGlobalAdmin();
     }
   }
 }

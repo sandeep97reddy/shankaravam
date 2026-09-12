@@ -3,8 +3,10 @@ package com.shankaravam.festival.data.remote
 import com.shankaravam.festival.core.util.Outcome
 import com.shankaravam.festival.data.local.AppDatabase
 import com.shankaravam.festival.data.local.SessionPrefs
+import com.shankaravam.festival.domain.model.AdminConfig
 import com.shankaravam.festival.domain.model.SyncStatus
 import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
@@ -16,12 +18,22 @@ import kotlinx.coroutines.withContext
 
 data class SyncResult(val uploaded: Int, val downloaded: Int, val conflicts: Int)
 
+/**
+ * Team-directory row (ADMIN_HEAD_PLAN S2.2). Identity/presence fields are
+ * display-only — the security boundary is firestore.rules, never these.
+ * `deviceTag` is the last-4 install tag; the full UUID never leaves Room.
+ */
 data class CloudMember(
     val userId: String,
     val role: String,
     val status: String,
     val approvedBy: String = "",
-    val joinedAt: Long = 0L
+    val joinedAt: Long = 0L,
+    val email: String? = null,
+    val displayName: String? = null,
+    val counterName: String? = null,
+    val deviceTag: String? = null,
+    val lastActiveAt: Long = 0L
 )
 
 /**
@@ -74,6 +86,37 @@ class FirestoreSyncService(
             val since = prefs.lastSyncMillis(eventId)
             downloaded += pullDonations(eventRef, eventId, since).also { conflicts += it.second }.first
             downloaded += pullExpenses(eventRef, eventId, since).also { conflicts += it.second }.first
+
+            // S3.2/S3.5 presence + own-status refresh: best-effort, NEVER fails
+            // the ledger sync. One merge-write per sync per device (Spark-safe);
+            // signed-out / never-joined devices skip silently. Role/status are
+            // echoed back verbatim so the S1 self-touch rule (equality-pinned)
+            // always holds; the read also enforces revoke/approve locally.
+            if (prefs.isCloudEvent(eventId)) {
+                runCatching {
+                    val me = Firebase.auth.currentUser ?: return@runCatching
+                    val seatRef = eventRef.collection("members").document(me.uid)
+                    val snap = seatRef.get().await()
+                    val curRole = snap.getString("role") ?: return@runCatching
+                    val curStatus = snap.getString("status") ?: return@runCatching
+                    prefs.setMyRole(eventId, curRole)
+                    prefs.setMyStatus(eventId, curStatus)
+                    seatRef.set(
+                        FirestoreMappers.memberToMap(
+                            role = curRole,
+                            status = curStatus,
+                            approvedBy = snap.getString("approvedBy") ?: "",
+                            joinedAt = null,
+                            email = me.email,
+                            displayName = me.displayName,
+                            counterName = prefs.attributionName(),
+                            deviceTag = prefs.deviceId.takeLast(4).uppercase(),
+                            lastActiveAt = System.currentTimeMillis()
+                        ),
+                        SetOptions.merge()
+                    ).await()
+                }
+            }
 
             prefs.setLastSyncMillis(eventId, System.currentTimeMillis())
             SyncResult(uploaded, downloaded, conflicts)
@@ -152,17 +195,25 @@ class FirestoreSyncService(
                 }
                 // Own head seat: rules only let the creator (globalHeadId)
                 // self-register as active/global_head — this unblocks isCollector.
+                // Merge-write preserves identity/presence keys (S2.5); the
+                // original joinedAt survives republishes so roster order holds.
                 runCatching {
-                    fs.collection("events").document(eventId)
+                    val seatRef = fs.collection("events").document(eventId)
                         .collection("members").document(uid)
-                        .set(
-                            FirestoreMappers.memberToMap(
-                                role = "global_head", status = "active",
-                                approvedBy = uid, joinedAt = System.currentTimeMillis()
-                            )
-                        ).await()
+                    val existingJoinedAt =
+                        runCatching { seatRef.get().await().getLong("joinedAt") }.getOrNull()
+                    seatRef.set(
+                        FirestoreMappers.memberToMap(
+                            role = "global_head", status = "active",
+                            approvedBy = uid,
+                            joinedAt = existingJoinedAt ?: System.currentTimeMillis()
+                        ),
+                        SetOptions.merge()
+                    ).await()
                 }
                 prefs.setMyRole(eventId, SessionPrefs.ROLE_GLOBAL_HEAD)
+                prefs.setMyStatus(eventId, SessionPrefs.STATUS_ACTIVE)
+                prefs.markCloudEvent(eventId)
                 prefs.putShareCode(eventId, code.uppercase())
                 prefs.putShareCodeReverse(code.uppercase(), eventId)
             }.fold(
@@ -171,28 +222,78 @@ class FirestoreSyncService(
             )
         }
 
-    /** Join by typed code: pull the header into Room, then file a pending membership. */
-    suspend fun requestToJoin(code: String, uid: String): Outcome<String> =
+    /**
+     * Join by typed code (S3.1): file membership FIRST, then pull the header.
+     * Identity is stamped for the team directory (tag-only device id); the
+     * whitelisted admin auto-activates as head via the S1 rules clause.
+     * Header pull is best-effort — a second Google account cannot read it
+     * until approved — so it must never fail the join; current-event
+     * selection only moves when Room actually holds the event.
+     */
+    suspend fun requestToJoin(
+        code: String,
+        uid: String,
+        email: String? = null,
+        displayName: String? = null
+    ): Outcome<String> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val normalized = code.trim().uppercase()
                 val codeDoc = Firebase.firestore.collection("codes").document(normalized).get().await()
                 val eventId = codeDoc.getString("eventId")
                     ?: throw IllegalStateException("Invite code not found.")
-                // Header into Room so the dashboard leaves its empty state.
-                val header = Firebase.firestore.collection("events").document(eventId).get().await()
-                val remote = header.data?.let { FirestoreMappers.eventFromMap(eventId, it) }
-                    ?: throw IllegalStateException("Event no longer shared.")
-                database.eventDao().upsert(remote)
-                prefs.setCurrentEventId(eventId)
-                Firebase.firestore.collection("events").document(eventId)
+                prefs.markCloudEvent(eventId)
+
+                // Identity: explicit params win, else the live auth user.
+                // Full deviceIds never leave the device — last-4 tag only.
+                val authUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+                val effectiveEmail = email ?: authUser?.email
+                val effectiveName = displayName ?: authUser?.displayName
+                val now = System.currentTimeMillis()
+                val isAdmin = AdminConfig.isGlobalHeadEmail(effectiveEmail)
+
+                // Membership first: self-create is allowed for pending/member
+                // and (S1 clause) for the whitelisted admin as active/head.
+                // Merge-write + preserved joinedAt: rejoins never rewind order
+                // nor wipe presence written by another device.
+                val seatRef = Firebase.firestore.collection("events").document(eventId)
                     .collection("members").document(uid)
-                    .set(
-                        FirestoreMappers.memberToMap(
-                            role = "member", status = "pending",
-                            approvedBy = "", joinedAt = System.currentTimeMillis()
-                        )
-                    ).await()
+                val existingJoinedAt =
+                    runCatching { seatRef.get().await().getLong("joinedAt") }.getOrNull()
+                seatRef.set(
+                    FirestoreMappers.memberToMap(
+                        role = if (isAdmin) SessionPrefs.ROLE_GLOBAL_HEAD else SessionPrefs.ROLE_MEMBER,
+                        status = if (isAdmin) SessionPrefs.STATUS_ACTIVE else SessionPrefs.STATUS_PENDING,
+                        approvedBy = if (isAdmin) uid else "",
+                        joinedAt = existingJoinedAt ?: now,
+                        email = effectiveEmail,
+                        displayName = effectiveName,
+                        counterName = prefs.attributionName(),
+                        deviceTag = prefs.deviceId.takeLast(4).uppercase(),
+                        lastActiveAt = now
+                    ),
+                    SetOptions.merge()
+                ).await()
+
+                if (isAdmin) {
+                    prefs.setMyRole(eventId, SessionPrefs.ROLE_GLOBAL_HEAD)
+                    prefs.setMyStatus(eventId, SessionPrefs.STATUS_ACTIVE)
+                } else {
+                    prefs.setMyRole(eventId, SessionPrefs.ROLE_MEMBER)
+                    prefs.setMyStatus(eventId, SessionPrefs.STATUS_PENDING)
+                }
+
+                // Header into Room so the dashboard leaves its empty state.
+                runCatching {
+                    val header = Firebase.firestore.collection("events")
+                        .document(eventId).get().await()
+                    header.data?.let { FirestoreMappers.eventFromMap(eventId, it) }?.let {
+                        database.eventDao().upsert(it)
+                    }
+                }
+                if (runCatching { database.eventDao().observeEvent(eventId).first() }.getOrNull() != null) {
+                    prefs.setCurrentEventId(eventId)
+                }
                 prefs.putShareCodeReverse(normalized, eventId)
                 eventId
             }.fold(
@@ -201,50 +302,70 @@ class FirestoreSyncService(
             )
         }
 
-    suspend fun pendingMembers(eventId: String): Outcome<List<CloudMember>> =
+    /**
+     * Full roster, join-ordered (S3.3). Single orderBy, no where-clause — so
+     * no composite index is needed (the old pending-only query required one
+     * and is deleted). Pending views partition client-side. Head-gated by
+     * callers; volunteers never invoke it (Rule #1).
+     */
+    suspend fun fetchAllMembers(eventId: String): Outcome<List<CloudMember>> =
         withContext(Dispatchers.IO) {
             runCatching {
                 Firebase.firestore.collection("events").document(eventId)
-                    .collection("members").whereEqualTo("status", "pending")
-                    .orderBy("joinedAt", Query.Direction.ASCENDING)
-                    .get().await().documents.mapNotNull { doc ->
-                        val data = doc.data ?: return@mapNotNull null
-                        CloudMember(
-                            userId = doc.id,
-                            role = data["role"] as? String ?: "member",
-                            status = "pending"
-                        )
+                    .collection("members").orderBy("joinedAt", Query.Direction.ASCENDING)
+                    .get().await().documents.map { doc ->
+                        FirestoreMappers.memberFromMap(doc.id, doc.data ?: emptyMap())
                     }
             }.fold(
                 onSuccess = { Outcome.Ok(it) },
-                onFailure = { Outcome.Err(it.message ?: "Could not load requests.") }
+                onFailure = { Outcome.Err(it.message ?: "Could not load team.") }
             )
         }
 
-    suspend fun setMember(
+    /**
+     * Unified role/status writer (S3.4). Contract (ADMIN_HEAD_PLAN App.A):
+     * Collector=(organizer,active), Viewer=(member,active),
+     * Revoke=(unchanged role,revoked). Merge-write, joinedAt never touched.
+     * Collectors may only approve pending→active non-head; anything beyond
+     * is denied server-side (S1 rules) and surfaces here as Err.
+     */
+    suspend fun setMemberRole(
         eventId: String,
         userId: String,
         role: String,
         status: String,
         approvedBy: String
     ): Outcome<Unit> = withContext(Dispatchers.IO) {
+        val cleanRole = role.trim().lowercase()
+        val cleanStatus = status.trim().lowercase()
+        if (cleanRole != SessionPrefs.ROLE_GLOBAL_HEAD
+            && cleanRole != SessionPrefs.ROLE_ORGANIZER
+            && cleanRole != SessionPrefs.ROLE_MEMBER
+        ) {
+            return@withContext Outcome.Err("Unknown role: $role")
+        }
+        if (cleanStatus != SessionPrefs.STATUS_ACTIVE
+            && cleanStatus != SessionPrefs.STATUS_PENDING
+            && cleanStatus != SessionPrefs.STATUS_REVOKED
+        ) {
+            return@withContext Outcome.Err("Unknown status: $status")
+        }
         runCatching {
             Firebase.firestore.collection("events").document(eventId)
                 .collection("members").document(userId)
                 .set(
                     FirestoreMappers.memberToMap(
-                        role = role, status = status,
-                        approvedBy = approvedBy, joinedAt = System.currentTimeMillis()
-                    )
+                        role = cleanRole, status = cleanStatus,
+                        approvedBy = approvedBy, joinedAt = null
+                    ),
+                    SetOptions.merge()
                 ).await()
-            if (status == "active") {
-                // Best-effort role refresh for our own row.
-                runCatching {
-                    val me = Firebase.firestore.collection("events").document(eventId)
-                        .collection("members").document(userId).get().await()
-                    val myRole = me.getString("role") ?: role
-                    prefs.setMyRole(eventId, myRole)
-                }
+            // Best-effort role + status refresh for our own row.
+            runCatching {
+                val me = Firebase.firestore.collection("events").document(eventId)
+                    .collection("members").document(userId).get().await()
+                prefs.setMyRole(eventId, me.getString("role") ?: cleanRole)
+                prefs.setMyStatus(eventId, me.getString("status") ?: cleanStatus)
             }
         }.fold(
             onSuccess = { Outcome.Ok(Unit) },

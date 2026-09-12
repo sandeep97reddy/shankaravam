@@ -20,6 +20,11 @@
 
 Legend: ⬜ todo · 🟡 in_progress · ✅ done · ⏭️ skipped (G6 may ship without)
 
+## Admin Head Track (ADMIN_HEAD_PLAN.md S1–S5) — ✅ done 12-09-2026
+- **Status:** all 5 phases done — `assembleDebug` + `testDebugUnitTest` 69/69 green
+- **S1** rules hardening (Google-pinned admin, escalation/overwrite/TTS seals, least-privilege `roleOf`) · **S2** foundation (`AdminConfig`, `CloudMember`, merge-safe mappers, scoped head override, auth-owned flag) · **S3** membership flows (admin auto-elevate, presence touch, unified roster, `setMemberRole`) · **S4** head-only team directory + Verified badges + admin-only Publish · **S5** `AdminConfigTest` (12 tests) + this pointer
+- **Next:** `firebase deploy --only firestore:rules` → two-device manual matrix (ADMIN_HEAD_PLAN App.B / S5.3)
+
 ## Non-Negotiables (final verification, G6)
 - [x] Offline-first: fresh install works with zero login, Room = UI source of truth (Firebase guarded, sync off by default)
 - [x] Free tier: zero audio in Firebase Storage (maps exclude it), delta sync only, receipts WebP ~100KB

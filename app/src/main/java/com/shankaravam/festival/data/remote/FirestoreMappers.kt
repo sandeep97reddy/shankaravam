@@ -159,8 +159,56 @@ object FirestoreMappers {
 
     // ---- members / codes / config ----
 
-    fun memberToMap(role: String, status: String, approvedBy: String, joinedAt: Long): Map<String, Any?> =
-        mapOf("role" to role, "status" to status, "approvedBy" to approvedBy, "joinedAt" to joinedAt)
+    /**
+     * Merge-write safe (ADMIN_HEAD_PLAN S2.2/S2.5): null/blank identity keys
+     * are OMITTED so a role/status update never null-stomps presence fields
+     * written by another device, and `joinedAt` is omitted when null so
+     * approvals preserve the original join order. Full deviceIds are never
+     * accepted here — callers pass the last-4 `deviceTag`.
+     */
+    fun memberToMap(
+        role: String,
+        status: String,
+        approvedBy: String,
+        joinedAt: Long?,
+        email: String? = null,
+        displayName: String? = null,
+        counterName: String? = null,
+        deviceTag: String? = null,
+        lastActiveAt: Long? = null
+    ): Map<String, Any?> = buildMap {
+        put("role", role)
+        put("status", status)
+        put("approvedBy", approvedBy)
+        if (joinedAt != null) put("joinedAt", joinedAt)
+        email?.takeIf { it.isNotBlank() }?.let { put("email", it) }
+        displayName?.takeIf { it.isNotBlank() }?.let { put("displayName", it) }
+        counterName?.takeIf { it.isNotBlank() }?.let { put("counterName", it) }
+        deviceTag?.takeIf { it.isNotBlank() }?.let { put("deviceTag", it) }
+        if (lastActiveAt != null && lastActiveAt > 0L) put("lastActiveAt", lastActiveAt)
+    }
+
+    /**
+     * Legacy-tolerant read: pre-S2 docs carry only the 4 core keys — every
+     * new field defaults. A legacy `deviceId` (full UUID, if any S3-beta doc
+     * wrote one) degrades to its last-4 tag; the full value is never surfaced.
+     */
+    fun memberFromMap(userId: String, map: Map<String, Any?>): CloudMember {
+        val legacyDeviceId = map["deviceId"] as? String
+        return CloudMember(
+            userId = userId,
+            role = map["role"] as? String ?: "member",
+            status = map["status"] as? String ?: "pending",
+            approvedBy = map["approvedBy"] as? String ?: "",
+            joinedAt = (map["joinedAt"] as? Number)?.toLong() ?: 0L,
+            email = map["email"] as? String,
+            displayName = map["displayName"] as? String,
+            counterName = map["counterName"] as? String,
+            deviceTag = (map["deviceTag"] as? String)
+                ?: legacyDeviceId?.takeLast(4)?.uppercase(),
+            lastActiveAt = (map["lastActiveAt"] as? Number)?.toLong() ?: 0L
+        )
+    }
 
     /**
      * Money conflict rule (plan §20): a remote row wins attention only when it
