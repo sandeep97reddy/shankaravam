@@ -245,9 +245,13 @@ private fun VoiceSettingsCard() {
     }
 
     val hasKey = !storedKey.isNullOrBlank()
+    val normSpeaker = com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(speaker)
     val activeLabel = when {
-        hasKey && speaker == "arvind" -> "🎙️ Arvind (Sarvam Cloud HD)"
-        hasKey && speaker == "meera" -> "🌸 Meera (Sarvam Cloud HD)"
+        hasKey && normSpeaker == "priya" -> "🌸 Priya (Sarvam Cloud HD)"
+        hasKey && normSpeaker == "shubh" -> "🎙️ Shubh (Sarvam Cloud HD)"
+        hasKey && normSpeaker == "kavitha" -> "🌸 Kavitha (Sarvam Cloud HD)"
+        hasKey && normSpeaker == "ratan" -> "🎙️ Ratan (Sarvam Cloud HD)"
+        hasKey -> "☁️ Sarvam Voice (${normSpeaker.replaceFirstChar { it.uppercase() }})"
         selectedNativeVoice != null -> "📱 Android Voice (${selectedNativeVoice?.substringAfterLast("-", "Offline")})"
         else -> "📱 Android System Voice (Offline)"
     }
@@ -311,26 +315,52 @@ private fun VoiceSettingsCard() {
                     DropdownMenuItem(
                         text = {
                             Column {
-                                Text("🌸 Meera (Female)", fontWeight = FontWeight.SemiBold)
-                                Text("Sarvam AI Cloud HD • Studio Telugu", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("🌸 Priya (Female) • Recommended", fontWeight = FontWeight.SemiBold)
+                                Text("Sarvam AI Bulbul v3 • Studio Telugu", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         },
                         onClick = {
-                            speaker = "meera"
-                            prefs.sarvamSpeaker = "meera"
+                            speaker = "priya"
+                            prefs.sarvamSpeaker = "priya"
                             showMenu = false
                         }
                     )
                     DropdownMenuItem(
                         text = {
                             Column {
-                                Text("🎙️ Arvind (Male)", fontWeight = FontWeight.SemiBold)
-                                Text("Sarvam AI Cloud HD • Studio Telugu", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("🎙️ Shubh (Male) • Recommended", fontWeight = FontWeight.SemiBold)
+                                Text("Sarvam AI Bulbul v3 • Studio Telugu", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         },
                         onClick = {
-                            speaker = "arvind"
-                            prefs.sarvamSpeaker = "arvind"
+                            speaker = "shubh"
+                            prefs.sarvamSpeaker = "shubh"
+                            showMenu = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text("🌸 Kavitha (Female)", fontWeight = FontWeight.SemiBold)
+                                Text("Sarvam AI Bulbul v3 • Clear Telugu", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        },
+                        onClick = {
+                            speaker = "kavitha"
+                            prefs.sarvamSpeaker = "kavitha"
+                            showMenu = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text("🎙️ Ratan (Male)", fontWeight = FontWeight.SemiBold)
+                                Text("Sarvam AI Bulbul v3 • Clear Telugu", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        },
+                        onClick = {
+                            speaker = "ratan"
+                            prefs.sarvamSpeaker = "ratan"
                             showMenu = false
                         }
                     )

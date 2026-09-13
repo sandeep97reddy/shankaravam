@@ -1,5 +1,10 @@
 package com.shankaravam.festival.presentation.expense
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -7,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -17,7 +23,13 @@ import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material.icons.filled.Wallet
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
@@ -25,6 +37,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -44,11 +57,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.shankaravam.festival.core.export.ReportContent
 import com.shankaravam.festival.core.theme.DeepMaroon
 import com.shankaravam.festival.core.theme.TempleGold
+import com.shankaravam.festival.core.theme.TempleSaffron
 import com.shankaravam.festival.core.util.formatInr
 import com.shankaravam.festival.domain.model.Expense
 import com.shankaravam.festival.domain.model.ExpenseStatus
@@ -71,6 +86,7 @@ fun ExpenseListScreen(
     val snackbar = remember { SnackbarHostState() }
     var toCancel by remember { mutableStateOf<Expense?>(null) }
     var toCorrect by remember { mutableStateOf<Expense?>(null) }
+    var expandedId by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(state.error) {
         state.error?.let { snackbar.showSnackbar(it); viewModel.consumeError() }
@@ -151,6 +167,8 @@ fun ExpenseListScreen(
                         ExpenseCard(
                             expense = expense,
                             modifier = Modifier.animateItem(),
+                            expanded = expense.id == expandedId,
+                            onToggle = { expandedId = if (expandedId == expense.id) null else expense.id },
                             onCorrect = { toCorrect = expense },
                             onCancel = { toCancel = expense }
                         )
@@ -209,11 +227,14 @@ private fun EmptyExpensesHint(text: String) {
 private fun ExpenseCard(
     expense: Expense,
     modifier: Modifier = Modifier,
+    expanded: Boolean = false,
+    onToggle: () -> Unit = {},
     onCorrect: () -> Unit,
     onCancel: () -> Unit
 ) {
     val cancelled = expense.status == ExpenseStatus.CANCELLED
     Card(
+        onClick = onToggle,
         modifier = modifier.fillMaxWidth(),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -237,6 +258,12 @@ private fun ExpenseCard(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.ExtraBold,
                     color = com.shankaravam.festival.core.theme.CrimsonRose
+                )
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "Collapse details" else "Expand details",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
                 )
             }
             Row(
@@ -271,6 +298,90 @@ private fun ExpenseCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (expense.addedBy.isNotBlank()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Person,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(
+                        text = "Collector: ${expense.addedBy}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                }
+            }
+            // Expanded details: full collector / payer / vendor / record meta.
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    )
+                    if (expense.addedBy.isNotBlank()) {
+                        ExpenseDetailLine(
+                            icon = Icons.Filled.Person,
+                            label = "Recorded by",
+                            value = expense.addedBy
+                        )
+                    }
+                    if (expense.paidBy.isNotBlank()) {
+                        ExpenseDetailLine(
+                            icon = Icons.Filled.Person,
+                            label = "Paid by",
+                            value = expense.paidBy
+                        )
+                    }
+                    expense.vendor?.ifBlank { null }?.let {
+                        ExpenseDetailLine(icon = Icons.Filled.Storefront, label = "Vendor", value = it)
+                    }
+                    ExpenseDetailLine(
+                        icon = Icons.Filled.Wallet,
+                        label = "Method",
+                        value = expense.paymentMethod
+                    )
+                    ExpenseDetailLine(
+                        icon = Icons.Filled.Schedule,
+                        label = "Date",
+                        value = ReportContent.formatTime(expense.dateMillis)
+                    )
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun ExpenseDetailLine(icon: ImageVector, label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = TempleSaffron,
+            modifier = Modifier.size(16.dp)
+        )
+        Text(
+            text = "$label: $value",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
     }
 }

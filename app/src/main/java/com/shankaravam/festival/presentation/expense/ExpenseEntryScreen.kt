@@ -73,6 +73,7 @@ import com.shankaravam.festival.core.export.ReportContent
 import com.shankaravam.festival.core.i18n.appStrings
 import com.shankaravam.festival.core.theme.CrimsonRose
 import com.shankaravam.festival.core.theme.DeepMaroon
+import com.shankaravam.festival.presentation.common.ClosedEventBanner
 import com.shankaravam.festival.presentation.common.ModernTextField
 import com.shankaravam.festival.presentation.common.TempleAppBar
 import com.shankaravam.festival.presentation.common.containerViewModel
@@ -96,6 +97,7 @@ fun ExpenseEntryScreen(
 ) {
     val form by viewModel.form.collectAsState()
     val eventId by viewModel.currentEventId.collectAsState()
+    val isClosed by viewModel.isEventClosed.collectAsState()
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
     val strings = appStrings()
@@ -149,6 +151,9 @@ fun ExpenseEntryScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            // 0. Closed-festival lock (renders nothing while open).
+            ClosedEventBanner(isClosed = isClosed)
+
             // 1. Amount ₹ (Required *)
             ModernTextField(
                 value = form.amountText,
@@ -364,7 +369,7 @@ fun ExpenseEntryScreen(
             // 9. Large Prominent Save Button
             Button(
                 onClick = { viewModel.save() },
-                enabled = form.canSave,
+                enabled = form.canSave && !isClosed,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(54.dp),

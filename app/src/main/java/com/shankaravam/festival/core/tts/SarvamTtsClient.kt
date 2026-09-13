@@ -3,14 +3,40 @@ package com.shankaravam.festival.core.tts
 import android.content.Context
 import android.util.Base64
 import com.shankaravam.festival.data.remote.SarvamApiService
+import com.shankaravam.festival.data.remote.SarvamErrorParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+
+/**
+ * Normalizes speaker names to valid Sarvam bulbul:v3 speakers.
+ * Maps legacy "meera" -> "kavitha" and "arvind" -> "aditya".
+ * Defaults to "priya" (official recommended female speaker for Telugu).
+ */
+fun normalizeSarvamSpeaker(raw: String?): String = when (raw?.lowercase()?.trim()) {
+    "priya" -> "priya"
+    "shubh" -> "shubh"
+    "kavitha", "meera" -> "kavitha"
+    "aditya", "arvind" -> "aditya"
+    "ratan" -> "ratan"
+    "neha" -> "neha"
+    "ishita" -> "ishita"
+    "mani" -> "mani"
+    "vijay" -> "vijay"
+    "ritu" -> "ritu"
+    "roopa" -> "roopa"
+    "suhani" -> "suhani"
+    "pooja" -> "pooja"
+    "ashutosh" -> "ashutosh"
+    "rehan" -> "rehan"
+    "rohan" -> "rohan"
+    "varun" -> "varun"
+    else -> "priya"
+}
 
 /**
  * Cloud voice (plan §13). Audio lands ONLY in local disk cache —
@@ -35,22 +61,38 @@ class SarvamTtsClient(
         donationId: String,
         text: String,
         apiKey: String,
-        speaker: String = "meera",
+        speaker: String = "priya",
         roster: Boolean = false
     ): File = withContext(Dispatchers.IO) {
         cachedFile(donationId, roster)?.let { return@withContext it }
 
+        val normSpeaker = normalizeSarvamSpeaker(speaker)
         val payload = JSONObject()
-            .put("inputs", JSONArray().put(text))
-            .put("target_language_code", "te-IN")
-            .put("speaker", speaker)
+            .put("text", text)
+            .put("language_code", "te-IN")
+            .put("speaker", normSpeaker)
+            .put("model", "bulbul:v3")
+            .put("output_audio_codec", "mp3")
             .toString()
             .toRequestBody("application/json; charset=utf-8".toMediaType())
 
-        val raw = api.synthesize(apiKey.trim(), payload).string()
+        val raw = try {
+            api.synthesize(apiKey.trim(), payload).string()
+        } catch (e: Throwable) {
+            throw IOException(SarvamErrorParser.parse(e), e)
+        }
+
+        val json = runCatching { JSONObject(raw) }.getOrNull()
+            ?: throw IOException("Unexpected Sarvam response (not JSON): ${raw.take(100)}")
+
         val audioBase64 = runCatching {
-            JSONObject(raw).getJSONArray("audios").getString(0)
-        }.getOrNull() ?: throw IOException("Unexpected Sarvam response")
+            if (json.has("audios")) {
+                json.getJSONArray("audios").getString(0)
+            } else if (json.has("audio")) {
+                json.getString("audio")
+            } else null
+        }.getOrNull() ?: throw IOException("Missing audio in Sarvam response: ${raw.take(100)}")
+
         val bytes = Base64.decode(audioBase64, Base64.DEFAULT)
         if (bytes.isEmpty()) throw IOException("Empty audio from Sarvam")
 

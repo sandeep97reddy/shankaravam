@@ -50,11 +50,29 @@ object AdminConfig {
 }
 
 enum class MemberPresence { ACTIVE_NOW, IDLE, OFFLINE }
-
 /** Pure + unit-testable (inject `now` in tests). Future timestamps heal to ACTIVE_NOW. */
 fun presenceOf(lastActiveAt: Long, now: Long = System.currentTimeMillis()): MemberPresence = when {
     lastActiveAt <= 0L -> MemberPresence.OFFLINE
     now - lastActiveAt < AdminConfig.ACTIVE_WINDOW_MILLIS -> MemberPresence.ACTIVE_NOW
     now - lastActiveAt < AdminConfig.IDLE_WINDOW_MILLIS -> MemberPresence.IDLE
     else -> MemberPresence.OFFLINE
+}
+
+/**
+ * Human name for any team identity (roster rows, approvals, history lines).
+ * Preference: counter name (what volunteers recognize at the pandal) →
+ * Google display name → email → short-ID fallback. Raw UIDs never reach
+ * the UI through this helper. Pure + unit-testable.
+ */
+fun resolveMemberName(
+    counterName: String?,
+    displayName: String?,
+    email: String?,
+    userId: String
+): String {
+    if (!counterName.isNullOrBlank()) return counterName.trim()
+    if (!displayName.isNullOrBlank()) return displayName.trim()
+    if (!email.isNullOrBlank()) return email.trim()
+    val tail = userId.takeLast(6)
+    return if (tail.isNotBlank()) "ID: …$tail" else "Unknown counter"
 }

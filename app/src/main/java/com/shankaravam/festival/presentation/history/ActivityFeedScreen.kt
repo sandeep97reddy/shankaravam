@@ -1,5 +1,10 @@
 package com.shankaravam.festival.presentation.history
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,7 +30,11 @@ import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -33,6 +42,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -50,6 +60,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -83,6 +94,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
 enum class HistoryTypeFilter {
@@ -98,6 +110,15 @@ enum class TransactionType {
     SYSTEM
 }
 
+/** Expanded-block identity line for expenses: who paid + vendor (null when neither). */
+private fun expenseDetail(expense: Expense?): String? {
+    if (expense == null) return null
+    return listOfNotNull(
+        expense.paidBy.ifBlank { null }?.let { "Paid by $it" },
+        expense.vendor?.ifBlank { null }?.let { "Vendor: $it" }
+    ).joinToString(" • ").ifBlank { null }
+}
+
 data class RichTransactionItem(
     val id: String,
     val type: TransactionType,
@@ -106,6 +127,8 @@ data class RichTransactionItem(
     val isPositive: Boolean? = null,
     val subtitle: String? = null,
     val collector: String = "",
+    /** Extra identity line for the expanded block (paid-by/vendor, pronunciation). */
+    val detail: String? = null,
     val timestamp: Long = 0L,
     val syncStatus: SyncStatus = SyncStatus.LOCAL_ONLY
 )
@@ -124,6 +147,14 @@ class ActivityFeedViewModel(container: AppContainer) : ViewModel() {
 
     fun setQuery(q: String) { _query.value = q }
     fun setTypeFilter(f: HistoryTypeFilter) { _typeFilter.value = f }
+
+    /** Current event name for expanded card details (separate flow: combine is capped at ≤3). */
+    val eventName: StateFlow<String> =
+        container.sessionPrefs.currentEventId.flatMapLatest { eventId ->
+            if (eventId == null) flowOf("")
+            else container.eventRepository.observeEvent(eventId)
+                .map { it?.name ?: "" }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
 
     val transactions: StateFlow<List<RichTransactionItem>> =
         container.sessionPrefs.currentEventId.flatMapLatest { eventId ->
@@ -159,6 +190,7 @@ class ActivityFeedViewModel(container: AppContainer) : ViewModel() {
                                     isPositive = true,
                                     subtitle = "${donation?.paymentMethod ?: "Cash"} • ${donation?.status?.name?.lowercase()?.replace('_', ' ') ?: "received"}",
                                     collector = donation?.addedBy?.ifBlank { act.actorId } ?: act.actorId,
+                                    detail = donation?.pronunciationText?.ifBlank { null }?.let { "Pronounced: $it" },
                                     timestamp = act.timestamp,
                                     syncStatus = donation?.syncStatus ?: SyncStatus.PENDING_UPLOAD
                                 )
@@ -175,6 +207,7 @@ class ActivityFeedViewModel(container: AppContainer) : ViewModel() {
                                     isPositive = false,
                                     subtitle = "${expense?.category ?: "General"} • ${expense?.paymentMethod ?: "Cash"}",
                                     collector = expense?.addedBy?.ifBlank { act.actorId } ?: act.actorId,
+                                    detail = expenseDetail(expense),
                                     timestamp = act.timestamp,
                                     syncStatus = expense?.syncStatus ?: SyncStatus.PENDING_UPLOAD
                                 )
@@ -228,6 +261,7 @@ class ActivityFeedViewModel(container: AppContainer) : ViewModel() {
                             isPositive = true,
                             subtitle = "${d.paymentMethod} • ${d.status.name.lowercase()}",
                             collector = d.addedBy,
+                            detail = d.pronunciationText?.ifBlank { null }?.let { "Pronounced: $it" },
                             timestamp = d.createdAt,
                             syncStatus = d.syncStatus
                         )
@@ -243,6 +277,7 @@ class ActivityFeedViewModel(container: AppContainer) : ViewModel() {
                             isPositive = false,
                             subtitle = "${e.category} • ${e.paymentMethod}",
                             collector = e.addedBy,
+                            detail = expenseDetail(e),
                             timestamp = e.createdAt,
                             syncStatus = e.syncStatus
                         )
@@ -279,6 +314,8 @@ fun ActivityFeedScreen(
     val items by viewModel.transactions.collectAsState()
     val query by viewModel.query.collectAsState()
     val typeFilter by viewModel.typeFilter.collectAsState()
+    val eventName by viewModel.eventName.collectAsState()
+    var expandedId by remember { mutableStateOf<String?>(null) }
     val strings = appStrings()
 
     Scaffold(
@@ -383,6 +420,9 @@ fun ActivityFeedScreen(
                             syncedText = strings.statusSynced,
                             pendingSyncText = strings.statusPendingSync,
                             localOnlyText = strings.statusLocalOnly,
+                            eventName = eventName,
+                            expanded = item.id == expandedId,
+                            onToggle = { expandedId = if (expandedId == item.id) null else item.id },
                             modifier = Modifier.animateItem()
                         )
                     }
@@ -408,9 +448,13 @@ fun RichTransactionCard(
     syncedText: String,
     pendingSyncText: String,
     localOnlyText: String,
+    eventName: String = "",
+    expanded: Boolean = false,
+    onToggle: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Card(
+        onClick = onToggle,
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -494,6 +538,14 @@ fun RichTransactionCard(
                         }
                     )
                 }
+
+                // Expand affordance
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "Collapse details" else "Expand details",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
             }
 
             // Bottom Row: Collector & Time (flex, ellipsized) + Sync Status Badge (fixed).
@@ -548,7 +600,79 @@ fun RichTransactionCard(
                     localOnlyText = localOnlyText
                 )
             }
+
+            // Expanded details: full collector, event, identity extras, record meta.
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    )
+                    if (item.collector.isNotBlank()) {
+                        DetailLine(
+                            icon = Icons.Filled.Person,
+                            label = collectorLabel,
+                            value = item.collector
+                        )
+                    }
+                    if (eventName.isNotBlank()) {
+                        DetailLine(
+                            icon = Icons.Filled.Celebration,
+                            label = "Event",
+                            value = eventName
+                        )
+                    }
+                    item.detail?.let {
+                        DetailLine(icon = Icons.Filled.Info, label = "Details", value = it)
+                    }
+                    DetailLine(
+                        icon = Icons.Filled.Schedule,
+                        label = "Recorded",
+                        value = ReportContent.formatTime(item.timestamp)
+                    )
+                    DetailLine(
+                        icon = when (item.syncStatus) {
+                            SyncStatus.SYNCED -> Icons.Filled.CloudDone
+                            SyncStatus.PENDING_UPLOAD -> Icons.Filled.CloudUpload
+                            else -> Icons.Filled.CloudOff
+                        },
+                        label = "Status",
+                        value = when (item.syncStatus) {
+                            SyncStatus.SYNCED -> syncedText
+                            SyncStatus.PENDING_UPLOAD -> pendingSyncText
+                            else -> localOnlyText
+                        }
+                    )
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun DetailLine(icon: ImageVector, label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = TempleSaffron,
+            modifier = Modifier.size(16.dp)
+        )
+        Text(
+            text = "$label: $value",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
     }
 }
 

@@ -458,8 +458,8 @@ class FirestoreSyncService(
         runCatching {
             val doc = Firebase.firestore.collection("config").document("tts_settings").get().await()
             val key = doc.getString("sarvamApiKey") ?: ""
-            val speaker = doc.getString("defaultSpeaker") ?: "meera"
-            key to speaker
+            val speaker = doc.getString("defaultSpeaker") ?: "priya"
+            key to com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(speaker)
         }.fold(
             onSuccess = { Outcome.Ok(it) },
             onFailure = { Outcome.Err(it.message ?: "Could not read voice settings.") }

@@ -27,3 +27,26 @@ interface SarvamApiService {
             Retrofit.Builder().baseUrl(BASE_URL).build().create(SarvamApiService::class.java)
     }
 }
+
+/**
+ * Extracts descriptive error messages from Sarvam AI HTTP error responses.
+ */
+object SarvamErrorParser {
+    private val messageRegex = Regex("\"message\"\\s*:\\s*\"([^\"]+)\"")
+    private val codeRegex = Regex("\"code\"\\s*:\\s*\"([^\"]+)\"")
+
+    fun parse(e: Throwable): String {
+        if (e is retrofit2.HttpException) {
+            val raw = runCatching { e.response()?.errorBody()?.string() }.getOrNull()
+            if (!raw.isNullOrBlank()) {
+                val message = messageRegex.find(raw)?.groupValues?.get(1)
+                    ?: codeRegex.find(raw)?.groupValues?.get(1)
+                if (!message.isNullOrBlank()) {
+                    return "HTTP ${e.code()}: $message"
+                }
+            }
+            return "HTTP ${e.code()} (${e.message()})"
+        }
+        return e.message ?: "Network error"
+    }
+}

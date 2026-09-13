@@ -53,7 +53,7 @@ class DualTtsEngine(
         apiKey: String,
         onStatus: suspend (AudioStatus) -> Unit,
         roster: Boolean = false,
-        speaker: String = "meera",
+        speaker: String = "priya",
         onError: (Throwable) -> Unit = {}
     ): File? {
         sarvam.cachedFile(donation.id, roster)?.let { return it }

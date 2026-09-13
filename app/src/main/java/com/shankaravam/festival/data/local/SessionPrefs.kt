@@ -143,8 +143,8 @@ class SessionPrefs(context: Context) {
         set(value) = prefs.edit().putString(KEY_SARVAM, value.trim()).apply()
 
     var sarvamSpeaker: String
-        get() = prefs.getString(KEY_SPEAKER, "meera") ?: "meera"
-        set(value) = prefs.edit().putString(KEY_SPEAKER, value).apply()
+        get() = com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(prefs.getString(KEY_SPEAKER, "priya"))
+        set(value) = prefs.edit().putString(KEY_SPEAKER, com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(value)).apply()
 
     /**
      * P4 Sarvam budget: 10 cloud generations per 45-min rolling window per

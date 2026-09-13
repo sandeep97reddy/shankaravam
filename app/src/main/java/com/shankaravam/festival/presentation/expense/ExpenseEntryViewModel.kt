@@ -8,11 +8,16 @@ import com.shankaravam.festival.core.export.ReceiptCompressor
 import com.shankaravam.festival.core.util.Outcome
 import com.shankaravam.festival.core.util.newRecordId
 import com.shankaravam.festival.di.AppContainer
+import com.shankaravam.festival.domain.model.EventStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -66,6 +71,13 @@ val EXPENSE_CATEGORIES = listOf(
 class ExpenseEntryViewModel(private val container: AppContainer) : ViewModel() {
     val currentEventId: StateFlow<String?> = container.sessionPrefs.currentEventId
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /** True while the current festival is CLOSED — the entry screen locks (verdict Q2). */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val isEventClosed: StateFlow<Boolean> = currentEventId.flatMapLatest { id ->
+        if (id == null) flowOf(false)
+        else container.eventRepository.observeEvent(id).map { it?.status == EventStatus.CLOSED }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     private val _form = MutableStateFlow(ExpenseFormState())
     val form: StateFlow<ExpenseFormState> = _form.asStateFlow()
@@ -122,6 +134,10 @@ class ExpenseEntryViewModel(private val container: AppContainer) : ViewModel() {
 
     fun save(addedBy: String = "") {
         val eventId = currentEventId.value ?: return
+        if (isEventClosed.value) {
+            _form.update { it.copy(saveState = ExpenseSaveState.Error("This festival is closed — entries are locked.")) }
+            return
+        }
         val f = _form.value
         val who = addedBy.ifBlank { container.sessionPrefs.attributionName() }
         _form.update { it.copy(saveState = ExpenseSaveState.Saving) }

@@ -75,6 +75,7 @@ import com.shankaravam.festival.domain.model.Event
 import com.shankaravam.festival.domain.model.MemberPresence
 import com.shankaravam.festival.domain.model.UserRole
 import com.shankaravam.festival.domain.model.presenceOf
+import com.shankaravam.festival.domain.model.resolveMemberName
 import com.shankaravam.festival.domain.model.roleOf
 import com.shankaravam.festival.presentation.common.containerViewModel
 import com.google.zxing.BarcodeFormat
@@ -322,8 +323,18 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
         roleOf(container.sessionPrefs.myRole(eventId)) == UserRole.GLOBAL_HEAD
             && container.sessionPrefs.myStatus(eventId) == SessionPrefs.STATUS_ACTIVE
 
+    /**
+     * Roster visibility (verdict Q3): any ACTIVE signed-in member may view the
+     * team directory (firestore.rules already permits it) so collectors see
+     * which counter peers are online. Role management stays head-only via
+     * [isHeadNow]; pending/revoked/signed-out never pass.
+     */
+    fun canViewRoster(eventId: String): Boolean =
+        container.authRepository.user.value != null &&
+            container.sessionPrefs.myStatus(eventId) == SessionPrefs.STATUS_ACTIVE
+
     fun refreshMembers(eventId: String) {
-        if (!isHeadNow(eventId)) return
+        if (!canViewRoster(eventId)) return
         viewModelScope.launch {
             _busy.value = "team"
             when (val result = container.syncService.fetchAllMembers(eventId)) {
@@ -403,12 +414,12 @@ fun CloudSyncScreen(
             viewModel.consumeSignInIntent()
         }
     }
-    // Head-only auto-load (S4.2): keys on gate + event, so no fetch loop and
-    // zero roster reads for volunteers (Rule #1).
+    // Roster auto-load (S4.2 + verdict Q3): keys on gate + event, so no fetch
+    // loop and zero reads for signed-out/pending/revoked (Rule #1).
     val headEventId = state.event?.id
-    val headNow = headEventId != null && state.user != null && viewModel.isHeadNow(headEventId)
-    androidx.compose.runtime.LaunchedEffect(headNow, headEventId) {
-        if (headNow) viewModel.refreshMembers(headEventId!!)
+    val rosterNow = headEventId != null && state.user != null && viewModel.canViewRoster(headEventId)
+    androidx.compose.runtime.LaunchedEffect(rosterNow, headEventId) {
+        if (rosterNow) viewModel.refreshMembers(headEventId!!)
     }
 
     Scaffold(
@@ -468,7 +479,7 @@ fun CloudSyncScreen(
                                 style = MaterialTheme.typography.bodySmall
                             )
                         } else {
-                            Text(user.displayName ?: user.email ?: user.uid)
+                            Text(user.displayName ?: user.email ?: "Signed in")
                         }
                         OutlinedButton(onClick = { viewModel.signOut() }) { Text("Sign out") }
                     }
@@ -537,10 +548,12 @@ fun CloudSyncScreen(
                 }
             }
             if (event != null && user != null) {
-                var selectedTab by remember { mutableStateOf(0) }
+                var selectedTab by remember(event.id) { mutableStateOf(0) }
                 val isHead = viewModel.isHeadNow(event.id)
+                // Verdict Q3: active collectors get a read-only team view.
+                val canView = viewModel.canViewRoster(event.id)
 
-                if (isHead) {
+                if (canView) {
                     TabRow(
                         selectedTabIndex = selectedTab,
                         containerColor = MaterialTheme.colorScheme.surface,
@@ -560,7 +573,7 @@ fun CloudSyncScreen(
                     }
                 }
 
-                if (selectedTab == 0 || !isHead) {
+                if (selectedTab == 0 || !canView) {
                     InviteCard(
                         eventName = event.name,
                         code = state.myCode,
@@ -592,6 +605,7 @@ fun CloudSyncScreen(
                         team = team,
                         selfUid = user.uid,
                         busyKey = busy,
+                        manageEnabled = isHead,
                         onRefresh = { viewModel.refreshMembers(event.id) },
                         onSetRole = { member, role, status ->
                             viewModel.setMemberRole(event.id, member, role, status)
@@ -699,7 +713,12 @@ private fun ApprovalsCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(member.userId.take(12) + "…", modifier = Modifier.weight(1f))
+                    Text(
+                        resolveMemberName(member.counterName, member.displayName, member.email, member.userId),
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
                     OutlinedButton(
                         onClick = { onApprove(member, "organizer") },
                         enabled = busyKey != "approve:${member.userId}"
@@ -731,6 +750,7 @@ private fun ConnectedCountersCard(
     team: List<CloudMember>,
     selfUid: String,
     busyKey: String?,
+    manageEnabled: Boolean = true,
     onRefresh: () -> Unit,
     onSetRole: (CloudMember, String, String) -> Unit
 ) {
@@ -779,6 +799,7 @@ private fun ConnectedCountersCard(
                     member = member,
                     presence = presence,
                     isSelf = member.userId == selfUid,
+                    manageEnabled = manageEnabled,
                     actionsEnabled = busyKey != "role:${member.userId}",
                     onCollector = {
                         onSetRole(member, SessionPrefs.ROLE_ORGANIZER, SessionPrefs.STATUS_ACTIVE)
@@ -817,6 +838,7 @@ private fun TeamRow(
     member: CloudMember,
     presence: MemberPresence,
     isSelf: Boolean,
+    manageEnabled: Boolean,
     actionsEnabled: Boolean,
     onCollector: () -> Unit,
     onViewer: () -> Unit,
@@ -848,8 +870,9 @@ private fun TeamRow(
                 Spacer(Modifier.size(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                    val accountLabel = member.email ?: member.displayName?.takeIf { it.isNotBlank() } ?: "ID: …${member.userId.takeLast(6)}"
                     Text(
-                        "${member.email ?: "ID: …${member.userId.takeLast(6)}"} • $presenceLabel",
+                        "$accountLabel • $presenceLabel",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1
@@ -857,6 +880,9 @@ private fun TeamRow(
                 }
                 RoleBadge(role = member.role, status = member.status)
             }
+            // Verdict Q3: role buttons are head-only; collectors get the
+            // directory above in read-only form.
+            if (manageEnabled) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = onCollector,
@@ -879,6 +905,7 @@ private fun TeamRow(
                         modifier = Modifier.weight(1f)
                     ) { Text("Revoke", maxLines = 1) }
                 }
+            }
             }
         }
     }

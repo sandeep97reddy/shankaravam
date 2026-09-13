@@ -279,14 +279,22 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
             val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching {
                     val api = com.shankaravam.festival.data.remote.SarvamApiService.create()
+                    val normSpeaker = com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(speaker)
                     val payload = org.json.JSONObject()
-                        .put("inputs", org.json.JSONArray().put("ఓం నమో వేంకటేశాయ. శర్వం క్లౌడ్ గొంతు పరీక్ష విజయవంతమైంది."))
-                        .put("target_language_code", "te-IN")
-                        .put("speaker", speaker)
+                        .put("text", "ఓం నమో వేంకటేశాయ. శర్వం క్లౌడ్ గొంతు పరీక్ష విజయవంతమైంది.")
+                        .put("language_code", "te-IN")
+                        .put("speaker", normSpeaker)
+                        .put("model", "bulbul:v3")
+                        .put("output_audio_codec", "mp3")
                         .toString()
                         .toRequestBody("application/json; charset=utf-8".toMediaType())
                     val response = api.synthesize(trimmed, payload).string()
-                    val audioBase64 = org.json.JSONObject(response).getJSONArray("audios").getString(0)
+                    val json = org.json.JSONObject(response)
+                    val audioBase64 = if (json.has("audios")) {
+                        json.getJSONArray("audios").getString(0)
+                    } else if (json.has("audio")) {
+                        json.getString("audio")
+                    } else throw java.io.IOException("Missing audio in Sarvam response")
                     val bytes = android.util.Base64.decode(audioBase64, android.util.Base64.DEFAULT)
                     val testFile = java.io.File(container.appContext.cacheDir, "audio_test_sample.mp3")
                     testFile.writeBytes(bytes)
@@ -299,7 +307,8 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
                     container.ttsEngine.playFile(file, onDone = {}, onError = {})
                 },
                 onFailure = { e ->
-                    _sarvamTestStatus.value = "✗ Test failed: ${e.message ?: "Invalid key or network error"}"
+                    val errorMsg = com.shankaravam.festival.data.remote.SarvamErrorParser.parse(e)
+                    _sarvamTestStatus.value = "✗ Test failed: $errorMsg"
                 }
             )
             _testingSarvam.value = false
@@ -316,7 +325,7 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
                     eventId = event.id,
                     actionType = ActivityActions.EVENT_CLOSED,
                     details = event.name,
-                    actorId = container.authRepository.user.value?.uid ?: "",
+                    actorId = container.sessionPrefs.attributionName(),
                     timestamp = now
                 )
             )
@@ -1003,10 +1012,18 @@ private fun VoiceKeyContent(
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("meera" to "Meera (Female)", "arvind" to "Arvind (Male)").forEach { (option, label) ->
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(
+                "priya" to "🌸 Priya (Female)",
+                "shubh" to "🎙️ Shubh (Male)",
+                "kavitha" to "🌸 Kavitha (Female)",
+                "ratan" to "🎙️ Ratan (Male)"
+            ).forEach { (option, label) ->
                 FilterChip(
-                    selected = speaker == option,
+                    selected = com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(speaker) == option,
                     onClick = { onSpeakerChange(option) },
                     label = { Text(label, fontWeight = FontWeight.Medium) }
                 )

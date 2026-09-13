@@ -74,6 +74,7 @@ import com.shankaravam.festival.domain.model.HONORIFICS
 import com.shankaravam.festival.presentation.common.ModernTextField
 import com.shankaravam.festival.presentation.common.QuickAmountRow
 import com.shankaravam.festival.presentation.common.TempleAppBar
+import com.shankaravam.festival.presentation.common.ClosedEventBanner
 import com.shankaravam.festival.presentation.common.RevokedAccessBanner
 import com.shankaravam.festival.presentation.common.containerViewModel
 
@@ -91,6 +92,7 @@ fun DonationEntryScreen(
 ) {
     val form by viewModel.form.collectAsState()
     val eventId by viewModel.currentEventId.collectAsState()
+    val isClosed by viewModel.isEventClosed.collectAsState()
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
     val strings = appStrings()
@@ -167,6 +169,9 @@ fun DonationEntryScreen(
         ) {
             // 0. Revoked-access notice (renders nothing unless revoked).
             RevokedAccessBanner(eventId = eventId)
+
+            // 0b. Closed-festival lock (renders nothing while open).
+            ClosedEventBanner(isClosed = isClosed)
 
             // 1. Donor Name (Required *)
             ModernTextField(
@@ -421,7 +426,7 @@ fun DonationEntryScreen(
             // 9. Large Prominent Save Button
             Button(
                 onClick = { viewModel.save() },
-                enabled = form.canSave,
+                enabled = form.canSave && !isClosed,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(54.dp),

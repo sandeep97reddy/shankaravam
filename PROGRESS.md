@@ -45,6 +45,15 @@ Legend: ⬜ todo · 🟡 in_progress · ✅ done · ⏭️ skipped (G6 may ship 
 - [x] Non-destructive ledger: no silent deletes (no @Delete; rules deny delete), corrections preserve original + delta + reason
 - [x] Perf: keyed LazyColumn + animateItem + derivedStateOf, entry <10ms, splash 1400ms ≤1.5s
 
+## Identity/Cards/Roster Batch (IDENTITY_ROLES_REVIEW.md §6) — ✅ done 13-09-2026
+- **Status:** implemented + `assembleDebug` + `testDebugUnitTest` 90/90 green (86 existing + 4 new `MemberNameTest`)
+- **P1** expandable History + Expense cards (tap → `AnimatedVisibility` block: full collector, event name, paid-by/vendor/pronunciation, recorded-at, sync status; donation sheet untouched per verdict Q1)
+- **P2** `resolveMemberName()` + UID-leak fixes (ApprovalsCard, TeamRow subtitle, account fallback, `EVENT_CLOSED` actor → `attributionName()`)
+- **Q2** CLOSED-event hard block (entry VMs `isEventClosed` + save refusal + `ClosedEventBanner` EN/TE + disabled save)
+- **Q3** read-only roster for active collectors (`canViewRoster`; role buttons stay head-only via `manageEnabled`)
+- **Left as documented gaps:** full P3 status-aware gating, server-side closed immutability, full-deviceId in ledger maps
+- **Next:** on-device pass — expand/collapse at 60fps, closed banner on a closed festival, collector sees read-only team tab
+
 ## How To Update (end of each session)
 1. Flip the finished Group row to ✅, next row to 🟡.
 2. Move `Current Pointer` to the next Group.

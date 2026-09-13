@@ -6,11 +6,16 @@ import androidx.lifecycle.viewModelScope
 import com.shankaravam.festival.data.local.SessionPrefs
 import com.shankaravam.festival.di.AppContainer
 import com.shankaravam.festival.domain.model.DonationStatus
+import com.shankaravam.festival.domain.model.EventStatus
 import com.shankaravam.festival.domain.model.HONORIFIC_SRI
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -57,8 +62,16 @@ val TAG_SUGGESTIONS = listOf(
 class DonationEntryViewModel(container: AppContainer) : ViewModel() {
     private val saveDonation = container.saveDonation
     private val donationRepo = container.donationRepository
+    private val eventRepo = container.eventRepository
     val currentEventId: StateFlow<String?> = container.sessionPrefs.currentEventId
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /** True while the current festival is CLOSED — the entry screen locks (verdict Q2). */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val isEventClosed: StateFlow<Boolean> = currentEventId.flatMapLatest { id ->
+        if (id == null) flowOf(false)
+        else eventRepo.observeEvent(id).map { it?.status == EventStatus.CLOSED }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     private val prefs: SessionPrefs = container.sessionPrefs
 
@@ -104,6 +117,10 @@ class DonationEntryViewModel(container: AppContainer) : ViewModel() {
      */
     fun save(addedBy: String = "", confirmed: Boolean = false) {
         val eventId = currentEventId.value ?: return
+        if (isEventClosed.value) {
+            _form.update { it.copy(saveState = SaveState.Error("This festival is closed — entries are locked.")) }
+            return
+        }
         val f = _form.value
         if (f.duplicatePrompt != null && !confirmed) return
         val who = addedBy.ifBlank { prefs.attributionName() }

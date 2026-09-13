@@ -105,6 +105,10 @@ data class AppStrings(
     val accessRevokedTitle: String,
     val accessRevokedBody: String,
 
+    // Closed festival (entries locked banner)
+    val closedEventTitle: String,
+    val closedEventBody: String,
+
     // Settings
     val settingsTitle: String,
     val languageSectionTitle: String,
@@ -201,6 +205,8 @@ val EnglishStrings = AppStrings(
 
     accessRevokedTitle = "Counter access closed",
     accessRevokedBody = "The temple head has closed cloud access for this counter. New records stay safe on this device only.",
+    closedEventTitle = "Festival closed — entries locked",
+    closedEventBody = "This festival is closed. New donations and expenses cannot be added.",
 
     settingsTitle = "Settings & Voice",
     languageSectionTitle = "App Language",
@@ -297,6 +303,8 @@ val TeluguStrings = AppStrings(
 
     accessRevokedTitle = "కౌంటర్ యాక్సెస్ మూసివేయబడింది",
     accessRevokedBody = "ఆలయ పెద్దలు ఈ కౌంటర్ క్లౌడ్ యాక్సెస్‌ను మూసివేశారు. కొత్త నమోదులు ఈ ఫోన్‌లో మాత్రమే సురక్షితంగా ఉంటాయి.",
+    closedEventTitle = "ఉత్సవం ముగిసింది — నమోదులు నిలిపివేత",
+    closedEventBody = "ఈ ఉత్సవం మూసివేయబడింది. కొత్త విరాళాలు మరియు ఖర్చులు జోడించలేము.",
 
     settingsTitle = "సెట్టింగ్స్ & వాయిస్",
     languageSectionTitle = "యాప్ భాష (Language)",
