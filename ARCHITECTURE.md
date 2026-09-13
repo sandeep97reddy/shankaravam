@@ -91,9 +91,13 @@ AnnouncementQueueViewModel builds queue from current filter/sort
   (default: received + confirmed, no pledged/cancelled)
 → AnnouncementTemplates builds TE/EN/BI text (TeluguNumberFormatter: 5000 → ఐదు వేల)
 → DualTtsEngine.playBest():
-    cache hit? cacheDir/audio/donation_{id}[_roster].mp3 → play
+    Sarvam hit? cacheDir/audio/donation_{id}_{speaker}[_roster].mp3 → play
+    else human import? donation_{id}[_roster].mp3 → play (intentional override)
     else Sarvam cloud (if key + online) → cache → play
     else AndroidTtsClient te-IN instantly (offline fallback, never errors visibly)
+    Explicit VoiceEngineMode (SessionPrefs flow): OFFLINE_NATIVE skips Sarvam
+    files + prefetch (zero quota); human imports still play. Voice pickers in
+    Settings and the queue read/write one VoiceConfig — no secrets in queue.
 → AudioFocusManager (transient-may-duck) + optional temple-bell chime → STREAM_MUSIC → BT amp or speaker
 ```
 
@@ -156,7 +160,7 @@ events/{eventId}                    # header { name, temple, location, dates, st
 
 1. Room = UI source of truth; no network on the entry hot path; all IO on `Dispatchers.IO` / WorkManager.
 2. `firestore.rules` denies all deletes on ledger/members/codes; corrections/activity are create-only.
-3. Audio cache path fixed: `cacheDir/audio/donation_{id}[_roster].mp3`. Zero audio in Firebase Storage.
+3. Audio cache: Sarvam `cacheDir/audio/donation_{id}_{speaker}[_roster].mp3` (per-speaker, never collides); human imports in `donation_{id}[_roster].mp3` (speaker-agnostic override). Zero audio in Firebase Storage.
 4. TTS key lives in `SecureKeyStore` (encrypted) ↔ `/config/tts_settings`; never in logs, never in maps for audio rows.
 5. Compose perf: keyed `LazyColumn (key = { it.id })` + `animateItem()`, `derivedStateOf` for totals, single `uiState: StateFlow`, no business logic in composables, `@Immutable` list items.
 6. Splash ≤1.5s, entry <10ms, 60/120fps lists.

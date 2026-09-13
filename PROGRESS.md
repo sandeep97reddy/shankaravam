@@ -54,6 +54,16 @@ Legend: ⬜ todo · 🟡 in_progress · ✅ done · ⏭️ skipped (G6 may ship 
 - **Left as documented gaps:** full P3 status-aware gating, server-side closed immutability, full-deviceId in ledger maps
 - **Next:** on-device pass — expand/collapse at 60fps, closed banner on a closed festival, collector sees read-only team tab
 
+## Voice Unification Track (P1–P3) — ✅ done 13-09-2026
+- **Status:** implemented + `testDebugUnitTest` green (P1 96/96 → P2 102/102 → P3 green; no rules redeploy needed)
+- **P1 engine/cache:** speaker-aware Sarvam cache (`donation_{id}_{speaker}[_roster].mp3`; ghost-voice fix), human imports in speaker-agnostic slot as intentional override, one-time legacy rename migration (guarded by `audioCacheV2Migrated`), live `speakerProvider`, prefix-scan delete/prune, stale `10/45min` comment fix
+- **P2 reactivity/UI:** `VoiceConfig` single source of truth (mode-first shared label — RC3 fix), reactive prefs flows + key-version flow (RC1 fix), explicit `OFFLINE_NATIVE`/`SARVAM_CLOUD` mode honored by engine + prefetch gate, key dialog removed from queue (secrets in Settings only), live native-voice reset, Remove-key action in Settings
+- **P3 quota transparency (RC4):** quota pill (`⚠️ Cloud quota reached (20/20)… until h:mm`) in transport card instead of silent mid-queue flips; waiting count stays visible on quota hit; pill clears when a slot succeeds or the window rolls; Sarvam test discloses it spends 1 of 20 calls
+- **User-visible on upgrade:** old cached voices are attributed to the active speaker once (no re-download storm); picking another voice generates fresh audio within quota, offline voice covers the rest with the pill explaining why
+- **Tests:** +`SarvamCacheNamingTest` speaker/migration/deletion, +`VoiceConfigTest` label + pill text
+- **Fix batch (control-flow trace, 5/5):** prefetch now observes speaker/mode/key flows (speaker switch + fresh key retrigger generation); human imports play before Sarvam in full mode (share sheet aligned); quota pill clears on offline switch; device-voice picks no longer hijack engine mode; card summaries are mode-aware (cloud names speaker, offline+key says "Key Saved")
+- **Next:** on-device pass — switch Priya→Shubh mid-queue, exhaust 20 calls and watch the pill, offline-mode queue with horn speaker
+
 ## How To Update (end of each session)
 1. Flip the finished Group row to ✅, next row to 🟡.
 2. Move `Current Pointer` to the next Group.

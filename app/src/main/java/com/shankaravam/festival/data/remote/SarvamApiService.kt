@@ -23,8 +23,20 @@ interface SarvamApiService {
     companion object {
         const val BASE_URL = "https://api.sarvam.ai/"
 
-        fun create(): SarvamApiService =
-            Retrofit.Builder().baseUrl(BASE_URL).build().create(SarvamApiService::class.java)
+        fun create(): SarvamApiService {
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+                .writeTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .build()
+
+            return Retrofit.Builder()
+                .baseUrl(BASE_URL)
+                .client(client)
+                .build()
+                .create(SarvamApiService::class.java)
+        }
     }
 }
 
@@ -46,6 +58,15 @@ object SarvamErrorParser {
                 }
             }
             return "HTTP ${e.code()} (${e.message()})"
+        }
+        if (e is java.net.UnknownHostException) {
+            return "No internet connection or DNS error. Check your Wi-Fi/Mobile Data / ఇంటర్నెట్ కనెక్షన్ లేదు."
+        }
+        if (e is java.net.SocketTimeoutException) {
+            return "Connection timed out. Please try again / కనెక్షన్ సమయం ముగిసింది."
+        }
+        if (e is java.net.ConnectException) {
+            return "Failed to connect to server. Check your network / సర్వర్‌కు కనెక్ట్ కాలేకపోయింది."
         }
         return e.message ?: "Network error"
     }

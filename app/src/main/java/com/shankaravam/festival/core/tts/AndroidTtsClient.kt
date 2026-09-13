@@ -31,6 +31,9 @@ class AndroidTtsClient(
     private val _ready = MutableStateFlow(false)
     val ready: StateFlow<Boolean> = _ready.asStateFlow()
 
+    /** Locale that init settled on — resetVoice() returns here. */
+    @Volatile private var defaultLocale: Locale? = null
+
     private data class Pending(val onDone: () -> Unit, val onError: () -> Unit)
     private val pending = ConcurrentHashMap<String, Pending>()
 
@@ -55,13 +58,18 @@ class AndroidTtsClient(
                 // If Telugu voice pack is not pre-installed on this device yet, fall back to system default
                 val fallbackResult = runCatching { engine.setLanguage(Locale.getDefault()) }.getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
                 if (fallbackResult != TextToSpeech.LANG_MISSING_DATA && fallbackResult != TextToSpeech.LANG_NOT_SUPPORTED) {
+                    defaultLocale = Locale.getDefault()
                     _ready.value = true
                 } else {
                     // Fallback to English (US) which is guaranteed on all Android devices
                     val enResult = runCatching { engine.setLanguage(Locale.US) }.getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
+                    if (enResult != TextToSpeech.LANG_MISSING_DATA && enResult != TextToSpeech.LANG_NOT_SUPPORTED) {
+                        defaultLocale = Locale.US
+                    }
                     _ready.value = enResult != TextToSpeech.LANG_MISSING_DATA && enResult != TextToSpeech.LANG_NOT_SUPPORTED
                 }
             } else {
+                defaultLocale = teLocale
                 _ready.value = true
             }
 
@@ -141,13 +149,29 @@ class AndroidTtsClient(
         }.getOrDefault(emptyList())
     }
 
-    /** Sets the active native voice by name. */
+    /** Sets the active native voice by name. Blank names reset to default. */
     fun setVoiceByName(voiceName: String): Boolean {
+        if (voiceName.isBlank()) return resetVoice()
         val engine = tts ?: return false
         return runCatching {
             val voice = engine.voices?.firstOrNull { it.name == voiceName } ?: return false
             engine.voice = voice
             true
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Phase 2 live-reset (RC3 companion fix). Re-applies the init-settled
+     * default locale, clearing any previously selected voice immediately —
+     * "System Default" takes effect without an app restart. Never throws.
+     */
+    fun resetVoice(): Boolean {
+        val engine = tts ?: return false
+        return runCatching {
+            val result = engine.setLanguage(
+                defaultLocale ?: Locale.Builder().setLanguage("te").setRegion("IN").build()
+            )
+            result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED
         }.getOrDefault(false)
     }
 

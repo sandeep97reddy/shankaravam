@@ -104,7 +104,19 @@ class AuthRepository(
                     }
                     Outcome.Ok(cloud)
                 },
-                onFailure = { Outcome.Err(it.message ?: "Google sign-in failed.") }
+                onFailure = { e ->
+                    val msg = when (e) {
+                        is ApiException -> when (e.statusCode) {
+                            10 -> "Google Sign-In failed (Code 10: DEVELOPER_ERROR — SHA-1 fingerprint mismatch in Firebase Console)."
+                            12500 -> "Google Sign-In failed (Code 12500: Play Services error. Check Google account and Firebase config)."
+                            7 -> "Network error during Google Sign-In. Check your internet connection."
+                            12501 -> "Google Sign-In was cancelled."
+                            else -> "Google Sign-In failed (Code ${e.statusCode}: ${e.statusMessage ?: e.message ?: "unknown"})."
+                        }
+                        else -> e.message ?: "Google sign-in failed."
+                    }
+                    Outcome.Err(msg)
+                }
             )
         }
 

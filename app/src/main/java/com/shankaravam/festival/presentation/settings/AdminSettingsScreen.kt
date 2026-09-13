@@ -227,30 +227,51 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    private val _selectedVoice = MutableStateFlow(container.sessionPrefs.nativeTtsVoice)
-    val selectedVoice: StateFlow<String?> = _selectedVoice.asStateFlow()
+    /**
+     * Phase 2: sourced from SessionPrefs flows (not one-time snapshots), so
+     * picks made in the Announcement queue card appear here instantly and
+     * vice versa (RC1 remedy).
+     */
+    val selectedVoice: StateFlow<String?> = container.sessionPrefs.nativeTtsVoiceFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), container.sessionPrefs.nativeTtsVoice)
 
-    private val _speed = MutableStateFlow(container.sessionPrefs.nativeTtsSpeed)
-    val speed: StateFlow<Float> = _speed.asStateFlow()
+    val speed: StateFlow<Float> = container.sessionPrefs.nativeTtsSpeedFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), container.sessionPrefs.nativeTtsSpeed)
 
-    private val _chime = MutableStateFlow(container.sessionPrefs.playTempleChime)
-    val chimeEnabled: StateFlow<Boolean> = _chime.asStateFlow()
+    val chimeEnabled: StateFlow<Boolean> = container.sessionPrefs.playTempleChimeFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), container.sessionPrefs.playTempleChime)
+
+    /**
+     * Phase 2 explicit engine mode (RC5). Selecting it here drives queue
+     * playback instantly via SessionPrefs flow + engine provider.
+     */
+    val engineMode: StateFlow<com.shankaravam.festival.domain.model.VoiceEngineMode> =
+        container.sessionPrefs.voiceEngineModeFlow
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), container.sessionPrefs.voiceEngineMode)
+
+    /** Live speaker (Phase 2): queue-card picks flow here for the chips below. */
+    val speakerFlow: StateFlow<String> = container.sessionPrefs.sarvamSpeakerFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), container.sessionPrefs.sarvamSpeaker)
+
+    fun setEngineMode(mode: com.shankaravam.festival.domain.model.VoiceEngineMode) {
+        container.sessionPrefs.voiceEngineMode = mode
+    }
 
     fun setChimeEnabled(enabled: Boolean) {
-        _chime.value = enabled
         container.sessionPrefs.playTempleChime = enabled
     }
 
     fun setNativeVoice(name: String?) {
-        _selectedVoice.value = name
         container.sessionPrefs.nativeTtsVoice = name
-        if (name != null) {
-            container.ttsEngine.native.setVoiceByName(name)
-        }
+        // Phase 2: blank/null resets the live engine voice immediately (was a
+        // no-op until restart). setVoiceByName("") now delegates to resetVoice().
+        container.ttsEngine.native.setVoiceByName(name ?: "")
+        // Fix-B4: picking a device voice only configures the (offline/fallback)
+        // voice — it must NOT flip the engine mode. Mode changes happen solely
+        // via the explicit chips (setEngineMode) or the queue voice picker.
     }
 
     fun setSpeed(s: Float) {
-        _speed.value = s
         container.sessionPrefs.nativeTtsSpeed = s
         container.ttsEngine.native.setSpeechRate(s)
     }
@@ -259,15 +280,43 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
         container.ttsEngine.native.speak("శ్రీ మహేష్ బాబు గారు, వెయ్యి నూట పదహారు రూపాయలు.")
     }
 
-    fun saveKeyLocally(key: String, speaker: String) {
-        container.secureKeys.setSarvamKey(key)
+    fun setSarvamSpeaker(speaker: String) {
         container.sessionPrefs.sarvamSpeaker = speaker
-        keyTick.value += 1
-        _notice.value = if (container.secureKeys.isEncrypted) {
-            "Key stored encrypted on this device."
+    }
+
+    fun saveKeyLocally(key: String, speaker: String) {
+        val clean = key.trim().removeSurrounding("\"").removeSurrounding("'").trim()
+        container.secureKeys.setSarvamKey(clean)
+        container.sessionPrefs.sarvamSpeaker = speaker
+        // Phase 2: configuring a cloud key means cloud mode — unless the key
+        // is blank (clearing falls back to offline).
+        container.sessionPrefs.voiceEngineMode = if (clean.isBlank()) {
+            com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE
         } else {
-            "Key stored locally (device has no keystore — moves to secure storage on supported devices)."
+            com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD
         }
+        keyTick.value += 1
+        _notice.value = if (clean.isBlank()) {
+            "Cloud key removed — offline voice active."
+        } else if (container.secureKeys.isEncrypted) {
+            "✓ Key stored encrypted & cloud voice activated."
+        } else {
+            "✓ Key stored locally & cloud voice activated."
+        }
+    }
+
+    /**
+     * Phase 2: key removal lives HERE (Settings), not in the Announcement
+     * queue — the queue is an operational console with no secrets handling
+     * (RC1: AccessPolicy.canManageKeys is head-scoped for publish; local
+     * clear + offline fallback is safe for any role).
+     */
+    fun clearKeyLocally() {
+        container.secureKeys.setSarvamKey("")
+        container.sessionPrefs.voiceEngineMode =
+            com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE
+        keyTick.value += 1
+        _notice.value = "Cloud key removed — offline device voice active."
     }
 
     fun pushKey(key: String, speaker: String) {
@@ -296,6 +345,8 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
                 is Outcome.Ok -> {
                     container.secureKeys.setSarvamKey(result.value.first)
                     container.sessionPrefs.sarvamSpeaker = result.value.second
+                    container.sessionPrefs.voiceEngineMode =
+                        com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD
                     keyTick.value += 1
                     _notice.value = "Shared voice settings applied."
                 }
@@ -324,7 +375,8 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
         }
         viewModelScope.launch {
             _testingSarvam.value = true
-            _sarvamTestStatus.value = "Testing Sarvam AI connection…"
+            // Phase 3 disclosure: a verification test spends real quota.
+            _sarvamTestStatus.value = "Testing Sarvam AI connection… (uses 1 of 20 cloud calls)"
             val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching {
                     val api = com.shankaravam.festival.data.remote.SarvamApiService.create()
@@ -352,7 +404,8 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
             }
             result.fold(
                 onSuccess = { file ->
-                    _sarvamTestStatus.value = "✓ Key Verified & Working! Playing audio…"
+                    saveKeyLocally(trimmed, speaker)
+                    _sarvamTestStatus.value = "✓ Key Verified & Saved! Playing audio…"
                     container.ttsEngine.playFile(file, onDone = {}, onError = {})
                 },
                 onFailure = { e ->
@@ -423,6 +476,10 @@ fun AdminSettingsScreen(
     val testingSarvam by viewModel.testingSarvam.collectAsState()
     val signInIntent by viewModel.signInIntent.collectAsState()
     val deleting by viewModel.deleting.collectAsState()
+    val engineMode by viewModel.engineMode.collectAsState()
+    // Phase 2: live speaker flow — a pick in the queue card refreshes the
+    // cloud-card chips here without reopening Settings.
+    val liveSpeaker by viewModel.speakerFlow.collectAsState()
 
     val signInLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -451,13 +508,15 @@ fun AdminSettingsScreen(
     var sarvamKeyDraft by remember { mutableStateOf(viewModel.getSavedSarvamKey()) }
     var sarvamSpeakerDraft by remember { mutableStateOf(viewModel.getSavedSarvamSpeaker()) }
 
-    // When a key is saved/pulled, update drafts accordingly
-    LaunchedEffect(state.hasSarvamKey) {
+    // When a key is saved/pulled — or the speaker is picked in the queue card —
+    // refresh drafts accordingly. The key field backfills only when empty so
+    // typing is never clobbered; chips always follow the live speaker.
+    LaunchedEffect(state.hasSarvamKey, liveSpeaker) {
         val savedKey = viewModel.getSavedSarvamKey()
-        if (savedKey.isNotBlank() && sarvamKeyDraft.isBlank()) {
+        if (sarvamKeyDraft.isBlank() && sarvamKeyDraft != savedKey) {
             sarvamKeyDraft = savedKey
         }
-        sarvamSpeakerDraft = viewModel.getSavedSarvamSpeaker()
+        sarvamSpeakerDraft = liveSpeaker
     }
 
     // Collapsible accordion states - minimal & clean for easy navigation
@@ -466,12 +525,23 @@ fun AdminSettingsScreen(
     var cloudExpanded by remember { mutableStateOf(false) }
     var adminExpanded by remember { mutableStateOf(false) }
 
+    val performBack = {
+        val currentSaved = viewModel.getSavedSarvamKey().trim()
+        val draft = sarvamKeyDraft.trim()
+        if (draft.isNotBlank() && draft != currentSaved) {
+            viewModel.saveKeyLocally(draft, sarvamSpeakerDraft)
+        }
+        onBack()
+    }
+
+    androidx.activity.compose.BackHandler(onBack = performBack)
+
     Scaffold(
         modifier = modifier,
         topBar = {
             TempleAppBar(
                 title = if (currentLang == SessionPrefs.LANG_TELUGU) "సెట్టింగ్స్ & ధ్వని" else "Settings & Voice",
-                onBack = onBack
+                onBack = performBack
             )
         }
     ) { padding ->
@@ -577,9 +647,20 @@ fun AdminSettingsScreen(
             }
 
             // 3. Accordion Section 1: Temple Voice & Audio
-            val voiceDisplayName = selectedVoice?.substringAfterLast("-") ?: if (currentLang == SessionPrefs.LANG_TELUGU) "సిస్టమ్ డిఫాల్ట్" else "Default"
+            // Fix-B5: in cloud mode the summary names the ACTIVE speaker
+            // (not the native fallback voice); in offline mode the fallback.
+            val voiceDisplayName = if (engineMode == com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE) {
+                selectedVoice?.substringAfterLast("-") ?: if (currentLang == SessionPrefs.LANG_TELUGU) "సిస్టమ్ డిఫాల్ట్" else "Default"
+            } else {
+                liveSpeaker.replaceFirstChar { it.uppercase() }
+            }
             val chimeStatus = if (chime) (if (currentLang == SessionPrefs.LANG_TELUGU) "గంట నాదం ఆన్" else "Bell On") else (if (currentLang == SessionPrefs.LANG_TELUGU) "గంట నాదం ఆఫ్" else "Bell Off")
-            val voiceSummary = "$voiceDisplayName • ${String.format(java.util.Locale.US, "%.2fx", speed)} • $chimeStatus"
+            val modeStatus = if (engineMode == com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE) {
+                if (currentLang == SessionPrefs.LANG_TELUGU) "ఆఫ్‌లైన్" else "Offline"
+            } else {
+                if (currentLang == SessionPrefs.LANG_TELUGU) "క్లౌడ్" else "Cloud"
+            }
+            val voiceSummary = "$modeStatus • $voiceDisplayName • ${String.format(java.util.Locale.US, "%.2fx", speed)} • $chimeStatus"
 
             SettingsAccordionCard(
                 title = "Temple Voice & Audio",
@@ -596,6 +677,8 @@ fun AdminSettingsScreen(
                     selectedVoice = selectedVoice,
                     speed = speed,
                     chimeEnabled = chime,
+                    engineMode = engineMode,
+                    onSetEngineMode = { viewModel.setEngineMode(it) },
                     onSelectVoice = { viewModel.setNativeVoice(it) },
                     onSetSpeed = { viewModel.setSpeed(it) },
                     onSetChime = { viewModel.setChimeEnabled(it) },
@@ -629,10 +712,15 @@ fun AdminSettingsScreen(
             }
 
             // 5. Accordion Section 3: Advanced: Cloud Voice (Sarvam AI) (Draft hoisted to screen)
-            val cloudSummary = if (state.hasSarvamKey) {
-                if (currentLang == SessionPrefs.LANG_TELUGU) "శర్వం క్లౌడ్ గొంతు సిద్ధంగా ఉంది" else "Sarvam Cloud Voice Configured"
-            } else {
-                if (currentLang == SessionPrefs.LANG_TELUGU) "ఆఫ్‌లైన్ గొంతు మాత్రమే యాక్టివ్" else "Offline Voice Active (Android TTS)"
+            // Fix-B5: the summary follows the engine mode — a saved key while
+            // offline must not claim "Cloud Voice Configured" as active.
+            val cloudSummary = when {
+                engineMode == com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE && state.hasSarvamKey ->
+                    if (currentLang == SessionPrefs.LANG_TELUGU) "ఆఫ్‌లైన్ మోడ్ (కీ సేవ్ చేయబడింది)" else "Offline Mode Active (Key Saved)"
+                state.hasSarvamKey ->
+                    if (currentLang == SessionPrefs.LANG_TELUGU) "శర్వం క్లౌడ్ గొంతు సిద్ధంగా ఉంది" else "Sarvam Cloud Voice Configured"
+                else ->
+                    if (currentLang == SessionPrefs.LANG_TELUGU) "ఆఫ్‌లైన్ గొంతు మాత్రమే యాక్టివ్" else "Offline Voice Active (Android TTS)"
             }
 
             SettingsAccordionCard(
@@ -649,13 +737,19 @@ fun AdminSettingsScreen(
                     key = sarvamKeyDraft,
                     onKeyChange = { sarvamKeyDraft = it },
                     speaker = sarvamSpeakerDraft,
-                    onSpeakerChange = { sarvamSpeakerDraft = it },
+                    onSpeakerChange = {
+                        sarvamSpeakerDraft = it
+                        viewModel.setSarvamSpeaker(it)
+                    },
+                    savedKey = viewModel.getSavedSarvamKey(),
                     busy = busy,
                     testStatus = sarvamTestStatus,
                     testing = testingSarvam,
+                    hasKey = state.hasSarvamKey,
                     canPublish = AccessPolicy.canManageKeys(state.role)
                         && AdminConfig.isGlobalHeadEmail(state.cloudEmail),
                     onSaveLocal = { key, speaker -> viewModel.saveKeyLocally(key, speaker) },
+                    onClearKey = { sarvamKeyDraft = ""; viewModel.clearKeyLocally() },
                     onPush = { key, speaker -> viewModel.pushKey(key, speaker) },
                     onPull = { viewModel.pullKey() },
                     onTestSarvam = { key, speaker -> viewModel.testSarvamVoice(key, speaker) }
@@ -1110,19 +1204,48 @@ private fun GoogleAccountCard(
     }
 }
 
-/** Inbuilt Android TTS content with voice list, speech speed, bell toggle, and audio preview. */
+/** Voice engine mode + inbuilt Android TTS voice list, speech speed, bell toggle, and audio preview. */
 @Composable
 private fun NativeVoiceContent(
     voices: List<String>,
     selectedVoice: String?,
     speed: Float,
     chimeEnabled: Boolean,
+    engineMode: com.shankaravam.festival.domain.model.VoiceEngineMode,
+    onSetEngineMode: (com.shankaravam.festival.domain.model.VoiceEngineMode) -> Unit,
     onSelectVoice: (String?) -> Unit,
     onSetSpeed: (Float) -> Unit,
     onSetChime: (Boolean) -> Unit,
     onTestVoice: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // Phase 2 explicit engine selector (RC5): offline is free/unlimited,
+        // cloud needs a key (managed in the Cloud Voice card below).
+        Text(
+            text = "Voice Engine / ఇంజిన్:",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = engineMode == com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE,
+                onClick = { onSetEngineMode(com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE) },
+                label = { Text("📱 Offline (Free)") }
+            )
+            FilterChip(
+                selected = engineMode == com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD,
+                onClick = { onSetEngineMode(com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD) },
+                label = { Text("☁️ Sarvam Cloud HD") }
+            )
+        }
+        if (engineMode == com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD) {
+            Text(
+                text = "Cloud voice active — speaker & API key are managed in the Cloud Voice card below. Device voice, speed and bell still apply as fallback.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         Text(
             text = "Offline Telugu voice built into Android. Select from voices installed on your device:",
             style = MaterialTheme.typography.bodySmall,
@@ -1131,7 +1254,7 @@ private fun NativeVoiceContent(
 
         if (voices.isNotEmpty()) {
             Text(
-                text = "Installed Telugu Voices:",
+                text = "Installed Device Voices (Android TTS):",
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold
             )
@@ -1148,14 +1271,14 @@ private fun NativeVoiceContent(
                 )
                 voices.forEach { v ->
                     val label = when {
-                        v.contains("network", ignoreCase = true) -> "Network HD"
-                        v.contains("local", ignoreCase = true) -> "Offline"
+                        v.contains("network", ignoreCase = true) -> "Device Network"
+                        v.contains("local", ignoreCase = true) -> "Device Offline"
                         else -> v.substringAfterLast("-", v.takeLast(10))
                     }
                     FilterChip(
                         selected = selectedVoice == v,
                         onClick = { onSelectVoice(v) },
-                        label = { Text("Voice ($label)") }
+                        label = { Text("Device ($label)") }
                     )
                 }
             }
@@ -1289,11 +1412,14 @@ private fun VoiceKeyContent(
     onKeyChange: (String) -> Unit,
     speaker: String,
     onSpeakerChange: (String) -> Unit,
+    savedKey: String = "",
     busy: Boolean,
     testStatus: String?,
     testing: Boolean,
+    hasKey: Boolean,
     canPublish: Boolean,
     onSaveLocal: (String, String) -> Unit,
+    onClearKey: () -> Unit,
     onPush: (String, String) -> Unit,
     onPull: () -> Unit,
     onTestSarvam: (String, String) -> Unit
@@ -1315,6 +1441,24 @@ private fun VoiceKeyContent(
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth()
         )
+
+        if (savedKey.isNotBlank() && key.trim() == savedKey.trim()) {
+            Surface(
+                color = Color(0xFFE8F5E9),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color(0xFF2E7D32), modifier = Modifier.size(16.dp))
+                    Text("✓ Active Cloud Key Configured & Ready", color = Color(0xFF2E7D32), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+
         Text(
             text = "Voice Speaker / గొంతు ఎంపిక:",
             style = MaterialTheme.typography.labelSmall,
@@ -1395,18 +1539,33 @@ private fun VoiceKeyContent(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            OutlinedButton(
+            Button(
                 onClick = { onSaveLocal(key, speaker) },
-                enabled = !busy,
+                enabled = !busy && key.isNotBlank(),
                 shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = DeepMaroon,
+                    contentColor = Color.White
+                ),
                 modifier = Modifier.weight(1f)
-            ) { Text("Save Local", maxLines = 1) }
+            ) { Text("Save Key / భద్రపరచండి", maxLines = 1, fontWeight = FontWeight.Bold) }
             OutlinedButton(
                 onClick = { onPull() },
                 enabled = !busy,
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.weight(1f)
             ) { Text("Pull Shared", maxLines = 1) }
+        }
+        // Phase 2: key removal lives here (Settings), replacing the old
+        // "Remove" action inside the Announcement queue's key dialog.
+        if (hasKey || key.isNotBlank()) {
+            TextButton(
+                onClick = onClearKey,
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Remove cloud key — use offline voice", color = CrimsonRose)
+            }
         }
         Button(
             onClick = { onPush(key, speaker) },

@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * G6 Sarvam-key home. EncryptedSharedPreferences when the device allows it,
@@ -38,35 +41,51 @@ class SecureKeyStore(context: Context, private val fallback: SessionPrefs) {
 
     val isEncrypted: Boolean get() = secure != null
 
-    fun getSarvamKey(): String = runCatching {
-        // Secure store is authoritative once it exists: migration already moved
-        // any legacy plain key at init, so blank here means "no key" — never
-        // fall back to the plain pref or a cleared key resurrects itself.
-        if (secure != null) secure.getString(KEY_SARVAM, "") ?: ""
-        else fallback.sarvamApiKey
+    private fun sanitizeKey(raw: String): String =
+        raw.trim()
+            .removeSurrounding("\"")
+            .removeSurrounding("'")
+            .trim()
+
+    private fun readKey(): String = runCatching {
+        val sec = if (secure != null) secure.getString(KEY_SARVAM, "") ?: "" else ""
+        if (sec.isNotBlank()) sec else fallback.sarvamApiKey
     }.getOrDefault("")
 
-    fun setSarvamKey(value: String) {
-        val trimmed = value.trim()
-        val saved = runCatching {
-            secure?.edit()?.putString(KEY_SARVAM, trimmed)?.apply()
-            secure != null
-        }.getOrDefault(false)
+    private val _sarvamKeyFlow = MutableStateFlow(readKey())
+    val sarvamKeyFlow: StateFlow<String> = _sarvamKeyFlow.asStateFlow()
 
-        if (trimmed.isBlank()) {
-            // Clearing must kill the legacy plain copy too, or get() resurrects it.
-            fallback.sarvamApiKey = ""
-        } else if (!saved) {
-            fallback.sarvamApiKey = trimmed
+    private val _hasKeyFlow = MutableStateFlow(readKey().isNotBlank())
+    val hasKeyFlow: StateFlow<Boolean> = _hasKeyFlow.asStateFlow()
+
+    /**
+     * Phase 2 reactivity (RC1 remedy). Bumped on every [setSarvamKey] so voice
+     * pickers can reload key presence instead of reading it once into
+     * `remember {}` and going stale when another screen saves/clears the key.
+     */
+    private val _keyVersion = MutableStateFlow(0)
+    val keyVersion: StateFlow<Int> = _keyVersion.asStateFlow()
+
+    fun getSarvamKey(): String = _sarvamKeyFlow.value.ifBlank { readKey() }
+
+    fun setSarvamKey(value: String) {
+        val clean = sanitizeKey(value)
+        runCatching {
+            secure?.edit()?.putString(KEY_SARVAM, clean)?.commit()
         }
+        // Always mirror to fallback SessionPrefs for resilience against keystore wipe/resets
+        fallback.sarvamApiKey = clean
+
+        _sarvamKeyFlow.value = clean
+        _hasKeyFlow.value = clean.isNotBlank()
+        _keyVersion.value += 1
     }
 
     private fun migrateIfNeeded(store: SharedPreferences) {
         runCatching {
             val plain = fallback.sarvamApiKey
             if (plain.isNotBlank() && store.getString(KEY_SARVAM, "").isNullOrEmpty()) {
-                store.edit().putString(KEY_SARVAM, plain).apply()
-                fallback.sarvamApiKey = ""
+                store.edit().putString(KEY_SARVAM, plain).commit()
             }
         }
     }

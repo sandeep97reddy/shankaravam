@@ -52,12 +52,13 @@ class DeleteLocalEventUseCase(
             // Step 2: atomic — orphans can never reach global pendingSync().
             database.deleteEventCascade(eventId)
 
-            // Step 3: best-effort files. Only exact donation_*.mp3 names, so
-            // temple_chime.wav and cacheDir-root audio_test_sample.mp3 survive.
+            // Step 3: best-effort files. Phase 1: deletes EVERY clip for the row
+            // (all speaker variants, legacy slots, human imports, roster) via
+            // prefix scan — only donation_*.mp3 names, so temple_chime.wav and
+            // cacheDir-root audio_test_sample.mp3 survive.
             val audioDir = File(appContext.cacheDir, "audio")
             donationIds.forEach { id ->
-                runCatching { File(audioDir, SarvamTtsClient.cacheFileName(id, false)).delete() }
-                runCatching { File(audioDir, SarvamTtsClient.cacheFileName(id, true)).delete() }
+                runCatching { SarvamTtsClient.deleteDonationFiles(audioDir, id) }
             }
             receiptPaths.forEach { path ->
                 if (path.isNotBlank()) runCatching { File(path).delete() }

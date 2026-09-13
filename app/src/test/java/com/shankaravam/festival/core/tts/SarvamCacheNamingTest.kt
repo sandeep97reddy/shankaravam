@@ -11,17 +11,92 @@ class SarvamCacheNamingTest {
     @Test
     fun full_sentence_and_roster_caches_never_collide() {
         assertEquals(
-            "donation_abc123.mp3",
+            "donation_abc123_priya.mp3",
             SarvamTtsClient.cacheFileName("abc123", roster = false)
         )
         assertEquals(
-            "donation_abc123_roster.mp3",
+            "donation_abc123_priya_roster.mp3",
             SarvamTtsClient.cacheFileName("abc123", roster = true)
         )
         assertNotEquals(
             SarvamTtsClient.cacheFileName("abc123", roster = false),
             SarvamTtsClient.cacheFileName("abc123", roster = true)
         )
+    }
+
+    @Test
+    fun speaker_variants_never_collide_ghost_voice_fix() {
+        assertEquals(
+            "donation_abc123_shubh.mp3",
+            SarvamTtsClient.cacheFileName("abc123", roster = false, speaker = "shubh")
+        )
+        assertEquals(
+            "donation_abc123_kavitha_roster.mp3",
+            SarvamTtsClient.cacheFileName("abc123", roster = true, speaker = "kavitha")
+        )
+        assertNotEquals(
+            SarvamTtsClient.cacheFileName("abc123", roster = false, speaker = "priya"),
+            SarvamTtsClient.cacheFileName("abc123", roster = false, speaker = "shubh")
+        )
+        // Legacy aliases resolve through normalization too.
+        assertEquals(
+            SarvamTtsClient.cacheFileName("abc123", roster = false, speaker = "kavitha"),
+            SarvamTtsClient.cacheFileName("abc123", roster = false, speaker = "meera")
+        )
+    }
+
+    @Test
+    fun legacy_slot_is_speaker_agnostic_and_distinct_from_sarvam() {
+        assertEquals(
+            "donation_abc123.mp3",
+            SarvamTtsClient.legacyCacheFileName("abc123", roster = false)
+        )
+        assertEquals(
+            "donation_abc123_roster.mp3",
+            SarvamTtsClient.legacyCacheFileName("abc123", roster = true)
+        )
+        assertNotEquals(
+            SarvamTtsClient.legacyCacheFileName("abc123", roster = false),
+            SarvamTtsClient.cacheFileName("abc123", roster = false, speaker = "priya")
+        )
+    }
+
+    @Test
+    fun migrateLegacyToSpeaker_attributes_legacy_files() {
+        val dir = java.nio.file.Files.createTempDirectory("audio-migrate").toFile()
+        try {
+            java.io.File(dir, "donation_id1.mp3").writeBytes(byteArrayOf(1))
+            java.io.File(dir, "donation_id1_roster.mp3").writeBytes(byteArrayOf(2))
+            java.io.File(dir, "donation_id2_shubh.mp3").writeBytes(byteArrayOf(3))
+            java.io.File(dir, "temple_chime.wav").writeBytes(byteArrayOf(4))
+            val done = SarvamTtsClient.migrateLegacyToSpeaker(dir, "shubh")
+            kotlin.test.assertEquals(2, done)
+            kotlin.test.assertTrue(java.io.File(dir, "donation_id1_shubh.mp3").exists())
+            kotlin.test.assertTrue(java.io.File(dir, "donation_id1_shubh_roster.mp3").exists())
+            kotlin.test.assertTrue(java.io.File(dir, "donation_id2_shubh.mp3").exists())
+            kotlin.test.assertTrue(java.io.File(dir, "temple_chime.wav").exists())
+            kotlin.test.assertTrue(!java.io.File(dir, "donation_id1.mp3").exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun deleteDonationFiles_removes_all_variants_only() {
+        val dir = java.nio.file.Files.createTempDirectory("audio-delete").toFile()
+        try {
+            java.io.File(dir, "donation_id1_priya.mp3").writeBytes(byteArrayOf(1))
+            java.io.File(dir, "donation_id1_shubh_roster.mp3").writeBytes(byteArrayOf(2))
+            java.io.File(dir, "donation_id1.mp3").writeBytes(byteArrayOf(3))
+            java.io.File(dir, "donation_other_priya.mp3").writeBytes(byteArrayOf(4))
+            java.io.File(dir, "temple_chime.wav").writeBytes(byteArrayOf(5))
+            val deleted = SarvamTtsClient.deleteDonationFiles(dir, "id1")
+            kotlin.test.assertEquals(3, deleted)
+            kotlin.test.assertTrue(java.io.File(dir, "donation_other_priya.mp3").exists())
+            kotlin.test.assertTrue(java.io.File(dir, "temple_chime.wav").exists())
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     @Test

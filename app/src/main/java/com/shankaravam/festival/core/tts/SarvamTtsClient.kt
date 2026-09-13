@@ -48,12 +48,27 @@ class SarvamTtsClient(
     private val api: SarvamApiService = SarvamApiService.create()
 ) {
     /**
-     * Full-sentence and roster recordings are cached separately
-     * (`donation_{id}.mp3` vs `donation_{id}_roster.mp3`) so switching
-     * announcement style never plays the wrong recording.
+     * Full-sentence and roster recordings are cached separately, and each
+     * Sarvam speaker gets its own file (`donation_{id}_{speaker}.mp3` vs
+     * `donation_{id}_{speaker}_roster.mp3`) so switching voices or
+     * announcement style never plays the wrong recording (Phase 1 ghost-voice
+     * fix). Human-imported clips (WhatsApp share) live in the speaker-agnostic
+     * legacy slot — see [importedFile].
      */
-    fun cachedFile(donationId: String, roster: Boolean = false): File? {
-        val file = File(audioDir(), cacheFileName(donationId, roster))
+    fun cachedFile(donationId: String, roster: Boolean = false, speaker: String = "priya"): File? {
+        val file = File(audioDir(), cacheFileName(donationId, roster, speaker))
+        return if (file.exists() && file.length() > 0) file else null
+    }
+
+    /**
+     * Speaker-agnostic human-import slot (`donation_{id}[_roster].mp3`).
+     * Written only by manual import (WhatsApp/file picker) — never by
+     * [getOrGenerateAudio]. The engine plays human clips before Sarvam
+     * speaker files (a deliberate import is an intentional override), so a
+     * human recording is never shadowed by older auto-generated cloud audio.
+     */
+    fun importedFile(donationId: String, roster: Boolean = false): File? {
+        val file = File(audioDir(), legacyCacheFileName(donationId, roster))
         return if (file.exists() && file.length() > 0) file else null
     }
 
@@ -64,7 +79,8 @@ class SarvamTtsClient(
         speaker: String = "priya",
         roster: Boolean = false
     ): File = withContext(Dispatchers.IO) {
-        cachedFile(donationId, roster)?.let { return@withContext it }
+        // Speaker-aware hit: a Priya file must never satisfy a Shubh request.
+        cachedFile(donationId, roster, speaker)?.let { return@withContext it }
 
         val normSpeaker = normalizeSarvamSpeaker(speaker)
         val payload = JSONObject()
@@ -96,10 +112,24 @@ class SarvamTtsClient(
         val bytes = Base64.decode(audioBase64, Base64.DEFAULT)
         if (bytes.isEmpty()) throw IOException("Empty audio from Sarvam")
 
-        val file = File(audioDir(), cacheFileName(donationId, roster))
+        val file = File(audioDir(), cacheFileName(donationId, roster, normSpeaker))
         file.writeBytes(bytes)
         file
     }
+
+    /** Deletes every cached clip for one donation (all speakers, legacy, imports). */
+    fun deleteDonationCache(donationId: String): Int =
+        runCatching { deleteDonationFiles(audioDir(), donationId) }.getOrDefault(0)
+
+    /**
+     * One-time rename migration (Phase 1): pre-speaker `donation_{id}[_roster].mp3`
+     * files are attributed to [speaker] (the active voice at upgrade time) by
+     * renaming them to the speaker-suffixed name. Human imports ride along and
+     * stay playable under the active speaker. Idempotent; never throws.
+     * Returns the number of files renamed-or-removed.
+     */
+    fun migrateLegacyCache(speaker: String): Int =
+        runCatching { migrateLegacyToSpeaker(audioDir(), speaker) }.getOrDefault(0)
 
     private fun audioDir(): File =
         File(context.cacheDir, "audio").apply { if (!exists()) mkdirs() }
@@ -111,12 +141,15 @@ class SarvamTtsClient(
      */
     fun pruneCache(excludeIds: Set<String>, maxFiles: Int, maxAgeDays: Int): Int = runCatching {
         val cutoff = System.currentTimeMillis() - maxAgeDays * 24L * 60L * 60L * 1000L
-        val excluded = excludeIds.flatMap {
-            setOf(cacheFileName(it, false), cacheFileName(it, true))
-        }.toSet()
         val ours = audioDir().listFiles()
             ?.filter { it.isFile && it.name.startsWith("donation_") && it.name.endsWith(".mp3") }
             .orEmpty()
+        // Prefix exclusion: every speaker variant, legacy slot and human import
+        // for a live queue id survives; only truly stray clips are victims.
+        val excluded = ours
+            .filter { f -> excludeIds.any { id -> f.name.startsWith("donation_${id}") } }
+            .map { it.name }
+            .toSet()
         var deleted = 0
         selectPruneVictims(ours, maxFiles, cutoff, excluded).forEach {
             if (runCatching { it.delete() }.getOrDefault(false)) deleted++
@@ -125,8 +158,23 @@ class SarvamTtsClient(
     }.getOrDefault(0)
 
     companion object {
-        /** Pure filename mapping — unit-tested (no Android needed). */
-        fun cacheFileName(donationId: String, roster: Boolean): String =
+        /**
+         * Pure filename mapping — unit-tested (no Android needed).
+         * Sarvam cloud clips are namespaced per normalized speaker so voices
+         * never collide on disk.
+         */
+        fun cacheFileName(donationId: String, roster: Boolean = false, speaker: String = "priya"): String {
+            val norm = normalizeSarvamSpeaker(speaker)
+            return if (roster) "donation_${donationId}_${norm}_roster.mp3"
+            else "donation_${donationId}_${norm}.mp3"
+        }
+
+        /**
+         * Pre-speaker legacy name, now the human-import slot
+         * (`donation_{id}[_roster].mp3`). Kept for import/migration only —
+         * never generate Sarvam audio under this name.
+         */
+        fun legacyCacheFileName(donationId: String, roster: Boolean = false): String =
             if (roster) "donation_${donationId}_roster.mp3" else "donation_${donationId}.mp3"
 
         /** Pure victim selection — unit-tested (no Android needed). */
@@ -141,6 +189,61 @@ class SarvamTtsClient(
             val rest = (eligible - aged.toSet()).sortedBy { it.lastModified() }
             val overCount = (rest.size - maxFiles).coerceAtLeast(0)
             return aged + rest.take(overCount)
+        }
+
+        /**
+         * Pure deletion helper — removes every clip belonging to [donationId]
+         * (all speaker variants, legacy slots, human imports, roster). Only
+         * touches `donation_{id}*` names; chime/test files survive.
+         * Returns the deleted count; never throws.
+         */
+        fun deleteDonationFiles(audioDir: File, donationId: String): Int {
+            val prefix = "donation_${donationId}"
+            return runCatching {
+                audioDir.listFiles()
+                    ?.filter { it.isFile && it.name.startsWith(prefix) && it.name.endsWith(".mp3") }
+                    .orEmpty()
+                    .count { runCatching { it.delete() }.getOrDefault(false) }
+            }.getOrDefault(0)
+        }
+
+        /**
+         * Pure rename migration — attributes pre-speaker legacy files to
+         * [speaker] (`donation_{id}.mp3` → `donation_{id}_{speaker}.mp3`,
+         * same for `_roster`). Donation ids are UUIDs (no underscores), so the
+         * legacy shape is unambiguous: remainder is exactly the id, optionally
+         * followed by `_roster`. Already-migrated speaker files are untouched;
+         * a legacy file whose target exists is deleted as a duplicate.
+         * Returns renamed-or-removed count; never throws.
+         */
+        fun migrateLegacyToSpeaker(audioDir: File, speaker: String): Int {
+            val norm = normalizeSarvamSpeaker(speaker)
+            return runCatching {
+                val files = audioDir.listFiles()
+                    ?.filter { it.isFile && it.name.startsWith("donation_") && it.name.endsWith(".mp3") }
+                    .orEmpty()
+                var done = 0
+                files.forEach { file ->
+                    val core = file.name.removePrefix("donation_").removeSuffix(".mp3")
+                    // Legacy full: "<id>" — legacy roster: "<id>_roster".
+                    // UUIDs contain hyphens, never underscores, so any extra
+                    // underscore segment means already-migrated/imported shape.
+                    val (id, roster) = when {
+                        !core.contains('_') -> core to false
+                        core.endsWith("_roster") && !core.removeSuffix("_roster").contains('_') ->
+                            core.removeSuffix("_roster") to true
+                        else -> return@forEach
+                    }
+                    if (id.isBlank()) return@forEach
+                    val target = File(audioDir, cacheFileName(id, roster, norm))
+                    if (target.exists()) {
+                        if (runCatching { file.delete() }.getOrDefault(false)) done++
+                    } else {
+                        if (runCatching { file.renameTo(target) }.getOrDefault(false)) done++
+                    }
+                }
+                done
+            }.getOrDefault(0)
         }
     }
 }

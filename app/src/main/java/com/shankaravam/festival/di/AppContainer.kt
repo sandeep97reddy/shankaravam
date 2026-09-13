@@ -89,7 +89,9 @@ class AppContainer(context: Context) {
             },
             SarvamTtsClient(appContext),
             audioFocus,
-            chimeEnabled = { sessionPrefs.playTempleChime }
+            chimeEnabled = { sessionPrefs.playTempleChime },
+            speakerProvider = { sessionPrefs.sarvamSpeaker },
+            engineModeProvider = { sessionPrefs.voiceEngineMode }
         )
     }
 

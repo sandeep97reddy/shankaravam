@@ -61,6 +61,12 @@ data class QueueUiState(
     val nativeReady: Boolean = false,
     val testingAudio: Boolean = false,
     val prefetchRemaining: Int = 0,
+    /**
+     * Phase 3 transparency (RC4): non-blank while the Sarvam quota is
+     * exhausted — the transport card shows this instead of silently flipping
+     * voices mid-queue. Blank = cloud budget available (or irrelevant).
+     */
+    val quotaPill: String = "",
     val hasEvent: Boolean = false
 ) {
     val current: Donation? get() = queue.getOrNull(index)
@@ -92,6 +98,13 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
     private val gapSeconds = MutableStateFlow(prefs.queueGapSeconds)
     private val testingAudio = MutableStateFlow(false)
     private val prefetchRemaining = MutableStateFlow(0)
+
+    /**
+     * Phase 3 quota transparency (RC4). Set when prefetch is denied a Sarvam
+     * slot; cleared when a slot succeeds or the window rolls (see
+     * [refreshQuotaPill]). The transport card renders it as a warning pill.
+     */
+    private val quotaPill = MutableStateFlow("")
 
     private val _importReport = MutableStateFlow<String?>(null)
     val importReport: StateFlow<String?> = _importReport.asStateFlow()
@@ -137,6 +150,18 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
         val tag: String?
     )
 
+    /**
+     * Fix-B1: everything that invalidates the cloud cache — event/donations
+     * PLUS voice identity (speaker, engine mode, key version). Any of these
+     * changing re-runs the prefetch pass.
+     */
+    private data class PrefetchInputs(
+        val event: Event?,
+        val donations: List<Donation>,
+        val speaker: String,
+        val mode: com.shankaravam.festival.domain.model.VoiceEngineMode
+    )
+
     private data class PlayOpts(
         val index: Int,
         val playing: Boolean,
@@ -146,7 +171,8 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
         val preset: String,
         val gap: Int,
         val testing: Boolean,
-        val prefetch: Int
+        val prefetch: Int,
+        val quotaPill: String = ""
     )
 
     val uiState: StateFlow<QueueUiState> =
@@ -172,24 +198,27 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                 }
 
                 val play = combine(
-                    playBasics,
-                    combine(gapSeconds, testingAudio) { gap: Int, testing: Boolean -> gap to testing },
-                    prefetchRemaining
-                ) { pb, gt, prefetch ->
-                    val a = pb.first
-                    val b = pb.second
-                    PlayOpts(
-                        index = a.first,
-                        playing = a.second,
-                        paused = a.third,
-                        repeat = b.first,
-                        rosterMode = b.second,
-                        preset = pb.third,
-                        gap = gt.first,
-                        testing = gt.second,
-                        prefetch = prefetch
-                    )
-                }
+                    combine(
+                        playBasics,
+                        combine(gapSeconds, testingAudio) { gap: Int, testing: Boolean -> gap to testing },
+                        prefetchRemaining
+                    ) { pb, gt, prefetch ->
+                        val a = pb.first
+                        val b = pb.second
+                        PlayOpts(
+                            index = a.first,
+                            playing = a.second,
+                            paused = a.third,
+                            repeat = b.first,
+                            rosterMode = b.second,
+                            preset = pb.third,
+                            gap = gt.first,
+                            testing = gt.second,
+                            prefetch = prefetch
+                        )
+                    },
+                    quotaPill
+                ) { opts, pill -> opts.copy(quotaPill = pill) }
 
                 val core = combine(
                     eventRepo.observeEvent(eventId),
@@ -263,6 +292,7 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
             nativeReady = ready,
             testingAudio = play.testing,
             prefetchRemaining = play.prefetch,
+            quotaPill = play.quotaPill,
             hasEvent = true
         )
     }
@@ -271,6 +301,7 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
 
     fun play() {
         runCatching {
+            refreshQuotaPill()
             val state = uiState.value
             if (state.queue.isEmpty() || state.isPlaying && !state.isPaused) return
             clearPlaybackError()
@@ -280,6 +311,19 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
             }
             playAt(if (state.index in state.queue.indices) state.index else 0)
         }.onFailure { failPlayback(it) }
+    }
+
+    /**
+     * Phase 3: clears a stale quota pill once the 30-min window has rolled.
+     * Main-safe (plain prefs reads, no IO). Called on user action; the
+     * prefetch pass also refreshes it on every queue change.
+     */
+    private fun refreshQuotaPill() {
+        if (quotaPill.value.isNotBlank() &&
+            prefs.sarvamQuotaUsed() < SessionPrefs.SARVAM_MAX_CALLS
+        ) {
+            quotaPill.value = ""
+        }
     }
 
     fun pause() {
@@ -450,14 +494,18 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                 delay(1000L)
             }
 
-            // Speak the donation row
+            // Speak the donation row in the ACTIVE speaker (Phase 1: the engine
+            // resolves via its provider, but passing explicitly documents the
+            // contract and survives any wiring lapse).
+            val activeSpeaker = prefs.sarvamSpeaker
             kotlinx.coroutines.suspendCancellableCoroutine { cont ->
                 if (state.rosterMode) {
                     engine.playRosterItem(
                         item,
                         languageOf(),
                         onDone = { if (cont.isActive) cont.resume(Unit) {} },
-                        onError = { if (cont.isActive) cont.resume(Unit) {} }
+                        onError = { if (cont.isActive) cont.resume(Unit) {} },
+                        speaker = activeSpeaker
                     )
                 } else {
                     engine.playBest(
@@ -465,7 +513,8 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                         state.eventName,
                         languageOf(),
                         onDone = { if (cont.isActive) cont.resume(Unit) {} },
-                        onError = { if (cont.isActive) cont.resume(Unit) {} }
+                        onError = { if (cont.isActive) cont.resume(Unit) {} },
+                        speaker = activeSpeaker
                     )
                 }
                 cont.invokeOnCancellation { engine.stopAll() }
@@ -588,47 +637,83 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
     /** Background Sarvam prefetch for rows missing cache (silent; never blocks UI). */
     private fun prefetchWhenIdle() {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            var lastIds: Set<String> = emptySet()
             prefs.currentEventId.flatMapLatest { eventId ->
-                if (eventId == null) flowOf(null to emptyList())
+                if (eventId == null) flowOf(null)
                 else {
+                    // Fix-B1: voice identity is part of the trigger. A speaker
+                    // switch, engine-mode switch, or fresh API key re-runs the
+                    // pass — otherwise Shubh's rows would never generate after
+                    // switching from Priya (or after entering a key) without
+                    // an unrelated donation edit or restart.
                     combine(
                         eventRepo.observeEvent(eventId),
-                        donationRepo.observeForEvent(eventId)
-                    ) { event, donations -> event to donations }
+                        donationRepo.observeForEvent(eventId),
+                        prefs.sarvamSpeakerFlow,
+                        prefs.voiceEngineModeFlow,
+                        secureKeys.keyVersion
+                    ) { event, donations, speaker, mode, _ ->
+                        PrefetchInputs(event, donations, speaker, mode)
+                    }
                 }
-            }.collect { (event, donations) ->
+            }.collect { inputs ->
                 runCatching {
+                    val event = inputs?.event
+                    val donations = inputs?.donations.orEmpty()
                     val key = secureKeys.getSarvamKey()
                     if (key.isBlank() || event == null) {
                         prefetchRemaining.value = 0
                         return@runCatching
                     }
                     val eventName = event.name
+                    val roster = prefs.queueRosterMode
+                    val speaker = inputs?.speaker ?: prefs.sarvamSpeaker
+                    // Phase 2: explicit offline mode burns zero cloud quota —
+                    // playback serves device voice (+ human imports) only.
+                    // Fix-B3: leaving cloud also dismisses a stale quota pill.
+                    if ((inputs?.mode ?: prefs.voiceEngineMode) == com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE) {
+                        prefetchRemaining.value = 0
+                        if (quotaPill.value.isNotBlank()) quotaPill.value = ""
+                        return@runCatching
+                    }
+                    // Phase 1 one-time migration: attribute pre-speaker legacy
+                    // files to the active voice so they stop shadowing other
+                    // speakers. Idempotent, guarded, never throws.
+                    if (!prefs.audioCacheV2Migrated) {
+                        runCatching { engine.migrateLegacy(speaker) }
+                        prefs.audioCacheV2Migrated = true
+                    }
+                    val eligible = donations.filter { it.announcementEnabled }
                     runCatching {
                         engine.pruneCache(
-                            excludeIds = emptySet(),
+                            excludeIds = eligible.map { it.id }.toSet(),
                             maxFiles = SessionPrefs.AUDIO_CACHE_MAX_FILES,
                             maxAgeDays = SessionPrefs.AUDIO_CACHE_MAX_AGE_DAYS
                         )
                     }
-                    val roster = prefs.queueRosterMode
-                    val speaker = prefs.sarvamSpeaker
-                    val eligible = donations.filter { it.announcementEnabled }
                     val missing = eligible
-                        .filter { it.id !in lastIds || engine.cachedFile(it.id, roster) == null }
-                        .filter { engine.cachedFile(it.id, roster) == null }
+                        // Human imports cover playback under any speaker, so a
+                        // row with a human clip needs no cloud generation.
+                        .filter { d ->
+                            engine.cachedFile(d.id, roster, speaker) == null &&
+                                engine.importedFile(d.id, roster) == null &&
+                                engine.importedFile(d.id) == null
+                        }
                         .take(50)
                     if (missing.isEmpty()) {
                         prefetchRemaining.value = 0
                         return@runCatching
                     }
-                    lastIds = eligible.map { it.id }.toSet()
+                    // Phase 3: a rolled window clears a stale pill before this
+                    // pass spends (or is denied) slots.
+                    refreshQuotaPill()
                     prefetchRemaining.value = missing.size
                     // P4.5 guard only when sync is on: needs a Firestore read.
                     val guardEventId = if (prefs.cloudSyncEnabled) event.id else null
                     for (donation in missing) {
-                        if (engine.cachedFile(donation.id, roster) != null) continue
+                        if (engine.cachedFile(donation.id, roster, speaker) != null ||
+                            engine.importedFile(donation.id, roster) != null ||
+                            engine.importedFile(donation.id) != null
+                        ) continue
                         val lang = languageOf()
                         // P4.5 re-fetch guard: a peer generated this exact rendering
                         // within 30 min → skip the call, native covers playback.
@@ -650,10 +735,17 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                                 continue
                             }
                         }
-                        // P4 budget: 10 cloud calls per 45 min per device; the rest
-                        // stay on native Telugu until the window resets.
+                        // P4 budget: 20 cloud calls per 30 min per device (see
+                        // SessionPrefs.SARVAM_MAX_CALLS). Phase 3: denial sets
+                        // the quota pill (with reset time) instead of silently
+                        // flipping voices — and prefetchRemaining KEEPS its
+                        // count so the waiting rows stay visible.
                         if (!prefs.takeSarvamSlot()) {
-                            prefetchRemaining.value = 0
+                            quotaPill.value = com.shankaravam.festival.domain.model.quotaPillText(
+                                used = prefs.sarvamQuotaUsed(),
+                                max = SessionPrefs.SARVAM_MAX_CALLS,
+                                resetAt = prefs.sarvamQuotaResetAt()
+                            )
                             break
                         }
                         val file = engine.ensureCached(
@@ -674,6 +766,8 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                             prefetchRemaining.value = 0
                             break
                         }
+                        // A slot went through, so budget exists — clear any pill.
+                        if (quotaPill.value.isNotBlank()) quotaPill.value = ""
                         // Stamp the generation so peers skip their duplicate call.
                         if (guardEventId != null) {
                             val by = container.authRepository.user.value?.uid

@@ -24,7 +24,21 @@ class DualTtsEngine(
     private val sarvam: SarvamTtsClient,
     private val audioFocus: AudioFocusManager,
     /** Device-local toggle (Settings & Voice); default on for immersion. */
-    private val chimeEnabled: () -> Boolean = { true }
+    private val chimeEnabled: () -> Boolean = { true },
+    /**
+     * Active Sarvam voice (Phase 1 ghost-voice fix). Read live at each call so
+     * a speaker switch takes effect without rebuilding the engine. Wired to
+     * `SessionPrefs.sarvamSpeaker` in [com.shankaravam.festival.di.AppContainer].
+     */
+    private val speakerProvider: () -> String = { "priya" },
+    /**
+     * Phase 2 explicit engine mode (RC5). Read live at each call; wired to
+     * `SessionPrefs.voiceEngineMode`. OFFLINE_NATIVE skips Sarvam files so a
+     * user conserving quota never hears cloud audio; human imports still play
+     * (they are on-device recordings, not cloud).
+     */
+    private val engineModeProvider: () -> com.shankaravam.festival.domain.model.VoiceEngineMode =
+        { com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD }
 ) {
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -34,12 +48,28 @@ class DualTtsEngine(
 
     val nativeReady: StateFlow<Boolean> = native.ready
 
-    fun cachedFile(donationId: String, roster: Boolean = false): File? =
-        sarvam.cachedFile(donationId, roster)
+    fun cachedFile(
+        donationId: String,
+        roster: Boolean = false,
+        speaker: String? = null
+    ): File? = sarvam.cachedFile(
+        donationId, roster, normalizeSarvamSpeaker(speaker ?: runCatching { speakerProvider() }.getOrDefault("priya"))
+    )
+
+    /** Human-import slot (WhatsApp/file picker) for one row. Never auto-generated. */
+    fun importedFile(donationId: String, roster: Boolean = false): File? =
+        sarvam.importedFile(donationId, roster)
 
     /** P4 ceiling enforcement; runs on the caller's (IO) thread. Never throws. */
     fun pruneCache(excludeIds: Set<String>, maxFiles: Int, maxAgeDays: Int): Int =
         runCatching { sarvam.pruneCache(excludeIds, maxFiles, maxAgeDays) }.getOrDefault(0)
+
+    /**
+     * One-time Phase 1 migration: attributes pre-speaker legacy files to
+     * [speaker]. Runs on the caller's (IO) thread; never throws.
+     */
+    fun migrateLegacy(speaker: String): Int =
+        runCatching { sarvam.migrateLegacyCache(speaker) }.getOrDefault(0)
 
     /**
      * Best-effort background caching. Reports PREPARING/READY/FAILED through
@@ -56,7 +86,7 @@ class DualTtsEngine(
         speaker: String = "priya",
         onError: (Throwable) -> Unit = {}
     ): File? {
-        sarvam.cachedFile(donation.id, roster)?.let { return it }
+        sarvam.cachedFile(donation.id, roster, speaker)?.let { return it }
         if (apiKey.isBlank()) return null
         runCatching { onStatus(AudioStatus.PREPARING) }
         return try {
@@ -137,22 +167,42 @@ class DualTtsEngine(
         )
     }
 
-    /** Highest quality for this row: cached Sarvam mp3, else native TTS. Never throws. */
+    /**
+     * Highest quality for this row: the human-imported full clip first (a
+     * deliberate 1-tap import is an intentional override — Fix-B2: checking
+     * Sarvam first made imports appear broken whenever prefetch had already
+     * generated audio), else Sarvam mp3 in [speaker], else native TTS.
+     * Never throws. A cached Priya file never satisfies a Shubh request.
+     * Phase 2: OFFLINE_NATIVE mode skips Sarvam files entirely (quota
+     * conservation); human imports still play — they are local recordings.
+     */
     fun playBest(
         donation: Donation,
         eventName: String,
         language: AnnouncementLanguage,
         onDone: () -> Unit,
-        onError: () -> Unit
+        onError: () -> Unit,
+        speaker: String? = null
     ) {
         withChime(onDone, onError) {
             runCatching {
-                val cached = sarvam.cachedFile(donation.id)
-                if (cached != null) {
-                    playFile(cached, onDone, onError)
-                } else {
-                    speakNative(buildDonationAnnouncement(donation, eventName, language), onDone, onError)
+                val offlineOnly = runCatching { engineModeProvider() }
+                    .getOrDefault(com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD) ==
+                    com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE
+                // Human full-clip import (e.g. WhatsApp share) is an
+                // intentional override — plays under any speaker and mode.
+                sarvam.importedFile(donation.id)?.let {
+                    playFile(it, onDone, onError)
+                    return@withChime
                 }
+                if (!offlineOnly) {
+                    val active = normalizeSarvamSpeaker(speaker ?: runCatching { speakerProvider() }.getOrDefault("priya"))
+                    sarvam.cachedFile(donation.id, speaker = active)?.let {
+                        playFile(it, onDone, onError)
+                        return@withChime
+                    }
+                }
+                speakNative(buildDonationAnnouncement(donation, eventName, language), onDone, onError)
             }.onFailure {
                 runCatching { speakNative(AUDIO_TEST_LINE, onDone, onError) }
                     .onFailure { runCatching { onError() } }
@@ -161,25 +211,46 @@ class DualTtsEngine(
     }
 
     /**
-     * Plays a crisp roster line: cloud/imported roster recording when cached,
-     * else the imported full clip for that row, else native TTS. Never throws.
+     * Plays a crisp roster line: human-imported roster recording first
+     * (intentional override), then Sarvam in [speaker], then the human full
+     * clip for that row, then Sarvam full in [speaker], else native TTS.
+     * Phase 2: OFFLINE_NATIVE mode skips both Sarvam lookups. Never throws.
      */
     fun playRosterItem(
         donation: Donation,
         language: AnnouncementLanguage,
         onDone: () -> Unit,
-        onError: () -> Unit
+        onError: () -> Unit,
+        speaker: String? = null
     ) {
         withChime(onDone, onError, chime = false) {
             runCatching {
-                sarvam.cachedFile(donation.id, roster = true)?.let {
+                val offlineOnly = runCatching { engineModeProvider() }
+                    .getOrDefault(com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD) ==
+                    com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE
+                // Intentional human roster clip wins over any cloud voice.
+                sarvam.importedFile(donation.id, roster = true)?.let {
                     playFile(it, onDone, onError)
                     return@withChime
                 }
+                if (!offlineOnly) {
+                    val active = normalizeSarvamSpeaker(speaker ?: runCatching { speakerProvider() }.getOrDefault("priya"))
+                    sarvam.cachedFile(donation.id, roster = true, speaker = active)?.let {
+                        playFile(it, onDone, onError)
+                        return@withChime
+                    }
+                }
                 // Imported full clip (e.g. WhatsApp share) doubles as the roster line.
-                sarvam.cachedFile(donation.id)?.let {
+                sarvam.importedFile(donation.id)?.let {
                     playFile(it, onDone, onError)
                     return@withChime
+                }
+                if (!offlineOnly) {
+                    val active = normalizeSarvamSpeaker(speaker ?: runCatching { speakerProvider() }.getOrDefault("priya"))
+                    sarvam.cachedFile(donation.id, speaker = active)?.let {
+                        playFile(it, onDone, onError)
+                        return@withChime
+                    }
                 }
                 speakNative(buildRosterItemAnnouncement(donation, language), onDone, onError)
             }.onFailure {

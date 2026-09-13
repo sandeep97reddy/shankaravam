@@ -26,6 +26,28 @@ class SessionPrefs(context: Context) {
     private val _counterName = MutableStateFlow(prefs.getString(KEY_COUNTER, "") ?: "")
     val counterName: StateFlow<String> = _counterName.asStateFlow()
 
+    /**
+     * Phase 2 reactive voice settings (RC1 remedy). Every voice picker collects
+     * these — never snapshots prefs into `remember {}` — so a change in
+     * Settings is visible in the Announcement queue instantly and vice versa.
+     */
+    private val _sarvamSpeakerFlow = MutableStateFlow(sarvamSpeaker)
+    val sarvamSpeakerFlow: StateFlow<String> = _sarvamSpeakerFlow.asStateFlow()
+
+    private val _nativeTtsVoiceFlow = MutableStateFlow(nativeTtsVoice)
+    val nativeTtsVoiceFlow: StateFlow<String?> = _nativeTtsVoiceFlow.asStateFlow()
+
+    private val _nativeTtsSpeedFlow = MutableStateFlow(nativeTtsSpeed)
+    val nativeTtsSpeedFlow: StateFlow<Float> = _nativeTtsSpeedFlow.asStateFlow()
+
+    private val _playTempleChimeFlow = MutableStateFlow(playTempleChime)
+    val playTempleChimeFlow: StateFlow<Boolean> = _playTempleChimeFlow.asStateFlow()
+
+    private val _voiceEngineModeFlow =
+        MutableStateFlow(com.shankaravam.festival.domain.model.voiceModeOf(prefs.getString(KEY_ENGINE_MODE, null)))
+    val voiceEngineModeFlow: StateFlow<com.shankaravam.festival.domain.model.VoiceEngineMode> =
+        _voiceEngineModeFlow.asStateFlow()
+
     fun setCurrentEventId(id: String?) {
         prefs.edit().apply { if (id == null) remove(KEY_EVENT) else putString(KEY_EVENT, id) }.apply()
         _currentEventId.value = id
@@ -118,11 +140,17 @@ class SessionPrefs(context: Context) {
 
     var nativeTtsVoice: String?
         get() = prefs.getString(KEY_NATIVE_VOICE, null)
-        set(value) = prefs.edit().apply { if (value == null) remove(KEY_NATIVE_VOICE) else putString(KEY_NATIVE_VOICE, value) }.apply()
+        set(value) {
+            prefs.edit().apply { if (value == null) remove(KEY_NATIVE_VOICE) else putString(KEY_NATIVE_VOICE, value) }.apply()
+            _nativeTtsVoiceFlow.value = value
+        }
 
     var nativeTtsSpeed: Float
         get() = prefs.getFloat(KEY_NATIVE_SPEED, 1.0f)
-        set(value) = prefs.edit().putFloat(KEY_NATIVE_SPEED, value).apply()
+        set(value) {
+            prefs.edit().putFloat(KEY_NATIVE_SPEED, value).apply()
+            _nativeTtsSpeedFlow.value = value
+        }
 
     var queueRosterMode: Boolean
         get() = prefs.getBoolean(KEY_QUEUE_ROSTER_MODE, true)
@@ -131,7 +159,10 @@ class SessionPrefs(context: Context) {
     /** Temple bell before announcements (feature #4): on by default. */
     var playTempleChime: Boolean
         get() = prefs.getBoolean(KEY_TEMPLE_CHIME, true)
-        set(value) = prefs.edit().putBoolean(KEY_TEMPLE_CHIME, value).apply()
+        set(value) {
+            prefs.edit().putBoolean(KEY_TEMPLE_CHIME, value).apply()
+            _playTempleChimeFlow.value = value
+        }
 
     var queueFestivalPreset: String
         get() = prefs.getString(KEY_QUEUE_PRESET, "VINAYAKA_CHAVITHI") ?: "VINAYAKA_CHAVITHI"
@@ -144,7 +175,32 @@ class SessionPrefs(context: Context) {
 
     var sarvamSpeaker: String
         get() = com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(prefs.getString(KEY_SPEAKER, "priya"))
-        set(value) = prefs.edit().putString(KEY_SPEAKER, com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(value)).apply()
+        set(value) {
+            val norm = com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(value)
+            prefs.edit().putString(KEY_SPEAKER, norm).apply()
+            _sarvamSpeakerFlow.value = norm
+        }
+
+    /**
+     * Phase 2 explicit engine mode (RC5). Default SARVAM_CLOUD preserves the
+     * pre-Phase-2 behavior (cloud cache first, native fallback). OFFLINE_NATIVE
+     * forces device voice + human imports with zero cloud calls.
+     */
+    var voiceEngineMode: com.shankaravam.festival.domain.model.VoiceEngineMode
+        get() = com.shankaravam.festival.domain.model.voiceModeOf(prefs.getString(KEY_ENGINE_MODE, null))
+        set(value) {
+            prefs.edit().putString(KEY_ENGINE_MODE, value.name).apply()
+            _voiceEngineModeFlow.value = value
+        }
+
+    /**
+     * Phase 1 speaker-aware cache: true once pre-speaker legacy files have
+     * been attributed to the active speaker (one-time rename migration,
+     * guarded so it runs exactly once per install).
+     */
+    var audioCacheV2Migrated: Boolean
+        get() = prefs.getBoolean(KEY_AUDIO_V2, false)
+        set(value) = prefs.edit().putBoolean(KEY_AUDIO_V2, value).apply()
 
     /**
      * P4 Sarvam budget: 20 cloud generations per 30-min rolling window per
@@ -163,6 +219,25 @@ class SessionPrefs(context: Context) {
             .putInt(KEY_SARVAM_COUNT, window.taken)
             .apply()
         return allowed
+    }
+
+    /**
+     * Phase 3 transparency: calls consumed in the CURRENT Sarvam window.
+     * Returns 0 when the window has rolled (or never opened) — never throws.
+     */
+    fun sarvamQuotaUsed(now: Long = System.currentTimeMillis()): Int {
+        val start = prefs.getLong(KEY_SARVAM_WINDOW, 0L)
+        if (now - start >= SARVAM_WINDOW_MILLIS) return 0
+        return prefs.getInt(KEY_SARVAM_COUNT, 0).coerceIn(0, SARVAM_MAX_CALLS)
+    }
+
+    /**
+     * Phase 3 transparency: when the current Sarvam window resets and calls
+     * succeed again. Returns [now] when no window is open. Never throws.
+     */
+    fun sarvamQuotaResetAt(now: Long = System.currentTimeMillis()): Long {
+        val resetAt = prefs.getLong(KEY_SARVAM_WINDOW, 0L) + SARVAM_WINDOW_MILLIS
+        return if (resetAt <= now) now else resetAt
     }
 
     // ---- G6 cloud session (all inert until the user enables Cloud Sync) ----
@@ -291,8 +366,10 @@ class SessionPrefs(context: Context) {
         private const val KEY_QUEUE_LANG = "queue_language"
         private const val KEY_SARVAM = "sarvam_api_key"
         private const val KEY_SPEAKER = "sarvam_speaker"
+        private const val KEY_ENGINE_MODE = "voice_engine_mode"
         private const val KEY_SARVAM_WINDOW = "sarvam_window_start"
         private const val KEY_SARVAM_COUNT = "sarvam_window_count"
+        private const val KEY_AUDIO_V2 = "audio_cache_v2_migrated"
 
         /** P4 budget: 20 Sarvam calls per 30 minutes per device. */
         const val SARVAM_MAX_CALLS = 20

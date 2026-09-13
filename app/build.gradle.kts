@@ -22,9 +22,21 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("release.keystore")
+            storePassword = "shankaravam_release"
+            keyAlias = "shankaravam"
+            keyPassword = "shankaravam_release"
+            enableV1Signing = true
+            enableV2Signing = true
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // Signed with debug config matching the SHA-1 registered in Firebase Console (google-services.json)
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

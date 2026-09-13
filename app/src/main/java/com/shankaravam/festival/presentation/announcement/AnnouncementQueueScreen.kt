@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -31,7 +30,9 @@ import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
@@ -48,19 +49,17 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shankaravam.festival.core.audio.displayName
@@ -72,11 +71,11 @@ import com.shankaravam.festival.data.local.SessionPrefs
 import com.shankaravam.festival.presentation.common.containerViewModel
 import com.shankaravam.festival.presentation.common.rememberContainer
 import com.shankaravam.festival.presentation.donation.DonationCard
-import kotlinx.coroutines.launch
 
 /**
- * Announcement queue (plan §11): route badge + test audio, cloud-key row,
- * transport controls, persisted gap/sort/language, tappable playlist.
+ * Announcement queue (plan §11): route badge + voice picker, transport
+ * controls, persisted gap/sort/language, tappable playlist. API keys are
+ * managed in Settings only — this screen never handles secrets.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -215,13 +214,17 @@ private fun RouteCard(
 private fun VoiceSettingsCard() {
     val container = rememberContainer()
     val prefs = remember { container.sessionPrefs }
-    val scope = rememberCoroutineScope()
-    var storedKey by remember { mutableStateOf<String?>(null) }
-    var speaker by remember { mutableStateOf(prefs.sarvamSpeaker) }
-    var selectedNativeVoice by remember { mutableStateOf(prefs.nativeTtsVoice) }
     var showMenu by remember { mutableStateOf(false) }
+
+    // Phase 2: collect flows — never snapshot prefs into remember {}.
+    // A pick in Settings ⚙️ (or vice versa) re-renders here instantly (RC1).
+    val engineMode by prefs.voiceEngineModeFlow.collectAsState()
+    val speaker by prefs.sarvamSpeakerFlow.collectAsState()
+    val nativeVoice by prefs.nativeTtsVoiceFlow.collectAsState()
+    val hasKey by container.secureKeys.hasKeyFlow.collectAsState()
+
     var showKeyDialog by remember { mutableStateOf(false) }
-    var keyDraft by remember { mutableStateOf("") }
+    var pendingSpeaker by remember { mutableStateOf("priya") }
 
     val nativeReady by container.ttsEngine.nativeReady.collectAsState()
     // Reactive: the native engine boots async (~200ms), so reload the list
@@ -236,24 +239,34 @@ private fun VoiceSettingsCard() {
         }
     }
 
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        val loaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { container.secureKeys.getSarvamKey() }.getOrDefault("")
+    // One shared label, mode-first (RC3 fix — the old when{} checked hasKey
+    // first, so native picks never changed the label while a key existed).
+    val config = com.shankaravam.festival.domain.model.VoiceConfig(
+        engineMode = engineMode,
+        sarvamSpeaker = speaker,
+        nativeVoice = nativeVoice,
+        hasSarvamKey = hasKey
+    )
+
+    // Every pick writes prefs (the single source of truth) AND takes effect
+    // live: speaker/mode flow into DualTtsEngine providers; native voice
+    // applies to the TTS engine immediately ("" resets to default).
+    fun pickCloud(next: String) {
+        prefs.sarvamSpeaker = next
+        showMenu = false
+        if (!hasKey) {
+            pendingSpeaker = next
+            showKeyDialog = true
+        } else {
+            prefs.voiceEngineMode = com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD
         }
-        storedKey = loaded
-        keyDraft = loaded
     }
 
-    val hasKey = !storedKey.isNullOrBlank()
-    val normSpeaker = com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(speaker)
-    val activeLabel = when {
-        hasKey && normSpeaker == "priya" -> "🌸 Priya (Sarvam Cloud HD)"
-        hasKey && normSpeaker == "shubh" -> "🎙️ Shubh (Sarvam Cloud HD)"
-        hasKey && normSpeaker == "kavitha" -> "🌸 Kavitha (Sarvam Cloud HD)"
-        hasKey && normSpeaker == "ratan" -> "🎙️ Ratan (Sarvam Cloud HD)"
-        hasKey -> "☁️ Sarvam Voice (${normSpeaker.replaceFirstChar { it.uppercase() }})"
-        selectedNativeVoice != null -> "📱 Android Voice (${selectedNativeVoice?.substringAfterLast("-", "Offline")})"
-        else -> "📱 Android System Voice (Offline)"
+    fun pickNative(next: String?) {
+        prefs.nativeTtsVoice = next
+        container.ttsEngine.native.setVoiceByName(next ?: "")
+        prefs.voiceEngineMode = com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE
+        showMenu = false
     }
 
     Card(
@@ -282,11 +295,29 @@ private fun VoiceSettingsCard() {
                     Text("Temple Voice / గొంతు ఎంపిక", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 }
 
-                TextButton(
-                    onClick = { showKeyDialog = true },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                ) {
-                    Text(if (hasKey) "API Key ✓" else "Set Key", style = MaterialTheme.typography.labelMedium)
+                if (hasKey) {
+                    Text(
+                        "Cloud key ✓",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color(0xFF2E7D32),
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                } else {
+                    TextButton(
+                        onClick = {
+                            pendingSpeaker = speaker
+                            showKeyDialog = true
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            "+ Add cloud key",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = com.shankaravam.festival.core.theme.TempleSaffron,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
 
@@ -302,7 +333,7 @@ private fun VoiceSettingsCard() {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                     ) {
-                        Text(activeLabel, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        Text(config.displayLabel(), fontWeight = FontWeight.SemiBold, maxLines = 1)
                         Icon(Icons.Filled.ArrowDropDown, contentDescription = "Select voice")
                     }
                 }
@@ -319,11 +350,7 @@ private fun VoiceSettingsCard() {
                                 Text("Sarvam AI Bulbul v3 • Studio Telugu", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         },
-                        onClick = {
-                            speaker = "priya"
-                            prefs.sarvamSpeaker = "priya"
-                            showMenu = false
-                        }
+                        onClick = { pickCloud("priya") }
                     )
                     DropdownMenuItem(
                         text = {
@@ -332,11 +359,7 @@ private fun VoiceSettingsCard() {
                                 Text("Sarvam AI Bulbul v3 • Studio Telugu", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         },
-                        onClick = {
-                            speaker = "shubh"
-                            prefs.sarvamSpeaker = "shubh"
-                            showMenu = false
-                        }
+                        onClick = { pickCloud("shubh") }
                     )
                     DropdownMenuItem(
                         text = {
@@ -345,11 +368,7 @@ private fun VoiceSettingsCard() {
                                 Text("Sarvam AI Bulbul v3 • Clear Telugu", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         },
-                        onClick = {
-                            speaker = "kavitha"
-                            prefs.sarvamSpeaker = "kavitha"
-                            showMenu = false
-                        }
+                        onClick = { pickCloud("kavitha") }
                     )
                     DropdownMenuItem(
                         text = {
@@ -358,11 +377,7 @@ private fun VoiceSettingsCard() {
                                 Text("Sarvam AI Bulbul v3 • Clear Telugu", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         },
-                        onClick = {
-                            speaker = "ratan"
-                            prefs.sarvamSpeaker = "ratan"
-                            showMenu = false
-                        }
+                        onClick = { pickCloud("ratan") }
                     )
 
                     HorizontalDivider()
@@ -375,12 +390,7 @@ private fun VoiceSettingsCard() {
                                 Text("Android Built-in • 100% Offline", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         },
-                        onClick = {
-                            selectedNativeVoice = null
-                            prefs.nativeTtsVoice = null
-                            container.ttsEngine.native.setVoiceByName("")
-                            showMenu = false
-                        }
+                        onClick = { pickNative(null) }
                     )
 
                     nativeVoices.forEach { voiceName ->
@@ -392,20 +402,14 @@ private fun VoiceSettingsCard() {
                                     Text("Device voice: $voiceName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             },
-                            onClick = {
-                                selectedNativeVoice = voiceName
-                                prefs.nativeTtsVoice = voiceName
-                                container.ttsEngine.native.setVoiceByName(voiceName)
-                                showMenu = false
-                            }
+                            onClick = { pickNative(voiceName) }
                         )
                     }
                 }
             }
 
             Text(
-                text = if (hasKey) "✓ High-fidelity Sarvam cloud voice active."
-                else "Offline Android voice active. Add a Sarvam API key for studio clarity.",
+                text = config.statusLine(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -413,21 +417,37 @@ private fun VoiceSettingsCard() {
     }
 
     if (showKeyDialog) {
-        androidx.compose.material3.AlertDialog(
+        var keyInput by remember { mutableStateOf("") }
+        var inputError by remember { mutableStateOf<String?>(null) }
+
+        AlertDialog(
             onDismissRequest = { showKeyDialog = false },
-            title = { Text("Sarvam AI API Key", fontWeight = FontWeight.Bold) },
+            title = {
+                Text(
+                    "Sarvam Cloud Voice / శర్వం గొంతు",
+                    fontWeight = FontWeight.Bold,
+                    color = DeepMaroon
+                )
+            },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "Enter your Sarvam API subscription key for natural temple announcements.",
-                        style = MaterialTheme.typography.bodySmall
+                        "To use studio Telugu voice (${pendingSpeaker.replaceFirstChar { it.uppercase() }}), enter your Sarvam AI API key. It will be stored securely on this device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     OutlinedTextField(
-                        value = keyDraft,
-                        onValueChange = { keyDraft = it },
-                        label = { Text("API Key") },
+                        value = keyInput,
+                        onValueChange = {
+                            keyInput = it
+                            inputError = null
+                        },
+                        label = { Text("Sarvam API Key") },
+                        placeholder = { Text("Paste your API key here") },
                         singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
+                        isError = inputError != null,
+                        supportingText = inputError?.let { { Text(it, color = CrimsonRose) } },
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -435,30 +455,29 @@ private fun VoiceSettingsCard() {
             confirmButton = {
                 Button(
                     onClick = {
-                        val trimmed = keyDraft.trim()
-                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            runCatching { container.secureKeys.setSarvamKey(trimmed) }
-                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                storedKey = trimmed
-                                showKeyDialog = false
-                            }
+                        val trimmed = keyInput.trim().removeSurrounding("\"").removeSurrounding("'").trim()
+                        if (trimmed.isBlank()) {
+                            inputError = "API key cannot be blank"
+                        } else {
+                            container.secureKeys.setSarvamKey(trimmed)
+                            prefs.sarvamSpeaker = pendingSpeaker
+                            prefs.voiceEngineMode = com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD
+                            showKeyDialog = false
                         }
-                    }
-                ) { Text("Save") }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = TempleSaffron,
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Save & Activate", fontWeight = FontWeight.Bold)
+                }
             },
             dismissButton = {
-                TextButton(
-                    onClick = {
-                        keyDraft = ""
-                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            runCatching { container.secureKeys.setSarvamKey("") }
-                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                storedKey = ""
-                                showKeyDialog = false
-                            }
-                        }
-                    }
-                ) { Text("Remove") }
+                TextButton(onClick = { showKeyDialog = false }) {
+                    Text("Cancel / రద్దు")
+                }
             }
         )
     }
@@ -542,6 +561,16 @@ private fun TransportCard(
                 Text(
                     "Preparing cloud audio… (${state.prefetchRemaining} left, offline voice fills gaps)",
                     style = MaterialTheme.typography.bodySmall
+                )
+            }
+            // Phase 3 quota transparency (RC4): the pill explains WHY some rows
+            // speak in the offline voice instead of silently flipping mid-queue.
+            if (state.quotaPill.isNotBlank()) {
+                Text(
+                    state.quotaPill,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TempleSaffron
                 )
             }
             Row(

@@ -244,11 +244,17 @@ private fun ShareAudioButton(
     val context = LocalContext.current
     val container = rememberContainer()
     // Reactive on the live row: appears the moment background TTS marks READY.
+    // Phase 1: speaker-aware lookup first, human-import slots as fallback so a
+    // WhatsApp clip shared under any voice is still shareable.
+    // Fix-B2: human clips come first — share exactly what playback plays.
     val liveRow by viewModel.donation.collectAsState()
     val audioTick = liveRow?.audioStatus
-    val audioFile = remember(donation.id, audioTick) {
-        container.ttsEngine.cachedFile(donation.id)
-            ?: container.ttsEngine.cachedFile(donation.id, roster = true)
+    val speaker = container.sessionPrefs.sarvamSpeaker
+    val audioFile = remember(donation.id, audioTick, speaker) {
+        container.ttsEngine.importedFile(donation.id)
+            ?: container.ttsEngine.cachedFile(donation.id, speaker = speaker)
+            ?: container.ttsEngine.importedFile(donation.id, roster = true)
+            ?: container.ttsEngine.cachedFile(donation.id, roster = true, speaker = speaker)
     }
     if (audioFile != null && audioFile.exists() && audioFile.length() > 0) {
         OutlinedButton(
@@ -268,8 +274,10 @@ private fun ShareAudioButton(
 
 /**
  * Shared-clip import (P4): picks one audio file (e.g. WhatsApp share —
- * human-recorded or Sarvam, bytes are bytes) into this row's full-clip slot.
- * Roster mode falls back to it when no _roster.mp3 exists. Never throws.
+ * human-recorded or Sarvam, bytes are bytes) into this row's human full-clip
+ * slot (`donation_{id}.mp3`). Phase 1: the engine plays this slot as an
+ * intentional override under any speaker, after the Sarvam speaker file.
+ * Roster mode falls back to it when no roster clip exists. Never throws.
  */
 @Composable
 private fun ImportAudioButton(donation: Donation) {
