@@ -32,7 +32,8 @@ To eliminate dark, heavy blocks and harsh contrast borders, the visual design wa
 
 ### B. Header & App Bar Modernization ([TempleAppBar.kt](file:///c:/Users/SANDEEP/Desktop/projects/shankaravam/app/src/main/java/com/shankaravam/festival/presentation/common/TempleAppBar.kt))
 - Replaced the solid dark maroon header bar with an airy, elevated light surface bar.
-- Navigation back arrow rendered in `DeepMaroon` with `SacredCharcoal` typography.
+- App Name ("ShankaRavam" / "శంఖారావం") and "CURRENT EVENT" text use bright, vibrant **`TempleSaffron` (`#E65100`)** for instant readability.
+- Navigation back arrow and action icons use vibrant **`TempleSaffron`**, with title text adapting to `MaterialTheme.colorScheme.onSurface`.
 
 ---
 

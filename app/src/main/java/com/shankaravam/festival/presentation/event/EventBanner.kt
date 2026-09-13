@@ -1,5 +1,6 @@
 package com.shankaravam.festival.presentation.event
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,7 +12,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.shankaravam.festival.core.theme.eventColorFor
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
@@ -85,16 +88,17 @@ fun CurrentEventBanner(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            val currentEventColor = state.currentEvent?.let { eventColorFor(it.id) } ?: TempleSaffron
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = SaffronWash,
+                color = currentEventColor.copy(alpha = 0.15f),
                 modifier = Modifier.size(44.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.Filled.Festival,
                         contentDescription = null,
-                        tint = TempleSaffron,
+                        tint = currentEventColor,
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -104,20 +108,33 @@ fun CurrentEventBanner(
                 Text(
                     text = strings.currentEvent.uppercase(),
                     style = MaterialTheme.typography.labelSmall,
-                    color = DeepMaroon,
+                    color = currentEventColor,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 0.5.sp
                 )
-                Text(
-                    text = state.currentEvent?.name ?: strings.noEventYet,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    state.currentEvent?.let {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .background(currentEventColor, CircleShape)
+                        )
+                    }
+                    Text(
+                        text = state.currentEvent?.name ?: strings.noEventYet,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
+                }
                 state.currentEvent?.let {
-                    if (it.templeName.isNotBlank()) {
+                    val subtext = listOf(it.templeName, it.location).filter { s -> s.isNotBlank() }.joinToString(" • ")
+                    if (subtext.isNotBlank()) {
                         Text(
-                            text = it.templeName,
+                            text = subtext,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1
@@ -146,7 +163,15 @@ fun CurrentEventBanner(
                     ) {
                         state.events.forEach { event ->
                             val isCurrent = event.id == state.currentEvent?.id
+                            val dotColor = eventColorFor(event.id)
                             DropdownMenuItem(
+                                leadingIcon = {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(12.dp)
+                                            .background(dotColor, CircleShape)
+                                    )
+                                },
                                 text = {
                                     Column {
                                         Text(
@@ -154,9 +179,12 @@ fun CurrentEventBanner(
                                             fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
                                             color = if (isCurrent) TempleSaffron else MaterialTheme.colorScheme.onSurface
                                         )
-                                        if (event.templeName.isNotBlank()) {
+                                        val sub = listOf(event.templeName, event.location)
+                                            .filter { s -> s.isNotBlank() }
+                                            .joinToString(" • ")
+                                        if (sub.isNotBlank()) {
                                             Text(
-                                                event.templeName,
+                                                sub,
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )

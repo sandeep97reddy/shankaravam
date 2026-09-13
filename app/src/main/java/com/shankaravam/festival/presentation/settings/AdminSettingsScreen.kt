@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Language
@@ -57,6 +58,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import com.shankaravam.festival.presentation.common.DeveloperAttributionCard
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -72,6 +74,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.shankaravam.festival.core.theme.CrimsonRose
+import com.shankaravam.festival.core.theme.CrimsonWash
 import com.shankaravam.festival.core.theme.DeepMaroon
 import com.shankaravam.festival.core.theme.MaroonWash
 import com.shankaravam.festival.core.theme.SaffronWash
@@ -89,6 +93,8 @@ import com.shankaravam.festival.domain.model.UserRole
 import com.shankaravam.festival.domain.model.roleOf
 import com.shankaravam.festival.presentation.common.TempleAppBar
 import com.shankaravam.festival.presentation.common.containerViewModel
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -201,7 +207,7 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
     }
 
     fun testNativeSpeech() {
-        container.ttsEngine.native.speak("శ్రీ రెడబోతు సందీప్ రెడ్డి గారు, వెయ్యి నూట పదహారు రూపాయలు.")
+        container.ttsEngine.native.speak("శ్రీ మహేష్ బాబు గారు, వెయ్యి నూట పదహారు రూపాయలు.")
     }
 
     fun saveKeyLocally(key: String, speaker: String) {
@@ -250,6 +256,56 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
         }
     }
 
+    private val _sarvamTestStatus = MutableStateFlow<String?>(null)
+    val sarvamTestStatus: StateFlow<String?> = _sarvamTestStatus.asStateFlow()
+
+    private val _testingSarvam = MutableStateFlow(false)
+    val testingSarvam: StateFlow<Boolean> = _testingSarvam.asStateFlow()
+
+    fun testSarvamVoice(key: String, speaker: String) {
+        val trimmed = key.trim()
+        if (trimmed.isBlank()) {
+            _sarvamTestStatus.value = "Please enter an API key first."
+            return
+        }
+        if (_testingSarvam.value) return // debounce: a test is already running
+        if (!container.sessionPrefs.takeSarvamSlot()) {
+            _sarvamTestStatus.value = "✗ Free-tier limit reached (10 Sarvam calls per 45 min). Try later — offline voice still works."
+            return
+        }
+        viewModelScope.launch {
+            _testingSarvam.value = true
+            _sarvamTestStatus.value = "Testing Sarvam AI connection…"
+            val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    val api = com.shankaravam.festival.data.remote.SarvamApiService.create()
+                    val payload = org.json.JSONObject()
+                        .put("inputs", org.json.JSONArray().put("ఓం నమో వేంకటేశాయ. శర్వం క్లౌడ్ గొంతు పరీక్ష విజయవంతమైంది."))
+                        .put("target_language_code", "te-IN")
+                        .put("speaker", speaker)
+                        .toString()
+                        .toRequestBody("application/json; charset=utf-8".toMediaType())
+                    val response = api.synthesize(trimmed, payload).string()
+                    val audioBase64 = org.json.JSONObject(response).getJSONArray("audios").getString(0)
+                    val bytes = android.util.Base64.decode(audioBase64, android.util.Base64.DEFAULT)
+                    val testFile = java.io.File(container.appContext.cacheDir, "audio_test_sample.mp3")
+                    testFile.writeBytes(bytes)
+                    testFile
+                }
+            }
+            result.fold(
+                onSuccess = { file ->
+                    _sarvamTestStatus.value = "✓ Key Verified & Working! Playing audio…"
+                    container.ttsEngine.playFile(file, onDone = {}, onError = {})
+                },
+                onFailure = { e ->
+                    _sarvamTestStatus.value = "✗ Test failed: ${e.message ?: "Invalid key or network error"}"
+                }
+            )
+            _testingSarvam.value = false
+        }
+    }
+
     fun closeEvent(event: Event) {
         viewModelScope.launch {
             val now = System.currentTimeMillis()
@@ -285,6 +341,8 @@ fun AdminSettingsScreen(
     val speed by viewModel.speed.collectAsState()
     val chime by viewModel.chimeEnabled.collectAsState()
     val teluguVoices by viewModel.nativeVoices.collectAsState()
+    val sarvamTestStatus by viewModel.sarvamTestStatus.collectAsState()
+    val testingSarvam by viewModel.testingSarvam.collectAsState()
 
     var showCloseConfirm by remember { mutableStateOf(false) }
 
@@ -483,11 +541,14 @@ fun AdminSettingsScreen(
                     speaker = sarvamSpeakerDraft,
                     onSpeakerChange = { sarvamSpeakerDraft = it },
                     busy = busy,
+                    testStatus = sarvamTestStatus,
+                    testing = testingSarvam,
                     canPublish = AccessPolicy.canManageKeys(state.role)
                         && AdminConfig.isGlobalHeadEmail(state.cloudEmail),
                     onSaveLocal = { key, speaker -> viewModel.saveKeyLocally(key, speaker) },
                     onPush = { key, speaker -> viewModel.pushKey(key, speaker) },
-                    onPull = { viewModel.pullKey() }
+                    onPull = { viewModel.pullKey() },
+                    onTestSarvam = { key, speaker -> viewModel.testSarvamVoice(key, speaker) }
                 )
             }
 
@@ -504,8 +565,8 @@ fun AdminSettingsScreen(
                     teluguTitle = "ఉత్సవ నిర్వహణ",
                     summary = adminSummary,
                     icon = Icons.Filled.Lock,
-                    iconTint = DeepMaroon,
-                    iconBackground = MaroonWash,
+                    iconTint = CrimsonRose,
+                    iconBackground = CrimsonWash,
                     isExpanded = adminExpanded,
                     onToggle = { adminExpanded = !adminExpanded }
                 ) {
@@ -515,6 +576,12 @@ fun AdminSettingsScreen(
                     )
                 }
             }
+
+            // Developer & Designer Attribution Card
+            DeveloperAttributionCard(
+                currentLang = currentLang,
+                modifier = Modifier.padding(top = 8.dp, bottom = 16.dp)
+            )
         }
     }
 
@@ -542,7 +609,7 @@ fun AdminSettingsScreen(
                 }) {
                     Text(
                         if (currentLang == SessionPrefs.LANG_TELUGU) "ఈవెంట్ ముగించు" else "Close Event",
-                        color = DeepMaroon,
+                        color = CrimsonRose,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -618,7 +685,7 @@ private fun SettingsAccordionCard(
                             text = teluguTitle,
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold,
-                            color = DeepMaroon // DeepMaroon on white has 13.5:1 contrast, satisfying WCAG AAA!
+                            color = TempleSaffron
                         )
                     }
                     Spacer(Modifier.height(2.dp))
@@ -762,7 +829,11 @@ private fun NativeVoiceContent(
                     label = { Text("Default / సిస్టమ్") }
                 )
                 voices.forEach { v ->
-                    val label = v.substringAfterLast("-", v.takeLast(10))
+                    val label = when {
+                        v.contains("network", ignoreCase = true) -> "Network HD"
+                        v.contains("local", ignoreCase = true) -> "Offline"
+                        else -> v.substringAfterLast("-", v.takeLast(10))
+                    }
                     FilterChip(
                         selected = selectedVoice == v,
                         onClick = { onSelectVoice(v) },
@@ -851,7 +922,7 @@ private fun NativeVoiceContent(
         ) {
             Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Test Voice: శ్రీ రెడబోతు సందీప్ రెడ్డి గారు", fontWeight = FontWeight.Bold)
+            Text("Test Voice: శ్రీ మహేష్ బాబు గారు", fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -901,10 +972,13 @@ private fun VoiceKeyContent(
     speaker: String,
     onSpeakerChange: (String) -> Unit,
     busy: Boolean,
+    testStatus: String?,
+    testing: Boolean,
     canPublish: Boolean,
     onSaveLocal: (String, String) -> Unit,
     onPush: (String, String) -> Unit,
-    onPull: () -> Unit
+    onPull: () -> Unit,
+    onTestSarvam: (String, String) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
@@ -938,6 +1012,58 @@ private fun VoiceKeyContent(
                 )
             }
         }
+
+        if (testStatus != null) {
+            val isOk = testStatus.startsWith("✓")
+            val isErr = testStatus.startsWith("✗")
+            Surface(
+                color = when {
+                    isOk -> Color(0xFFE8F5E9)
+                    isErr -> Color(0xFFFFEBEE)
+                    else -> Color(0xFFFFF3E0)
+                },
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = testStatus,
+                    color = when {
+                        isOk -> Color(0xFF2E7D32)
+                        isErr -> Color(0xFFC62828)
+                        else -> Color(0xFFE65100)
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(10.dp)
+                )
+            }
+        }
+
+        Button(
+            onClick = { onTestSarvam(key, speaker) },
+            enabled = key.isNotBlank() && !busy && !testing,
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = TempleSaffron,
+                contentColor = Color.White
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (testing) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = Color.White
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Testing Sarvam API…", fontWeight = FontWeight.Bold)
+            } else {
+                Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Test Sarvam Voice / గొంతును పరీక్షించండి", fontWeight = FontWeight.Bold)
+            }
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -961,7 +1087,7 @@ private fun VoiceKeyContent(
             enabled = canPublish && key.isNotBlank() && !busy,
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = TempleSaffron,
+                containerColor = DeepMaroon,
                 contentColor = Color.White
             ),
             modifier = Modifier.fillMaxWidth()
@@ -993,7 +1119,7 @@ private fun FestivalAdminContent(
             enabled = event.status.name == "ACTIVE",
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = DeepMaroon,
+                containerColor = CrimsonRose,
                 contentColor = Color.White
             ),
             modifier = Modifier.fillMaxWidth()

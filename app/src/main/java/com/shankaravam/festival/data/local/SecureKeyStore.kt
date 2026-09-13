@@ -16,34 +16,58 @@ class SecureKeyStore(context: Context, private val fallback: SessionPrefs) {
         val masterKey = MasterKey.Builder(context.applicationContext)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
-        EncryptedSharedPreferences.create(
+        val prefs = EncryptedSharedPreferences.create(
             context.applicationContext,
             FILE,
             masterKey,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
         )
-    }.getOrNull().also { if (it != null) migrateIfNeeded(it) }
+        // Test read to ensure keys are decryptable and not corrupted from debug updates
+        prefs.all
+        migrateIfNeeded(prefs)
+        prefs
+    }.getOrElse {
+        // If keystore was invalidated or corrupted, delete the stale prefs file
+        runCatching {
+            val file = java.io.File(context.applicationContext.filesDir.parent, "shared_prefs/$FILE.xml")
+            if (file.exists()) file.delete()
+        }
+        null
+    }
 
     val isEncrypted: Boolean get() = secure != null
 
-    fun getSarvamKey(): String =
-        secure?.getString(KEY_SARVAM, "") ?: fallback.sarvamApiKey
+    fun getSarvamKey(): String = runCatching {
+        // Secure store is authoritative once it exists: migration already moved
+        // any legacy plain key at init, so blank here means "no key" — never
+        // fall back to the plain pref or a cleared key resurrects itself.
+        if (secure != null) secure.getString(KEY_SARVAM, "") ?: ""
+        else fallback.sarvamApiKey
+    }.getOrDefault("")
 
     fun setSarvamKey(value: String) {
         val trimmed = value.trim()
-        if (secure != null) {
-            secure.edit().putString(KEY_SARVAM, trimmed).apply()
-        } else {
+        val saved = runCatching {
+            secure?.edit()?.putString(KEY_SARVAM, trimmed)?.apply()
+            secure != null
+        }.getOrDefault(false)
+
+        if (trimmed.isBlank()) {
+            // Clearing must kill the legacy plain copy too, or get() resurrects it.
+            fallback.sarvamApiKey = ""
+        } else if (!saved) {
             fallback.sarvamApiKey = trimmed
         }
     }
 
     private fun migrateIfNeeded(store: SharedPreferences) {
-        val plain = fallback.sarvamApiKey
-        if (plain.isNotBlank() && store.getString(KEY_SARVAM, "").isNullOrEmpty()) {
-            store.edit().putString(KEY_SARVAM, plain).apply()
-            fallback.sarvamApiKey = ""
+        runCatching {
+            val plain = fallback.sarvamApiKey
+            if (plain.isNotBlank() && store.getString(KEY_SARVAM, "").isNullOrEmpty()) {
+                store.edit().putString(KEY_SARVAM, plain).apply()
+                fallback.sarvamApiKey = ""
+            }
         }
     }
 

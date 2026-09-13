@@ -369,7 +369,7 @@ fun ExpenseEntryScreen(
                     .fillMaxWidth()
                     .height(54.dp),
                 shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = DeepMaroon),
+                colors = ButtonDefaults.buttonColors(containerColor = CrimsonRose),
                 elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
             ) {
                 if (form.saveState == ExpenseSaveState.Saving) {

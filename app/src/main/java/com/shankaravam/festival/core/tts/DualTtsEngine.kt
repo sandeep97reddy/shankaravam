@@ -7,8 +7,10 @@ import com.shankaravam.festival.domain.model.AudioStatus
 import com.shankaravam.festival.domain.model.Donation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.withContext
+import android.os.Handler
+import android.os.Looper
 import java.io.File
+import java.io.FileInputStream
 
 /**
  * Dual engine (skill §1): Sarvam mp3 when a key exists and the file can be
@@ -25,6 +27,7 @@ class DualTtsEngine(
     private val chimeEnabled: () -> Boolean = { true }
 ) {
     private val appContext = context.applicationContext
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var player: MediaPlayer? = null
     /** True while the 800 ms chime owns the player — pause() won't grab it. */
     @Volatile private var inChime = false
@@ -109,7 +112,9 @@ class DualTtsEngine(
             ensureChimeFile(File(appContext.cacheDir, "audio"))
         } else null
         if (chimeFile == null) {
-            runCatching { action() }.onFailure { runCatching { onError() } }
+            mainHandler.post {
+                runCatching { action() }.onFailure { runCatching { onError() } }
+            }
             return
         }
         inChime = true
@@ -118,11 +123,16 @@ class DualTtsEngine(
             abandonOnDone = false,
             onDone = {
                 inChime = false
-                runCatching { action() }.onFailure { runCatching { onError() } }
+                mainHandler.post {
+                    runCatching { action() }.onFailure { runCatching { onError() } }
+                }
             },
             onError = {
                 inChime = false
-                runCatching { onError() }
+                // Chime failure is non-fatal: proceed to announcement speech anyway!
+                mainHandler.post {
+                    runCatching { action() }.onFailure { runCatching { onError() } }
+                }
             }
         )
     }
@@ -203,32 +213,59 @@ class DualTtsEngine(
         onDone: () -> Unit,
         onError: () -> Unit
     ) {
-        runCatching { stopPlayback() }
+        stopPlayback()
         runCatching { audioFocus.request() }
         try {
             if (!file.exists() || file.length() == 0L) {
-                runCatching { audioFocus.abandon() }
-                runCatching { onError() }
+                if (abandonOnDone) runCatching { audioFocus.abandon() }
+                mainHandler.post { runCatching { onError() } }
                 return
             }
-            player = MediaPlayer().apply {
-                setAudioAttributes(audioFocus.attributes)
-                setDataSource(file.absolutePath)
-                setOnCompletionListener {
+            val mp = MediaPlayer()
+            player = mp
+            mp.setAudioAttributes(audioFocus.attributes)
+            // Use FileDescriptor to guarantee readability for mediaserver across all Android sandbox boundaries
+            FileInputStream(file).use { fis ->
+                mp.setDataSource(fis.fd, 0, file.length())
+            }
+            mp.setOnCompletionListener { activeMp ->
+                // Post to Main Looper so native C++ notify() completely unwinds before release/next stage
+                mainHandler.post {
+                    if (player === activeMp) {
+                        stopPlayback()
+                    }
                     if (abandonOnDone) runCatching { audioFocus.abandon() }
                     runCatching { onDone() }
                 }
-                setOnErrorListener { _, _, _ ->
-                    runCatching { audioFocus.abandon() }
-                    runCatching { onError() }
-                    true
-                }
-                setOnPreparedListener { runCatching { it.start() }.onFailure { runCatching { onError() } } }
-                prepareAsync()
             }
+            mp.setOnErrorListener { activeMp, _, _ ->
+                mainHandler.post {
+                    if (player === activeMp) {
+                        stopPlayback()
+                    }
+                    if (abandonOnDone) runCatching { audioFocus.abandon() }
+                    runCatching { onError() }
+                }
+                true
+            }
+            mp.setOnPreparedListener { activeMp ->
+                mainHandler.post {
+                    runCatching {
+                        if (player === activeMp) {
+                            activeMp.start()
+                        }
+                    }.onFailure {
+                        stopPlayback()
+                        if (abandonOnDone) runCatching { audioFocus.abandon() }
+                        runCatching { onError() }
+                    }
+                }
+            }
+            mp.prepareAsync()
         } catch (_: Throwable) {
-            runCatching { audioFocus.abandon() }
-            runCatching { onError() }
+            stopPlayback()
+            if (abandonOnDone) runCatching { audioFocus.abandon() }
+            mainHandler.post { runCatching { onError() } }
         }
     }
 
@@ -262,7 +299,7 @@ class DualTtsEngine(
 
     fun stopAll() {
         inChime = false
-        runCatching { stopPlayback() }
+        stopPlayback()
         runCatching { native.stop() }
         runCatching { audioFocus.abandon() }
     }
@@ -273,11 +310,15 @@ class DualTtsEngine(
     }
 
     private fun stopPlayback() {
-        runCatching {
-            player?.stop()
-            player?.release()
-        }
+        val active = player ?: return
         player = null
+        runCatching {
+            if (runCatching { active.isPlaying }.getOrDefault(false)) {
+                active.stop()
+            }
+            active.reset()
+            active.release()
+        }
     }
 
     /** Test-audio line for the pre-announcement levels check (plan §11). */

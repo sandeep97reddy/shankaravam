@@ -113,7 +113,7 @@ class FirestoreSyncService(
                             joinedAt = null,
                             email = me.email,
                             displayName = me.displayName,
-                            counterName = prefs.attributionName(),
+                            counterName = prefs.rawCounterName(),
                             deviceTag = prefs.deviceId.takeLast(4).uppercase(),
                             lastActiveAt = System.currentTimeMillis()
                         ),
@@ -311,7 +311,7 @@ class FirestoreSyncService(
                         joinedAt = existingJoinedAt ?: now,
                         email = effectiveEmail,
                         displayName = effectiveName,
-                        counterName = prefs.attributionName(),
+                        counterName = prefs.rawCounterName(),
                         deviceTag = prefs.deviceId.takeLast(4).uppercase(),
                         lastActiveAt = now
                     ),

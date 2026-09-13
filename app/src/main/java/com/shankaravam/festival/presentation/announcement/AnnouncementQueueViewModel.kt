@@ -589,23 +589,33 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
     private fun prefetchWhenIdle() {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             var lastIds: Set<String> = emptySet()
-            uiState.collect { state ->
+            prefs.currentEventId.flatMapLatest { eventId ->
+                if (eventId == null) flowOf(null to emptyList())
+                else {
+                    combine(
+                        eventRepo.observeEvent(eventId),
+                        donationRepo.observeForEvent(eventId)
+                    ) { event, donations -> event to donations }
+                }
+            }.collect { (event, donations) ->
                 runCatching {
-                    // Single source for the key: the encrypted store (falls back to
-                    // plain prefs on devices without a keystore). Never read the
-                    // plain pref directly — migration clears it.
                     val key = secureKeys.getSarvamKey()
-                    if (key.isBlank() || !state.hasEvent) return@runCatching
+                    if (key.isBlank() || event == null) {
+                        prefetchRemaining.value = 0
+                        return@runCatching
+                    }
+                    val eventName = event.name
                     runCatching {
                         engine.pruneCache(
-                            excludeIds = setOfNotNull(state.current?.id),
+                            excludeIds = emptySet(),
                             maxFiles = SessionPrefs.AUDIO_CACHE_MAX_FILES,
                             maxAgeDays = SessionPrefs.AUDIO_CACHE_MAX_AGE_DAYS
                         )
                     }
                     val roster = prefs.queueRosterMode
                     val speaker = prefs.sarvamSpeaker
-                    val missing = state.queue
+                    val eligible = donations.filter { it.announcementEnabled }
+                    val missing = eligible
                         .filter { it.id !in lastIds || engine.cachedFile(it.id, roster) == null }
                         .filter { engine.cachedFile(it.id, roster) == null }
                         .take(50)
@@ -613,10 +623,10 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                         prefetchRemaining.value = 0
                         return@runCatching
                     }
-                    lastIds = state.queue.map { it.id }.toSet()
+                    lastIds = eligible.map { it.id }.toSet()
                     prefetchRemaining.value = missing.size
                     // P4.5 guard only when sync is on: needs a Firestore read.
-                    val guardEventId = if (prefs.cloudSyncEnabled) prefs.currentEventId.value else null
+                    val guardEventId = if (prefs.cloudSyncEnabled) event.id else null
                     for (donation in missing) {
                         if (engine.cachedFile(donation.id, roster) != null) continue
                         val lang = languageOf()
@@ -625,7 +635,7 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                         if (guardEventId != null) {
                             val hash = runCatching {
                                 val text = if (roster) buildRosterItemAnnouncement(donation, lang)
-                                else buildDonationAnnouncement(donation, state.eventName, lang)
+                                else buildDonationAnnouncement(donation, eventName, lang)
                                 audioHashFor(text, lang.name, speaker, roster)
                             }.getOrNull()
                             val fresh = hash != null && runCatching {
@@ -648,7 +658,7 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                         }
                         val file = engine.ensureCached(
                             donation = donation,
-                            eventName = state.eventName,
+                            eventName = eventName,
                             language = lang,
                             apiKey = key,
                             onStatus = { status ->
@@ -670,7 +680,7 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                                 ?: prefs.attributionName()
                             runCatching {
                                 val text = if (roster) buildRosterItemAnnouncement(donation, lang)
-                                else buildDonationAnnouncement(donation, state.eventName, lang)
+                                else buildDonationAnnouncement(donation, eventName, lang)
                                 syncService.stampAudioMeta(
                                     guardEventId,
                                     donation.id,

@@ -58,6 +58,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shankaravam.festival.core.i18n.appStrings
 import com.shankaravam.festival.core.theme.CrimsonRose
+import com.shankaravam.festival.data.local.SessionPrefs
+import com.shankaravam.festival.presentation.common.DeveloperAttributionCard
 import com.shankaravam.festival.core.theme.CrimsonRoseLight
 import com.shankaravam.festival.core.theme.CrimsonWash
 import com.shankaravam.festival.core.theme.DeepMaroon
@@ -203,6 +205,14 @@ fun DashboardScreen(
                         onSync = onSync,
                         reportsText = strings.reportsTile,
                         syncText = strings.syncTile
+                    )
+                }
+
+                // 7. Developer & Designer Attribution Card
+                item {
+                    DeveloperAttributionCard(
+                        currentLang = if (strings.languageCode == "te") SessionPrefs.LANG_TELUGU else SessionPrefs.LANG_ENGLISH,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
                     )
                 }
             }
@@ -438,21 +448,21 @@ private fun DualActionHeader(
                 .weight(1f)
                 .height(54.dp),
             shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = DeepMaroon),
+            colors = ButtonDefaults.buttonColors(containerColor = CrimsonRose),
             elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
         ) {
             Icon(
                 imageVector = Icons.Filled.Remove,
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
-                tint = TempleGold
+                tint = Color.White
             )
             Spacer(Modifier.size(6.dp))
             Text(
                 text = addExpenseText,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
-                color = TempleGold,
+                color = Color.White,
                 maxLines = 1
             )
         }

@@ -53,6 +53,8 @@ class AuthRepository(
     private val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
         val cloud = firebaseAuth.currentUser?.toCloudUser()
         _user.value = cloud
+        sessionPrefs.googleDisplayName = cloud?.displayName
+        sessionPrefs.googleEmail = cloud?.email
         runCatching {
             val headsUp = AdminConfig.isGlobalHeadEmail(cloud?.email)
             if (sessionPrefs.isGlobalHeadUser != headsUp) {
@@ -94,6 +96,8 @@ class AuthRepository(
                     ?: throw IllegalStateException("Sign-in returned no user.")
             }.fold(
                 onSuccess = { cloud ->
+                    sessionPrefs.googleDisplayName = cloud.displayName
+                    sessionPrefs.googleEmail = cloud.email
                     // Belt-and-braces alongside the listener (timing-safe).
                     runCatching {
                         sessionPrefs.isGlobalHeadUser = AdminConfig.isGlobalHeadEmail(cloud.email)
@@ -105,6 +109,8 @@ class AuthRepository(
         }
 
     fun signOut() {
+        sessionPrefs.googleDisplayName = null
+        sessionPrefs.googleEmail = null
         runCatching {
             auth?.signOut()
             GoogleSignIn.getClient(

@@ -52,9 +52,15 @@ class AndroidTtsClient(
             val teLocale = Locale.Builder().setLanguage("te").setRegion("IN").build()
             val result = runCatching { engine.setLanguage(teLocale) }.getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
             if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                // If Telugu voice pack is not pre-installed on this device yet, fall back to default so audio still works
+                // If Telugu voice pack is not pre-installed on this device yet, fall back to system default
                 val fallbackResult = runCatching { engine.setLanguage(Locale.getDefault()) }.getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
-                _ready.value = fallbackResult != TextToSpeech.LANG_MISSING_DATA && fallbackResult != TextToSpeech.LANG_NOT_SUPPORTED
+                if (fallbackResult != TextToSpeech.LANG_MISSING_DATA && fallbackResult != TextToSpeech.LANG_NOT_SUPPORTED) {
+                    _ready.value = true
+                } else {
+                    // Fallback to English (US) which is guaranteed on all Android devices
+                    val enResult = runCatching { engine.setLanguage(Locale.US) }.getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
+                    _ready.value = enResult != TextToSpeech.LANG_MISSING_DATA && enResult != TextToSpeech.LANG_NOT_SUPPORTED
+                }
             } else {
                 _ready.value = true
             }
@@ -63,7 +69,7 @@ class AndroidTtsClient(
             runCatching {
                 savedSettings?.invoke()?.let { (voiceName, rate) ->
                     setSpeechRate(rate)
-                    if (voiceName != null) setVoiceByName(voiceName)
+                    if (!voiceName.isNullOrBlank()) setVoiceByName(voiceName)
                 }
             }
 
@@ -93,8 +99,17 @@ class AndroidTtsClient(
     ): Boolean {
         val engine = tts ?: run { onError(); return false }
         if (!_ready.value) {
-            onError()
-            return false
+            // Emergency fallback: try setting English if Telugu was missing
+            val recovered = runCatching {
+                val res = engine.setLanguage(Locale.US)
+                res != TextToSpeech.LANG_NOT_SUPPORTED && res != TextToSpeech.LANG_MISSING_DATA
+            }.getOrDefault(false)
+            if (recovered) {
+                _ready.value = true
+            } else {
+                onError()
+                return false
+            }
         }
         val utteranceId = UUID.randomUUID().toString()
         pending[utteranceId] = Pending(onDone, onError)

@@ -34,8 +34,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shankaravam.festival.R
 import com.shankaravam.festival.core.i18n.appStrings
-import com.shankaravam.festival.core.theme.DeepMaroon
-import com.shankaravam.festival.core.theme.SacredCharcoal
 import com.shankaravam.festival.core.theme.SaffronWash
 import com.shankaravam.festival.core.theme.TempleGold
 import com.shankaravam.festival.core.theme.TempleSaffron
@@ -88,7 +86,7 @@ fun ShankaRavamDashboardHeader(
                         text = strings.appName,
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        color = DeepMaroon,
+                        color = TempleSaffron,
                         letterSpacing = 0.2.sp
                     )
                     Text(
@@ -128,7 +126,7 @@ fun ShankaRavamDashboardHeader(
 
 /**
  * Standard app bar for child screens with back arrow and customizable actions.
- * Light, roomy surface with crisp SacredCharcoal typography and Saffron accents.
+ * Light, roomy surface with crisp onSurface typography and Saffron accents.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -145,7 +143,7 @@ fun TempleAppBar(
                 text = title,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
-                color = SacredCharcoal
+                color = MaterialTheme.colorScheme.onSurface
             )
         },
         navigationIcon = {
@@ -154,7 +152,7 @@ fun TempleAppBar(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Back",
-                        tint = DeepMaroon
+                        tint = TempleSaffron
                     )
                 }
             }
@@ -162,9 +160,9 @@ fun TempleAppBar(
         actions = actions,
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.surface,
-            titleContentColor = SacredCharcoal,
-            navigationIconContentColor = DeepMaroon,
-            actionIconContentColor = DeepMaroon
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            navigationIconContentColor = TempleSaffron,
+            actionIconContentColor = TempleSaffron
         )
     )
 }

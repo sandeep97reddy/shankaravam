@@ -4,6 +4,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -21,6 +23,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
@@ -28,11 +31,13 @@ import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -151,7 +156,7 @@ fun AnnouncementQueueScreen(
                     )
                 }
             } else {
-                itemsIndexed(items = state.queue, key = { _, d -> d.id }) { position, donation ->
+                itemsIndexed(items = state.queue, key = { index, d -> "${d.id}_$index" }) { position, donation ->
                     val isCurrent = position == state.index && (state.isPlaying || state.isPaused)
                     DonationCard(
                         donation = donation,
@@ -193,7 +198,7 @@ private fun RouteCard(
             Column(Modifier.weight(1f)) {
                 Text(routeName, fontWeight = FontWeight.SemiBold)
                 Text(
-                    if (nativeReady) "Telugu voice ready • offline" else "Loading Telugu voice…",
+                    if (nativeReady) "Voice engine ready • offline" else "Initializing voice…",
                     style = MaterialTheme.typography.bodySmall
                 )
             }
@@ -211,79 +216,221 @@ private fun VoiceSettingsCard() {
     val container = rememberContainer()
     val prefs = remember { container.sessionPrefs }
     val scope = rememberCoroutineScope()
-    // EncryptedSharedPreferences/MasterKey init + reads can hit slow keystore
-    // disk I/O — keep ALL of it off the composition thread. The screen used to
-    // read the key inside `remember`, stalling open on slow devices (ANR that
-    // looks exactly like "tap Announce → app closed itself").
-    var storedKey by remember { mutableStateOf<String?>(null) } // null = still loading
-    var draft by remember { mutableStateOf("") }
+    var storedKey by remember { mutableStateOf<String?>(null) }
     var speaker by remember { mutableStateOf(prefs.sarvamSpeaker) }
+    var selectedNativeVoice by remember { mutableStateOf(prefs.nativeTtsVoice) }
+    var showMenu by remember { mutableStateOf(false) }
+    var showKeyDialog by remember { mutableStateOf(false) }
+    var keyDraft by remember { mutableStateOf("") }
+
+    val nativeReady by container.ttsEngine.nativeReady.collectAsState()
+    // Reactive: the native engine boots async (~200ms), so reload the list
+    // when it becomes ready instead of snapshotting once at composition.
+    var nativeVoices by remember { mutableStateOf(emptyList<String>()) }
+    androidx.compose.runtime.LaunchedEffect(nativeReady) {
+        if (nativeReady) {
+            nativeVoices = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { container.ttsEngine.native.getAvailableTeluguVoices() }
+                    .getOrDefault(emptyList())
+            }
+        }
+    }
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
         val loaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             runCatching { container.secureKeys.getSarvamKey() }.getOrDefault("")
         }
         storedKey = loaded
-        draft = loaded
+        keyDraft = loaded
     }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Voice", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            OutlinedTextField(
-                value = draft,
-                onValueChange = { draft = it },
-                label = { Text("Sarvam API key (optional)") },
-                placeholder = { Text(if (storedKey == null) "Loading…" else "Empty = offline voice") },
-                enabled = storedKey != null,
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    val hasKey = !storedKey.isNullOrBlank()
+    val activeLabel = when {
+        hasKey && speaker == "arvind" -> "🎙️ Arvind (Sarvam Cloud HD)"
+        hasKey && speaker == "meera" -> "🌸 Meera (Sarvam Cloud HD)"
+        selectedNativeVoice != null -> "📱 Android Voice (${selectedNativeVoice?.substringAfterLast("-", "Offline")})"
+        else -> "📱 Android System Voice (Offline)"
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = null,
+                        tint = com.shankaravam.festival.core.theme.TempleSaffron,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text("Temple Voice / గొంతు ఎంపిక", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                }
+
+                TextButton(
+                    onClick = { showKeyDialog = true },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Text(if (hasKey) "API Key ✓" else "Set Key", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+
+            // Dropdown Selector Button
+            Box {
                 OutlinedButton(
+                    onClick = { showMenu = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        Text(activeLabel, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        Icon(Icons.Filled.ArrowDropDown, contentDescription = "Select voice")
+                    }
+                }
+
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false }
+                ) {
+                    // Cloud Section
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text("🌸 Meera (Female)", fontWeight = FontWeight.SemiBold)
+                                Text("Sarvam AI Cloud HD • Studio Telugu", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        },
+                        onClick = {
+                            speaker = "meera"
+                            prefs.sarvamSpeaker = "meera"
+                            showMenu = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text("🎙️ Arvind (Male)", fontWeight = FontWeight.SemiBold)
+                                Text("Sarvam AI Cloud HD • Studio Telugu", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        },
+                        onClick = {
+                            speaker = "arvind"
+                            prefs.sarvamSpeaker = "arvind"
+                            showMenu = false
+                        }
+                    )
+
+                    HorizontalDivider()
+
+                    // Native Section
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text("📱 System Default", fontWeight = FontWeight.SemiBold)
+                                Text("Android Built-in • 100% Offline", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        },
+                        onClick = {
+                            selectedNativeVoice = null
+                            prefs.nativeTtsVoice = null
+                            container.ttsEngine.native.setVoiceByName("")
+                            showMenu = false
+                        }
+                    )
+
+                    nativeVoices.forEach { voiceName ->
+                        val vLabel = voiceName.substringAfterLast("-", voiceName.takeLast(8))
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text("📱 Android Telugu ($vLabel)", fontWeight = FontWeight.SemiBold)
+                                    Text("Device voice: $voiceName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            },
+                            onClick = {
+                                selectedNativeVoice = voiceName
+                                prefs.nativeTtsVoice = voiceName
+                                container.ttsEngine.native.setVoiceByName(voiceName)
+                                showMenu = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            Text(
+                text = if (hasKey) "✓ High-fidelity Sarvam cloud voice active."
+                else "Offline Android voice active. Add a Sarvam API key for studio clarity.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+
+    if (showKeyDialog) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showKeyDialog = false },
+            title = { Text("Sarvam AI API Key", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Enter your Sarvam API subscription key for natural temple announcements.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    OutlinedTextField(
+                        value = keyDraft,
+                        onValueChange = { keyDraft = it },
+                        label = { Text("API Key") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
                     onClick = {
-                        val snapshot = draft
-                        prefs.sarvamSpeaker = speaker
+                        val trimmed = keyDraft.trim()
                         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            runCatching { container.secureKeys.setSarvamKey(snapshot) }
+                            runCatching { container.secureKeys.setSarvamKey(trimmed) }
                             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                storedKey = snapshot.trim()
+                                storedKey = trimmed
+                                showKeyDialog = false
                             }
                         }
-                    },
-                    enabled = storedKey != null && draft.trim() != (storedKey ?: "").trim(),
-                    modifier = Modifier.weight(1f)
-                ) { Text("Save key") }
-                OutlinedButton(
+                    }
+                ) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(
                     onClick = {
-                        draft = ""
+                        keyDraft = ""
                         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             runCatching { container.secureKeys.setSarvamKey("") }
                             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                                 storedKey = ""
+                                showKeyDialog = false
                             }
                         }
-                    },
-                    enabled = storedKey != null,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Clear") }
+                    }
+                ) { Text("Remove") }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("meera", "arvind").forEach { option ->
-                    FilterChip(
-                        selected = speaker == option,
-                        onClick = { speaker = option; prefs.sarvamSpeaker = option },
-                        label = { Text(option.replaceFirstChar { it.titlecase() }) }
-                    )
-                }
-            }
-            Text(
-                "Cloud audio is cached on this device only — never uploaded. Key is stored encrypted.",
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
+        )
     }
 }
 
@@ -449,7 +596,7 @@ private fun TransportCard(
 
             Text("Pause between announcements", style = MaterialTheme.typography.labelLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(2, 5, 10).forEach { gap ->
+                listOf(1, 2, 5, 10).forEach { gap ->
                     FilterChip(
                         selected = state.gapSeconds == gap,
                         onClick = { onGap(gap) },

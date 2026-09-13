@@ -29,13 +29,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -56,6 +60,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.shankaravam.festival.core.theme.DeepMaroon
 import com.shankaravam.festival.core.theme.TempleGold
+import com.shankaravam.festival.core.theme.TempleSaffron
 import com.shankaravam.festival.core.util.Outcome
 import com.shankaravam.festival.core.util.generateShareCode
 import com.shankaravam.festival.core.util.isValidShareCode
@@ -186,8 +191,20 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun syncNow(eventId: String) {
-        SyncWorker.syncNow(container.appContext, eventId)
-        _notice.value = "Sync queued — runs when the network is up."
+        viewModelScope.launch {
+            _busy.value = "sync"
+            _notice.value = "Syncing with cloud…"
+            when (val outcome = container.syncService.syncEvent(eventId)) {
+                is Outcome.Ok -> {
+                    val r = outcome.value
+                    _notice.value = "✓ Synced: ${r.uploaded} uploaded, ${r.downloaded} downloaded."
+                }
+                is Outcome.Err -> {
+                    _notice.value = "Sync: ${outcome.message}"
+                }
+            }
+            _busy.value = null
+        }
     }
 
     fun publishCode(event: Event, uid: String) {
@@ -477,8 +494,21 @@ fun CloudSyncScreen(
                     )
                     Button(
                         onClick = { state.event?.let { viewModel.syncNow(it.id) } },
-                        enabled = state.syncEnabled && state.event != null && busy == null
-                    ) { Text("Sync now") }
+                        enabled = state.syncEnabled && state.event != null && busy != "sync",
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        if (busy == "sync") {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = Color.White
+                            )
+                            Spacer(Modifier.size(8.dp))
+                            Text("Syncing with cloud…")
+                        } else {
+                            Text("Sync now / ఇప్పుడే సమకాలీకరించు")
+                        }
+                    }
                 }
             }
             val event = state.event
@@ -507,35 +537,57 @@ fun CloudSyncScreen(
                 }
             }
             if (event != null && user != null) {
-                InviteCard(
-                    eventName = event.name,
-                    code = state.myCode,
-                    busy = busy == "code",
-                    onPublish = { viewModel.publishCode(event, user.uid) },
-                    canClose = viewModel.isHeadNow(event.id),
-                    closing = busy == "closecode",
-                    onClose = { state.myCode?.let { viewModel.closeCode(event.id, it) } }
-                )
-                JoinCard(
-                    code = joinCode,
-                    onCode = { joinCode = it.uppercase().filter(Char::isLetterOrDigit) },
-                    valid = isValidShareCode(joinCode),
-                    busy = busy == "join",
-                    onJoin = { viewModel.join(joinCode, user.uid) {} }
-                )
-                if (AccessPolicy.canApproveMembers(roleOf(state.myRole))) {
-                    ApprovalsCard(
-                        pending = pending,
-                        busyKey = busy,
-                        onRefresh = { viewModel.refreshPending(event.id) },
-                        onApprove = { member, role ->
-                            viewModel.approve(event.id, member, role, user.uid)
-                        }
-                    )
+                var selectedTab by remember { mutableStateOf(0) }
+                val isHead = viewModel.isHeadNow(event.id)
+
+                if (isHead) {
+                    TabRow(
+                        selectedTabIndex = selectedTab,
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        contentColor = TempleSaffron,
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    ) {
+                        Tab(
+                            selected = selectedTab == 0,
+                            onClick = { selectedTab = 0 },
+                            text = { Text("Sync & Invites", fontWeight = FontWeight.SemiBold) }
+                        )
+                        Tab(
+                            selected = selectedTab == 1,
+                            onClick = { selectedTab = 1 },
+                            text = { Text("Team & Counters (${team.size})", fontWeight = FontWeight.SemiBold) }
+                        )
+                    }
                 }
-                // Strictly head-only: hidden from volunteers, collectors and
-                // viewers alike (Rule #1). Data loads via headNow effect above.
-                if (viewModel.isHeadNow(event.id)) {
+
+                if (selectedTab == 0 || !isHead) {
+                    InviteCard(
+                        eventName = event.name,
+                        code = state.myCode,
+                        busy = busy == "code",
+                        onPublish = { viewModel.publishCode(event, user.uid) },
+                        canClose = isHead,
+                        closing = busy == "closecode",
+                        onClose = { state.myCode?.let { viewModel.closeCode(event.id, it) } }
+                    )
+                    JoinCard(
+                        code = joinCode,
+                        onCode = { joinCode = it.uppercase().filter(Char::isLetterOrDigit) },
+                        valid = isValidShareCode(joinCode),
+                        busy = busy == "join",
+                        onJoin = { viewModel.join(joinCode, user.uid) {} }
+                    )
+                    if (AccessPolicy.canApproveMembers(roleOf(state.myRole))) {
+                        ApprovalsCard(
+                            pending = pending,
+                            busyKey = busy,
+                            onRefresh = { viewModel.refreshPending(event.id) },
+                            onApprove = { member, role ->
+                                viewModel.approve(event.id, member, role, user.uid)
+                            }
+                        )
+                    }
+                } else {
                     ConnectedCountersCard(
                         team = team,
                         selfUid = user.uid,
@@ -694,41 +746,48 @@ private fun ConnectedCountersCard(
     val rows by remember(team, nowTick) {
         derivedStateOf { team.map { it to presenceOf(it.lastActiveAt, nowTick) } }
     }
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Connected team & counters (${team.size})", fontWeight = FontWeight.SemiBold)
-                OutlinedButton(onClick = onRefresh, enabled = busyKey != "team") {
-                    Text(if (busyKey == "team") "…" else "Refresh")
-                }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("Connected Counters (${team.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "Manage collector devices & live presence",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-            Text(
-                "Collectors take money & announce • Viewers audit totals only.",
-                style = MaterialTheme.typography.bodySmall
-            )
-            if (rows.isEmpty()) {
-                Text("No counters yet — share the invite code above.", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onRefresh, enabled = busyKey != "team") {
+                Text(if (busyKey == "team") "…" else "Refresh")
             }
-            rows.forEach { (member, presence) ->
-                key(member.userId) {
-                    TeamRow(
-                        member = member,
-                        presence = presence,
-                        isSelf = member.userId == selfUid,
-                        actionsEnabled = busyKey != "role:${member.userId}",
-                        onCollector = {
-                            onSetRole(member, SessionPrefs.ROLE_ORGANIZER, SessionPrefs.STATUS_ACTIVE)
-                        },
-                        onViewer = {
-                            onSetRole(member, SessionPrefs.ROLE_MEMBER, SessionPrefs.STATUS_ACTIVE)
-                        },
-                        onRevoke = { revokeTarget = member }
-                    )
-                }
+        }
+        if (rows.isEmpty()) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "No counters connected yet. Share the invite code in the Sync & Invites tab.",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+        }
+        rows.forEach { (member, presence) ->
+            key(member.userId) {
+                TeamRow(
+                    member = member,
+                    presence = presence,
+                    isSelf = member.userId == selfUid,
+                    actionsEnabled = busyKey != "role:${member.userId}",
+                    onCollector = {
+                        onSetRole(member, SessionPrefs.ROLE_ORGANIZER, SessionPrefs.STATUS_ACTIVE)
+                    },
+                    onViewer = {
+                        onSetRole(member, SessionPrefs.ROLE_MEMBER, SessionPrefs.STATUS_ACTIVE)
+                    },
+                    onRevoke = { revokeTarget = member }
+                )
             }
         }
     }
@@ -773,42 +832,53 @@ private fun TeamRow(
         MemberPresence.IDLE -> "Idle"
         MemberPresence.OFFLINE -> "Offline"
     }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            PresenceDot(presence)
-            Spacer(Modifier.size(8.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                Text(
-                    "${member.email ?: "…${member.userId.takeLast(4)}"} • $presenceLabel",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1
-                )
-            }
-            RoleBadge(role = member.role, status = member.status)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = onCollector,
-                enabled = actionsEnabled,
-                modifier = Modifier.weight(1f)
-            ) { Text("Collector", maxLines = 1) }
-            OutlinedButton(
-                onClick = onViewer,
-                enabled = actionsEnabled,
-                modifier = Modifier.weight(1f)
-            ) { Text("Viewer", maxLines = 1) }
-            if (isSelf) {
-                OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) {
-                    Text("You", maxLines = 1)
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PresenceDot(presence)
+                Spacer(Modifier.size(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                    Text(
+                        "${member.email ?: "ID: …${member.userId.takeLast(6)}"} • $presenceLabel",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
                 }
-            } else {
+                RoleBadge(role = member.role, status = member.status)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
-                    onClick = onRevoke,
+                    onClick = onCollector,
                     enabled = actionsEnabled,
                     modifier = Modifier.weight(1f)
-                ) { Text("Revoke", maxLines = 1) }
+                ) { Text("Collector", maxLines = 1) }
+                OutlinedButton(
+                    onClick = onViewer,
+                    enabled = actionsEnabled,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Viewer", maxLines = 1) }
+                if (isSelf) {
+                    OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) {
+                        Text("You", maxLines = 1)
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = onRevoke,
+                        enabled = actionsEnabled,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Revoke", maxLines = 1) }
+                }
             }
         }
     }

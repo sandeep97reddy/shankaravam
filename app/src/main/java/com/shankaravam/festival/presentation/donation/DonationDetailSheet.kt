@@ -34,6 +34,7 @@ import com.shankaravam.festival.data.local.SessionPrefs
 import com.shankaravam.festival.domain.model.Donation
 import com.shankaravam.festival.presentation.common.containerViewModel
 import com.shankaravam.festival.presentation.common.rememberContainer
+import com.shankaravam.festival.presentation.common.shareAudioViaApps
 import com.shankaravam.festival.presentation.common.shareTextViaWhatsApp
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -111,6 +112,8 @@ fun DonationDetailSheet(
             CorrectionHistory(donationId = donation.id)
 
             SinglePlayButton(donation = donation, eventName = eventName)
+
+            ShareAudioButton(donation = donation)
 
             ImportAudioButton(donation = donation)
 
@@ -205,7 +208,7 @@ private fun SinglePlayButton(donation: Donation, eventName: String) {
         },
         modifier = Modifier.fillMaxWidth()
     ) {
-        Text(if (playing) "Stop preview" else if (nativeReady) "Play announcement" else "Loading Telugu voice…")
+        Text(if (playing) "Stop preview / ఆపు" else "Play announcement / వినిపించు")
     }
 }
 
@@ -227,6 +230,39 @@ private fun WhatsAppReceiptButton(donation: Donation, eventName: String) {
         modifier = Modifier.fillMaxWidth()
     ) {
         Text("Share receipt on WhatsApp / వాట్సాప్ రసీదు")
+    }
+}
+
+/**
+ * 1-tap Audio Announcement share to WhatsApp and other apps via Android FileProvider.
+ */
+@Composable
+private fun ShareAudioButton(
+    donation: Donation,
+    viewModel: DonationDetailViewModel = containerViewModel { DonationDetailViewModel(it, donation.id) }
+) {
+    val context = LocalContext.current
+    val container = rememberContainer()
+    // Reactive on the live row: appears the moment background TTS marks READY.
+    val liveRow by viewModel.donation.collectAsState()
+    val audioTick = liveRow?.audioStatus
+    val audioFile = remember(donation.id, audioTick) {
+        container.ttsEngine.cachedFile(donation.id)
+            ?: container.ttsEngine.cachedFile(donation.id, roster = true)
+    }
+    if (audioFile != null && audioFile.exists() && audioFile.length() > 0) {
+        OutlinedButton(
+            onClick = {
+                shareAudioViaApps(
+                    context,
+                    audioFile,
+                    "Telugu Announcement - ${donation.donorName}"
+                )
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Share Audio / ఆడియో షేర్ చేయండి")
+        }
     }
 }
 

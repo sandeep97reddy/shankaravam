@@ -23,6 +23,14 @@ class DonationDetailViewModel(
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /**
+     * Live row: audioStatus flips to READY when background TTS finishes, so
+     * observers (e.g. the share-audio button) appear without reopening.
+     */
+    val donation: StateFlow<Donation?> =
+        container.donationRepository.observeById(donationId)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /**
      * Amount fix for this row: grace-window direct edit, otherwise an appended
      * Correction (the row itself is never rewritten outside the window).
      * Returns the appended correction, or null for a grace-window edit.

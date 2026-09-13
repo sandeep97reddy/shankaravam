@@ -37,15 +37,52 @@ class SessionPrefs(context: Context) {
         _counterName.value = trimmed
     }
 
+    var googleDisplayName: String?
+        get() = prefs.getString(KEY_GOOGLE_NAME, null)
+        set(value) = prefs.edit().apply {
+            if (value.isNullOrBlank()) remove(KEY_GOOGLE_NAME) else putString(KEY_GOOGLE_NAME, value.trim())
+        }.apply()
+
+    var googleEmail: String?
+        get() = prefs.getString(KEY_GOOGLE_EMAIL, null)
+        set(value) = prefs.edit().apply {
+            if (value.isNullOrBlank()) remove(KEY_GOOGLE_EMAIL) else putString(KEY_GOOGLE_EMAIL, value.trim())
+        }.apply()
+
     /**
-     * Offline attribution for every ledger row (plan P2): the one-time
-     * counter name, else a stable Counter-last4(deviceId) fallback so no
-     * row is ever blank — even if the volunteer skips the setup prompt.
+     * Attribution for every ledger row:
+     * 1. If signed in with Google: "Counter • Name (email)" or "Name (email)"
+     * 2. If signed out with counter name: "Counter Name"
+     * 3. Offline fallback: "Counter-last4(deviceId)"
      */
     fun attributionName(): String {
-        val name = _counterName.value.trim().ifBlank { prefs.getString(KEY_COUNTER, "")?.trim() ?: "" }
-        if (name.isNotBlank()) return name
-        return "Counter-${deviceId.takeLast(4)}"
+        val counter = _counterName.value.trim().ifBlank { prefs.getString(KEY_COUNTER, "")?.trim() ?: "" }
+        val gName = googleDisplayName?.takeIf { it.isNotBlank() }
+        val gEmail = googleEmail?.takeIf { it.isNotBlank() }
+
+        val userLabel = when {
+            gName != null && gEmail != null -> "$gName ($gEmail)"
+            gName != null -> gName
+            gEmail != null -> gEmail
+            else -> null
+        }
+
+        return when {
+            counter.isNotBlank() && userLabel != null -> "$counter • $userLabel"
+            counter.isNotBlank() -> counter
+            userLabel != null -> userLabel
+            else -> "Counter-${deviceId.takeLast(4)}"
+        }
+    }
+
+    /**
+     * Team-visible counter label for the presence heartbeat (no email —
+     * email/displayName travel in their own member-doc fields). Use this for
+     * every Firestore write; [attributionName] stays local-ledger-only.
+     */
+    fun rawCounterName(): String {
+        val counter = _counterName.value.trim().ifBlank { prefs.getString(KEY_COUNTER, "")?.trim() ?: "" }
+        return counter.ifBlank { "Counter-${deviceId.takeLast(4)}" }
     }
 
     fun setAppLanguage(lang: String) {
@@ -257,6 +294,8 @@ class SessionPrefs(context: Context) {
         private const val KEY_QUEUE_ROSTER_MODE = "queue_roster_mode"
         private const val KEY_TEMPLE_CHIME = "temple_chime"
         private const val KEY_QUEUE_PRESET = "queue_festival_preset"
+        private const val KEY_GOOGLE_NAME = "google_display_name"
+        private const val KEY_GOOGLE_EMAIL = "google_email"
         private const val KEY_DEVICE = "device_id"
         private const val KEY_SYNC_ENABLED = "cloud_sync_enabled"
         private const val KEY_LAST_SYNC = "last_sync_"

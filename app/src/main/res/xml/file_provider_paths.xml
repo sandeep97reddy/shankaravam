@@ -4,4 +4,6 @@
     <cache-path name="reports" path="reports/" />
     <!-- G5 expense receipts live under filesDir/receipts (WebP ~100KB). -->
     <files-path name="receipts" path="receipts/" />
+    <!-- Announcement audio clips cached under cacheDir/audio. -->
+    <cache-path name="audio" path="audio/" />
 </paths>

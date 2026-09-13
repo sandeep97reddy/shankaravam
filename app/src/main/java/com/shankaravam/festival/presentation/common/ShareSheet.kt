@@ -53,3 +53,29 @@ fun shareTextViaWhatsApp(context: Context, text: String) {
         }
     }
 }
+
+/**
+ * Shares a local audio file (.mp3) via FileProvider to WhatsApp or system chooser.
+ */
+fun shareAudioViaApps(context: Context, audioFile: java.io.File, title: String = "Announcement Audio") {
+    runCatching {
+        if (!audioFile.exists() || audioFile.length() == 0L) return
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            audioFile
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "audio/*"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, title)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            if (context !is android.app.Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val chooser = Intent.createChooser(intent, title).apply {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            if (context !is android.app.Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(chooser)
+    }
+}
