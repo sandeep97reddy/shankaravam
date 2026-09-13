@@ -47,5 +47,19 @@ interface DonationDao {
     @Query("UPDATE donations SET syncStatus = :status WHERE id = :id")
     suspend fun updateSyncState(id: String, status: String)
 
-    // No @Delete: voided rows are flagged CANCELLED, never removed (plan §16).
+    // No @Delete for ledger voids: voided rows are flagged CANCELLED, never removed (plan §16).
+    // Event-scoped deletes below exist ONLY for DeleteLocalEventUseCase, gated on
+    // isCloudEvent==false (local-only test festivals). Never call for synced events.
+
+    /** Pre-fetch for local scrub file cleanup (Step 1) — ids map to cacheDir/audio files. */
+    @Query("SELECT id FROM donations WHERE eventId = :eventId")
+    suspend fun getDonationIdsForEvent(eventId: String): List<String>
+
+    /** Display-only count for the delete confirmation dialog. */
+    @Query("SELECT COUNT(*) FROM donations WHERE eventId = :eventId")
+    suspend fun countForEvent(eventId: String): Int
+
+    /** Local-scrub only (see above). Executed inside withTransaction cascade. */
+    @Query("DELETE FROM donations WHERE eventId = :eventId")
+    suspend fun deleteForEvent(eventId: String)
 }

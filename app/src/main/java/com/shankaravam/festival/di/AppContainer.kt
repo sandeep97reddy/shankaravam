@@ -23,6 +23,7 @@ import com.shankaravam.festival.domain.repository.EventRepository
 import com.shankaravam.festival.core.export.ReportExporter
 import com.shankaravam.festival.domain.repository.ExpenseRepository
 import com.shankaravam.festival.domain.usecase.CorrectRecordUseCase
+import com.shankaravam.festival.domain.usecase.DeleteLocalEventUseCase
 import com.shankaravam.festival.domain.usecase.ObserveEventTotalsUseCase
 import com.shankaravam.festival.domain.usecase.RecordCorrectionUseCase
 import com.shankaravam.festival.domain.usecase.SaveDonationUseCase
@@ -72,6 +73,9 @@ class AppContainer(context: Context) {
     }
     val observeEventTotals: ObserveEventTotalsUseCase by lazy {
         ObserveEventTotalsUseCase(donationRepository, expenseRepository)
+    }
+    val deleteLocalEvent: DeleteLocalEventUseCase by lazy {
+        DeleteLocalEventUseCase(database, sessionPrefs, appContext)
     }
 
     // G4 audio graph. Singletons: TTS init is expensive, MediaPlayer is exclusive.

@@ -19,4 +19,8 @@ interface EventDao {
 
     @Query("UPDATE events SET status = :status, updatedAt = :now, version = version + 1 WHERE id = :id")
     suspend fun updateStatus(id: String, status: String, now: Long)
+
+    /** Local-scrub only: gated on isCloudEvent==false via DeleteLocalEventUseCase. */
+    @Query("DELETE FROM events WHERE id = :id")
+    suspend fun deleteById(id: String)
 }

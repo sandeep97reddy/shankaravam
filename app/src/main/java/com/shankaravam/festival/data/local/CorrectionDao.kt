@@ -24,5 +24,9 @@ interface CorrectionDao {
     @Query("UPDATE corrections SET syncStatus = :status WHERE id = :id")
     suspend fun updateSyncState(id: String, status: String)
 
-    // Append-only: no update, no delete.
+    // Append-only: no update, no per-row delete.
+    // Event-scoped delete exists ONLY for DeleteLocalEventUseCase, gated on
+    // isCloudEvent==false (local-only test festivals). Never call for synced events.
+    @Query("DELETE FROM corrections WHERE eventId = :eventId")
+    suspend fun deleteForEvent(eventId: String)
 }

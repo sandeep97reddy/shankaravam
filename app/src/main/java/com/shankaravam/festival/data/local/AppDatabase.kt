@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
+import androidx.room.withTransaction
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 /**
@@ -32,6 +33,21 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun expenseDao(): ExpenseDao
     abstract fun correctionDao(): CorrectionDao
     abstract fun activityDao(): ActivityDao
+
+    /**
+     * Phase 1 local-scrub cascade (Step 2). Single SQLite transaction via
+     * withTransaction — NOT @Transaction (which only works on @Dao methods).
+     * Caller must gate on prefs.isCloudEvent(eventId)==false first.
+     */
+    suspend fun deleteEventCascade(eventId: String) {
+        withTransaction {
+            donationDao().deleteForEvent(eventId)
+            expenseDao().deleteForEvent(eventId)
+            correctionDao().deleteForEvent(eventId)
+            activityDao().deleteForEvent(eventId)
+            eventDao().deleteById(eventId)
+        }
+    }
 
     companion object {
         const val NAME = "shankaravam.db"

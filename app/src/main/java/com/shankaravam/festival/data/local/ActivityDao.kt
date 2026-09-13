@@ -14,5 +14,9 @@ interface ActivityDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(entry: ActivityEntity)
 
-    // Append-only: no update, no delete.
+    // Append-only: no update, no per-row delete.
+    // Event-scoped delete exists ONLY for DeleteLocalEventUseCase, gated on
+    // isCloudEvent==false (local-only test festivals). Table is `activities`.
+    @Query("DELETE FROM activities WHERE eventId = :eventId")
+    suspend fun deleteForEvent(eventId: String)
 }

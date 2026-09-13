@@ -147,7 +147,7 @@ class SessionPrefs(context: Context) {
         set(value) = prefs.edit().putString(KEY_SPEAKER, com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(value)).apply()
 
     /**
-     * P4 Sarvam budget: 10 cloud generations per 45-min rolling window per
+     * P4 Sarvam budget: 20 cloud generations per 30-min rolling window per
      * device. Over budget → caller falls back to native TTS silently.
      */
     fun takeSarvamSlot(now: Long = System.currentTimeMillis()): Boolean {
@@ -261,6 +261,24 @@ class SessionPrefs(context: Context) {
         if (code != null) prefs.edit().remove(KEY_CODE_REV + code.uppercase()).apply()
     }
 
+    /**
+     * Phase 1 local-scrub purge (Step 4). Removes every per-event key so a
+     * deleted local festival leaves no role/status/code/sync residue.
+     * currentEventId retargeting is the caller's job (Step 5).
+     */
+    fun clearEventPrefs(eventId: String) {
+        val code = shareCodeFor(eventId)
+        with(prefs.edit()) {
+            remove(KEY_LAST_SYNC + eventId)
+            remove(KEY_STATUS + eventId)
+            remove(KEY_CLOUD + eventId)
+            remove(KEY_ROLE + eventId)
+            remove(KEY_CODE + eventId)
+            if (code != null) remove(KEY_CODE_REV + code.uppercase())
+            apply()
+        }
+    }
+
     companion object {
         private const val FILE = "shankaravam_prefs"
         private const val KEY_EVENT = "current_event_id"
@@ -276,9 +294,9 @@ class SessionPrefs(context: Context) {
         private const val KEY_SARVAM_WINDOW = "sarvam_window_start"
         private const val KEY_SARVAM_COUNT = "sarvam_window_count"
 
-        /** P4 budget: 10 Sarvam calls per 45 minutes per device. */
-        const val SARVAM_MAX_CALLS = 10
-        const val SARVAM_WINDOW_MILLIS = 45L * 60L * 1000L
+        /** P4 budget: 20 Sarvam calls per 30 minutes per device. */
+        const val SARVAM_MAX_CALLS = 20
+        const val SARVAM_WINDOW_MILLIS = 30L * 60L * 1000L
 
         /** P4 cache ceiling: 300 clips / 20 days, whichever trims first. */
         const val AUDIO_CACHE_MAX_FILES = 300

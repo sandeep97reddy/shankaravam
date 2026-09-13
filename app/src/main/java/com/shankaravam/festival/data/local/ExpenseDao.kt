@@ -27,5 +27,19 @@ interface ExpenseDao {
     @Query("UPDATE expenses SET syncStatus = :status WHERE id = :id")
     suspend fun updateSyncState(id: String, status: String)
 
-    // No @Delete: cancelled expenses stay in the ledger (plan §18).
+    // No @Delete for ledger cancels: cancelled expenses stay in the ledger (plan §18).
+    // Event-scoped deletes below exist ONLY for DeleteLocalEventUseCase, gated on
+    // isCloudEvent==false (local-only test festivals). Never call for synced events.
+
+    /** Pre-fetch for local scrub file cleanup (Step 1) — local WebP receipt paths. */
+    @Query("SELECT receiptPath FROM expenses WHERE eventId = :eventId AND receiptPath IS NOT NULL")
+    suspend fun getReceiptPathsForEvent(eventId: String): List<String>
+
+    /** Display-only count for the delete confirmation dialog. */
+    @Query("SELECT COUNT(*) FROM expenses WHERE eventId = :eventId")
+    suspend fun countForEvent(eventId: String): Int
+
+    /** Local-scrub only (see above). Executed inside withTransaction cascade. */
+    @Query("DELETE FROM expenses WHERE eventId = :eventId")
+    suspend fun deleteForEvent(eventId: String)
 }

@@ -1,5 +1,8 @@
 package com.shankaravam.festival.presentation.settings
 
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -20,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -33,6 +37,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material3.AlertDialog
@@ -58,7 +63,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import com.shankaravam.festival.presentation.common.DeveloperAttributionCard
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -114,9 +118,12 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
     data class UiState(
         val event: Event? = null,
         val role: UserRole = UserRole.ORGANIZER,
+        val isCloudEvent: Boolean = false,
         val encrypted: Boolean = false,
+        val user: com.shankaravam.festival.data.remote.CloudUser? = null,
         val cloudUser: String? = null,
         val cloudEmail: String? = null,
+        val isAuthConfigured: Boolean = false,
         val hasSarvamKey: Boolean = false
     )
 
@@ -131,8 +138,10 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
                 ) { user, _ ->
                     UiState(
                         encrypted = container.secureKeys.isEncrypted,
+                        user = user,
                         cloudUser = user?.uid,
                         cloudEmail = user?.email,
+                        isAuthConfigured = container.authRepository.isConfigured,
                         hasSarvamKey = container.secureKeys.getSarvamKey().isNotBlank()
                     )
                 }
@@ -145,14 +154,54 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
                     UiState(
                         event = event,
                         role = roleOf(container.sessionPrefs.myRole(eventId)),
+                        isCloudEvent = container.sessionPrefs.isCloudEvent(eventId),
                         encrypted = container.secureKeys.isEncrypted,
+                        user = user,
                         cloudUser = user?.uid,
                         cloudEmail = user?.email,
+                        isAuthConfigured = container.authRepository.isConfigured,
                         hasSarvamKey = container.secureKeys.getSarvamKey().isNotBlank()
                     )
                 }
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UiState())
+
+    val isAuthConfigured: Boolean
+        get() = container.authRepository.isConfigured
+
+    private val _signInIntent = MutableStateFlow<Intent?>(null)
+    val signInIntent: StateFlow<Intent?> = _signInIntent.asStateFlow()
+
+    fun signIn() {
+        when (val result = container.authRepository.googleSignInIntent()) {
+            is Outcome.Ok -> _signInIntent.value = result.value
+            is Outcome.Err -> _notice.value = result.message
+        }
+    }
+
+    fun consumeSignInIntent() {
+        _signInIntent.value = null
+    }
+
+    fun completeSignIn(data: Intent?) {
+        viewModelScope.launch {
+            _busy.value = true
+            when (val result = container.authRepository.handleSignInResult(data)) {
+                is Outcome.Ok -> {
+                    keyTick.value += 1
+                    _notice.value = "Signed in as ${result.value.displayName ?: result.value.email}."
+                }
+                is Outcome.Err -> _notice.value = result.message
+            }
+            _busy.value = false
+        }
+    }
+
+    fun signOut() {
+        container.authRepository.signOut()
+        keyTick.value += 1
+        _notice.value = "Signed out of Google account."
+    }
 
     fun getSavedSarvamKey(): String = container.secureKeys.getSarvamKey()
     fun getSavedSarvamSpeaker(): String = container.sessionPrefs.sarvamSpeaker
@@ -224,7 +273,7 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
     fun pushKey(key: String, speaker: String) {
         val uid = container.authRepository.user.value?.uid
         if (uid == null) {
-            _notice.value = "Sign in first (Cloud sync screen)."
+            _notice.value = "Sign in first using Google Account above."
             return
         }
         viewModelScope.launch {
@@ -270,7 +319,7 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
         }
         if (_testingSarvam.value) return // debounce: a test is already running
         if (!container.sessionPrefs.takeSarvamSlot()) {
-            _sarvamTestStatus.value = "✗ Free-tier limit reached (10 Sarvam calls per 45 min). Try later — offline voice still works."
+            _sarvamTestStatus.value = "✗ Free-tier limit reached (20 Sarvam calls per 30 min). Try later — offline voice still works."
             return
         }
         viewModelScope.launch {
@@ -332,6 +381,26 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
             _notice.value = "“${event.name}” closed — records stay readable, new entries stop."
         }
     }
+
+    private val _deleting = MutableStateFlow(false)
+    val deleting: StateFlow<Boolean> = _deleting.asStateFlow()
+
+    /** Display-only counts for the delete confirmation dialog. */
+    suspend fun getDeleteCounts(eventId: String): Pair<Int, Int> =
+        container.deleteLocalEvent.getCounts(eventId)
+
+    /** Phase 3 local scrub. Use-case re-gates isCloudEvent; notice surfaces the result. */
+    fun deleteLocalEvent(event: Event) {
+        if (_deleting.value) return
+        viewModelScope.launch {
+            _deleting.value = true
+            when (val result = container.deleteLocalEvent(event.id)) {
+                is Outcome.Ok -> _notice.value = "“${event.name}” and its records were deleted from this device."
+                is Outcome.Err -> _notice.value = result.message
+            }
+            _deleting.value = false
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -352,8 +421,30 @@ fun AdminSettingsScreen(
     val teluguVoices by viewModel.nativeVoices.collectAsState()
     val sarvamTestStatus by viewModel.sarvamTestStatus.collectAsState()
     val testingSarvam by viewModel.testingSarvam.collectAsState()
+    val signInIntent by viewModel.signInIntent.collectAsState()
+    val deleting by viewModel.deleting.collectAsState()
+
+    val signInLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result -> viewModel.completeSignIn(result.data) }
+
+    LaunchedEffect(signInIntent) {
+        signInIntent?.let {
+            signInLauncher.launch(it)
+            viewModel.consumeSignInIntent()
+        }
+    }
 
     var showCloseConfirm by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var deleteCounts by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+
+    LaunchedEffect(showDeleteConfirm, state.event?.id) {
+        if (showDeleteConfirm) {
+            deleteCounts = null
+            state.event?.let { deleteCounts = viewModel.getDeleteCounts(it.id) }
+        }
+    }
 
     // Hoisted draft state for form fields so collapsing accordion does NOT discard input
     var counterDraft by remember(counterName) { mutableStateOf(counterName) }
@@ -398,7 +489,17 @@ fun AdminSettingsScreen(
                 onSelectLanguage = { viewModel.setLanguage(it) }
             )
 
-            // 2. Role & Storage Security Status Banner
+            // 2. Google Account (Direct authentication & committee identity)
+            GoogleAccountCard(
+                user = state.user,
+                isConfigured = state.isAuthConfigured,
+                currentLang = currentLang,
+                busy = busy,
+                onSignIn = { viewModel.signIn() },
+                onSignOut = { viewModel.signOut() }
+            )
+
+            // 3. Role & Storage Security Status Banner
             val isHeadAdmin = state.role == UserRole.GLOBAL_HEAD
                 && AdminConfig.isGlobalHeadEmail(state.cloudEmail)
             Surface(
@@ -581,16 +682,15 @@ fun AdminSettingsScreen(
                 ) {
                     FestivalAdminContent(
                         event = event,
-                        onRequestClose = { showCloseConfirm = true }
+                        isCloudEvent = state.isCloudEvent,
+                        deleting = deleting,
+                        onRequestClose = { showCloseConfirm = true },
+                        onRequestDelete = { showDeleteConfirm = true }
                     )
                 }
             }
 
-            // Developer & Designer Attribution Card
-            DeveloperAttributionCard(
-                currentLang = currentLang,
-                modifier = Modifier.padding(top = 8.dp, bottom = 16.dp)
-            )
+            Spacer(Modifier.height(16.dp))
         }
     }
 
@@ -626,6 +726,52 @@ fun AdminSettingsScreen(
             dismissButton = {
                 TextButton(onClick = { showCloseConfirm = false }) {
                     Text(if (currentLang == SessionPrefs.LANG_TELUGU) "రద్దు చేయి" else "Keep Open")
+                }
+            }
+        )
+    }
+
+    if (showDeleteConfirm && state.event != null && !state.isCloudEvent) {
+        val counts = deleteCounts
+        AlertDialog(
+            onDismissRequest = { if (!deleting) showDeleteConfirm = false },
+            title = {
+                Text(
+                    text = if (currentLang == SessionPrefs.LANG_TELUGU) "స్థానిక ఈవెంట్‌ను తొలగించాలా?" else "Delete local festival?",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = when {
+                        counts == null -> if (currentLang == SessionPrefs.LANG_TELUGU) "రికార్డులు లెక్కిస్తోంది…" else "Counting records…"
+                        counts.first == 0 && counts.second == 0 ->
+                            if (currentLang == SessionPrefs.LANG_TELUGU) "ఈ ఈవెంట్‌లో విరాళాలు లేదా ఖర్చులు లేవు. ఇది వెంటనే ఈ పరికరం నుండి తొలగించబడుతుంది."
+                            else "This event has no donations or expenses recorded. It will be removed immediately from this device."
+                        else ->
+                            if (currentLang == SessionPrefs.LANG_TELUGU) "⚠️ హెచ్చరిక: ఈ ఉత్సవంలో ${counts.first} విరాళాలు మరియు ${counts.second} ఖర్చులు ఉన్నాయి. దీన్ని తొలగిస్తే ఈ ఫోన్ నుండి అన్ని లావాదేవీలు మరియు ఆడియో ఫైళ్లు శాశ్వతంగా తొలగిపోతాయి."
+                            else "⚠️ WARNING: This festival contains ${counts.first} donations and ${counts.second} expenses. Deleting it will permanently remove all transactions and audio files from this phone."
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        state.event?.let { viewModel.deleteLocalEvent(it) }
+                        showDeleteConfirm = false
+                    },
+                    enabled = !deleting
+                ) {
+                    Text(
+                        if (currentLang == SessionPrefs.LANG_TELUGU) "పూర్తిగా తొలగించు" else "Delete Everything",
+                        color = CrimsonRose,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }, enabled = !deleting) {
+                    Text(if (currentLang == SessionPrefs.LANG_TELUGU) "రద్దు చేయి" else "Cancel")
                 }
             }
         )
@@ -796,6 +942,169 @@ private fun LanguageSelectionCard(
                     onClick = { onSelectLanguage(SessionPrefs.LANG_TELUGU) },
                     label = { Text("తెలుగు (Telugu)", fontWeight = FontWeight.SemiBold) }
                 )
+            }
+        }
+    }
+}
+
+/** Prominent Google Account Authentication & Committee Identity Card. */
+@Composable
+private fun GoogleAccountCard(
+    user: com.shankaravam.festival.data.remote.CloudUser?,
+    isConfigured: Boolean,
+    currentLang: String,
+    busy: Boolean,
+    onSignIn: () -> Unit,
+    onSignOut: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    OutlinedCard(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        border = CardDefaults.outlinedCardBorder()
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(SaffronWash)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Person,
+                        contentDescription = null,
+                        tint = TempleSaffron,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (currentLang == SessionPrefs.LANG_TELUGU) "గూగుల్ ఖాతా" else "Google Account",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = if (user != null) {
+                            if (currentLang == SessionPrefs.LANG_TELUGU) "ఖాతా అనుసంధానమైంది" else "Account Connected"
+                        } else {
+                            if (currentLang == SessionPrefs.LANG_TELUGU) "ఆఫ్‌లైన్ మోడ్ (లాగిన్ కాలేదు)" else "Offline Mode (Not signed in)"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (!isConfigured) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = if (currentLang == SessionPrefs.LANG_TELUGU)
+                            "క్లౌడ్ సర్వీసులు కాన్ఫిగర్ చేయబడలేదు. యాప్ 100% ఆఫ్‌లైన్‌లో సురక్షితంగా పనిచేస్తుంది."
+                        else
+                            "Cloud services not configured. App runs 100% offline securely.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+            } else if (user == null) {
+                Text(
+                    text = if (currentLang == SessionPrefs.LANG_TELUGU)
+                        "గూగుల్ ఖాతాతో లాగిన్ అవ్వడం ద్వారా క్లౌడ్ వాయిస్ కీలు మరియు ఇతర కౌంటర్లతో సమకాలీకరణ పొందవచ్చు."
+                    else
+                        "Sign in to synchronize multi-counter data and share cloud voice settings with your festival committee.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(
+                    onClick = onSignIn,
+                    enabled = !busy,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = TempleSaffron),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = if (busy) {
+                            if (currentLang == SessionPrefs.LANG_TELUGU) "లాగిన్ అవుతోంది…" else "Signing in…"
+                        } else {
+                            if (currentLang == SessionPrefs.LANG_TELUGU) "గూగుల్‌తో సైన్ ఇన్ చేయండి" else "Sign in with Google"
+                        },
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(TempleSaffron.copy(alpha = 0.2f))
+                        ) {
+                            Text(
+                                text = (user.displayName ?: user.email ?: "U").take(1).uppercase(),
+                                fontWeight = FontWeight.Bold,
+                                color = TempleSaffron,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = user.displayName ?: if (currentLang == SessionPrefs.LANG_TELUGU) "వినియోగదారుడు" else "User",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            user.email?.let { email ->
+                                Text(
+                                    text = email,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = onSignOut,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = if (currentLang == SessionPrefs.LANG_TELUGU) "లాగౌట్ చేయండి" else "Sign Out",
+                        color = CrimsonRose,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
         }
     }
@@ -1119,11 +1428,14 @@ private fun VoiceKeyContent(
     }
 }
 
-/** Festival Administration content for closing the active festival ledger. */
+/** Festival Administration: close ledger + local-only delete (cloud events show guidance only). */
 @Composable
 private fun FestivalAdminContent(
     event: Event,
-    onRequestClose: () -> Unit
+    isCloudEvent: Boolean,
+    deleting: Boolean,
+    onRequestClose: () -> Unit,
+    onRequestDelete: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
@@ -1147,6 +1459,33 @@ private fun FestivalAdminContent(
                 text = if (event.status.name == "ACTIVE") "Close “${event.name}”" else "Event Closed (Read-Only)",
                 fontWeight = FontWeight.Bold
             )
+        }
+        if (isCloudEvent) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "☁️ Multi-Counter Cloud Event: Synced festivals cannot be deleted on-device to prevent desynchronizing other counters. Use Close Festival to lock entries, or delete the collection in Firebase Console.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        } else {
+            OutlinedButton(
+                onClick = onRequestDelete,
+                enabled = !deleting,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "Delete Local Festival / ఈ స్థానిక ఈవెంట్‌ను తొలగించండి",
+                    color = CrimsonRose,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
