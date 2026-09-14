@@ -23,8 +23,9 @@ import kotlinx.coroutines.launch
  * user is signed in AND sync is on, three ledger listeners
  * (donations/expenses/corrections, all watermark-filtered) push deltas into
  * Room in ~1s, plus an own-seat listener that learns approve/revoke
- * instantly (the seat-first deadlock fix, live). Everything detaches on
- * background — zero radio, zero reads while away.
+ * instantly (the seat-first deadlock fix, live) and an event-header
+ * listener that learns rename/closure instantly (Gap-3). Everything
+ * detaches on background — zero radio, zero reads while away.
  *
  * Cost control: listeners are billed per changed doc only; idle holds are
  * free. Presence writes stay on the periodic path — never from snapshot
@@ -45,6 +46,7 @@ class ForegroundSyncManager(
     @Volatile private var foreground = false
     private var attachedEvent: String? = null
     private var seatReg: ListenerRegistration? = null
+    private var eventReg: ListenerRegistration? = null
     private var ledgerRegs = listOf<ListenerRegistration>()
     private var gateJob: Job? = null
 
@@ -103,6 +105,13 @@ class ForegroundSyncManager(
                     }
                 }
             val since = (prefs.lastSyncMillis(eventId) - SYNC_FUDGE_MILLIS).coerceAtLeast(0L)
+            // Gap-3: event header (rename/closure) streams in ~1s. Read-only
+            // into Room via the shared newer-wins ingest — Room writes never
+            // echo back to Firestore, so no write loop is possible.
+            eventReg = eventRef.addSnapshotListener { snap, _ ->
+                val data = snap?.data ?: return@addSnapshotListener
+                scope.launch { runCatching { syncService.ingestEventHeader(eventId, data) } }
+            }
             ledgerRegs += eventRef.collection("donations")
                 .whereGreaterThan("updatedAt", since)
                 .addSnapshotListener { snap, err ->
@@ -159,6 +168,8 @@ class ForegroundSyncManager(
         detachLedger()
         runCatching { seatReg?.remove() }
         seatReg = null
+        runCatching { eventReg?.remove() }
+        eventReg = null
         attachedEvent = null
         _seat.value = null
     }

@@ -161,8 +161,9 @@ class ExpenseEntryViewModel(private val container: AppContainer) : ViewModel() {
                     is Outcome.Err -> it.copy(saveState = ExpenseSaveState.Error(result.message))
                 }
             }
-            // F3 immediate upload leg (see DonationEntryViewModel).
-            if (result is Outcome.Ok && container.sessionPrefs.cloudSyncEnabled) {
+            // F3 immediate upload leg (see DonationEntryViewModel; Gap-1
+            // isCloudEvent gate keeps unpublished events offline).
+            if (result is Outcome.Ok && container.sessionPrefs.cloudSyncEnabled && container.sessionPrefs.isCloudEvent(eventId)) {
                 launch { runCatching { container.syncService.syncEvent(eventId) } }
             }
         }

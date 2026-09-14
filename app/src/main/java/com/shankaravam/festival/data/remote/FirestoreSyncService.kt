@@ -33,6 +33,13 @@ const val SYNC_FUDGE_MILLIS: Long = 120_000L
 const val VOICE_PULL_THROTTLE_MILLIS: Long = 15L * 60L * 1000L
 
 /**
+ * Gap-2 batch ceiling: Firestore WriteBatch caps at 500 writes. 400 leaves
+ * headroom while collapsing dozens of pandal-cellular round trips into one
+ * commit per chunk. Pure chunking via Kotlin `chunked`, unit-testable.
+ */
+const val UPLOAD_BATCH_CHUNK: Int = 400
+
+/**
  * F3 push stamp (pure + unit-tested): offline rows carry stale `updatedAt`
  * that peers' watermarks would skip forever ("worked yesterday, dead today").
  * Stamping `max(local, now)` at cloud entry guarantees every peer syncing
@@ -95,6 +102,14 @@ class FirestoreSyncService(
             // the isEventCreator rules path (creator bootstrap).
             val me = runCatching { Firebase.auth.currentUser }.getOrNull()
                 ?: return@withContext SyncOutcome.Blocked("Sign in to sync — entries stay on this device.")
+            // Gap-1 gate: unpublished local events never touch cloud, even
+            // with global sync ON. Only publishShareCode/requestToJoin set
+            // the cloud flag — this preserves explicit-publish and stops
+            // both silent auto-publish (creator path) and PERMISSION_DENIED
+            // retry churn (offline-created path). Blocked, never Failed.
+            if (!prefs.isCloudEvent(eventId)) {
+                return@withContext SyncOutcome.Blocked("Publish the invite to sync this festival — entries stay on this device.")
+            }
             var seatRole: String? = null
             var seatStatus: String? = null
             var seatApprovedBy = ""
@@ -123,39 +138,90 @@ class FirestoreSyncService(
             var downloaded = 0
             var conflicts = 0
             val eventRef = events().document(eventId)
+            val deviceTag = prefs.deviceId.takeLast(4).uppercase()
 
-            // Event header (merge — never wipe fields another device owns).
-            runCatching {
-                val local = database.eventDao().observeEvent(eventId).first()
-                if (local != null) {
-                    eventRef.set(FirestoreMappers.eventToMap(local), SetOptions.merge()).await()
+            // Gap-2 batched uploads: snapshot pending rows once, precompute
+            // push stamps (F3 max(local,now) so peers' watermarks can't skip
+            // offline rows), then commit in ≤400-op WriteBatches. One chunk =
+            // one round trip instead of one per row on pandal cellular.
+            // Room rows are marked SYNCED only AFTER their chunk commits, so
+            // a mid-sync failure resumes cleanly (committed chunks stay
+            // SYNCED, the rest stay PENDING). Ledger docs use merge (not
+            // overwrite) so P4 audioMeta keys stamped via merge-write survive
+            // a ledger re-upload. Failure throws to the outer catch → Failed
+            // → existing exponential-backoff retry.
+            val donationOps = database.donationDao().pendingSyncForEvent(eventId).map { row ->
+                val stamp = stampForPush(row.updatedAt)
+                Triple(
+                    eventRef.collection("donations").document(row.id),
+                    FirestoreMappers.donationToMap(row.copy(updatedAt = stamp), deviceTag),
+                    Pair(row.id, stamp)
+                )
+            }
+            val expenseOps = database.expenseDao().pendingSyncForEvent(eventId).map { row ->
+                val stamp = stampForPush(row.updatedAt)
+                Triple(
+                    eventRef.collection("expenses").document(row.id),
+                    FirestoreMappers.expenseToMap(row.copy(updatedAt = stamp), deviceTag),
+                    Pair(row.id, stamp)
+                )
+            }
+            val correctionOps = database.correctionDao().pendingSyncForEvent(eventId).map { row ->
+                eventRef.collection("corrections").document(row.id) to
+                    FirestoreMappers.correctionToMap(row)
+            }
+            val headerMap = runCatching {
+                database.eventDao().observeEvent(eventId).first()?.let { FirestoreMappers.eventToMap(it) }
+            }.getOrNull()
+            // Event header commits ALONE and best-effort (pre-batch
+            // semantics): a header denial (e.g. viewer role) must never fail
+            // the ledger chunks below — ledger failure still throws → Failed
+            // → backoff retry, exactly as before.
+            if (headerMap != null) {
+                runCatching {
+                    Firebase.firestore.batch()
+                        .set(eventRef, headerMap, SetOptions.merge())
+                        .commit().await()
                 }
             }
-
-            // Uploads: push-stamped (F3) + mirrored locally, event-scoped (P0).
-            database.donationDao().pendingSyncForEvent(eventId).forEach { row ->
-                val stamp = stampForPush(row.updatedAt)
-                eventRef.collection("donations").document(row.id)
-                    .set(FirestoreMappers.donationToMap(row.copy(updatedAt = stamp), prefs.deviceId.takeLast(4).uppercase())).await()
-                database.donationDao().markSynced(row.id, SyncStatus.SYNCED.name, stamp)
-                uploaded++
+            data class BatchOp(
+                val ref: com.google.firebase.firestore.DocumentReference,
+                val data: Map<String, Any?>,
+                val merge: Boolean,
+                val mark: (suspend () -> Unit)? = null
+            )
+            val ledgerOps = donationOps.map { (ref, map, idStamp) ->
+                BatchOp(ref, map, merge = true) {
+                    database.donationDao().markSynced(idStamp.first, SyncStatus.SYNCED.name, idStamp.second)
+                }
+            } + expenseOps.map { (ref, map, idStamp) ->
+                BatchOp(ref, map, merge = true) {
+                    database.expenseDao().markSynced(idStamp.first, SyncStatus.SYNCED.name, idStamp.second)
+                }
+            } + correctionOps.map { (ref, map) ->
+                val id = ref.id
+                BatchOp(ref, map, merge = true) {
+                    database.correctionDao().updateSyncState(id, SyncStatus.SYNCED.name)
+                }
             }
-            database.expenseDao().pendingSyncForEvent(eventId).forEach { row ->
-                val stamp = stampForPush(row.updatedAt)
-                eventRef.collection("expenses").document(row.id)
-                    .set(FirestoreMappers.expenseToMap(row.copy(updatedAt = stamp), prefs.deviceId.takeLast(4).uppercase())).await()
-                database.expenseDao().markSynced(row.id, SyncStatus.SYNCED.name, stamp)
-                uploaded++
-            }
-            database.correctionDao().pendingSyncForEvent(eventId).forEach { row ->
-                eventRef.collection("corrections").document(row.id)
-                    .set(FirestoreMappers.correctionToMap(row)).await()
-                database.correctionDao().updateSyncState(row.id, SyncStatus.SYNCED.name)
-                uploaded++
+            ledgerOps.chunked(UPLOAD_BATCH_CHUNK).forEach { chunk ->
+                val batch = Firebase.firestore.batch()
+                for (op in chunk) {
+                    if (op.merge) batch.set(op.ref, op.data, SetOptions.merge())
+                    else batch.set(op.ref, op.data)
+                }
+                batch.commit().await()
+                for (op in chunk) {
+                    op.mark?.invoke()
+                    if (op.mark != null) uploaded++
+                }
             }
 
             // Downloads share one ingest path with the foreground listener.
             val since = (prefs.lastSyncMillis(eventId) - SYNC_FUDGE_MILLIS).coerceAtLeast(0L)
+            // Header first (Gap-3): renames/closures must land before ledger
+            // rows render. Best-effort — never fails the ledger sync.
+            downloaded += runCatching { pullEventHeader(eventRef, eventId) }.getOrDefault(0)
             downloaded += pullDonations(eventRef, eventId, since).also { conflicts += it.second }.first
             downloaded += pullExpenses(eventRef, eventId, since).also { conflicts += it.second }.first
             // Corrections (F3: previously upload-only — peers never got them).
@@ -255,6 +321,47 @@ class FirestoreSyncService(
         eventId,
         eventRef.collection("corrections").whereGreaterThan("createdAt", since).get().await().documents
     )
+
+    /**
+     * Gap-3 header pull (periodic/immediate path): fetches the single event
+     * doc and funnels through [ingestEventHeader]. Returns 1 when applied,
+     * 0 otherwise. Never throws — callers wrap in runCatching anyway.
+     */
+    private suspend fun pullEventHeader(
+        eventRef: com.google.firebase.firestore.DocumentReference,
+        eventId: String
+    ): Int {
+        val data = eventRef.get().await().data ?: return 0
+        return if (ingestEventHeader(eventId, data)) 1 else 0
+    }
+
+    /**
+     * Gap-3 shared header ingest: identical newer-wins rule for the periodic
+     * pull and the foreground listener. Header conflicts resolve by
+     * `updatedAt` (last-writer-wins is acceptable for a name/status rename —
+     * money rows keep their CONFLICT flow, untouched). Local-only columns
+     * (`creatorId`, `deviceId`, `defaultLanguage`) that [FirestoreMappers]
+     * zeroes on download are preserved; `version` never rewinds. Returns
+     * true when Room was updated. Never throws.
+     */
+    suspend fun ingestEventHeader(eventId: String, data: Map<String, Any?>): Boolean {
+        val remote = FirestoreMappers.eventFromMap(eventId, data) ?: return false
+        val local = database.eventDao().observeEvent(eventId).first()
+        if (local == null) {
+            database.eventDao().upsert(remote)
+            return true
+        }
+        if (remote.updatedAt <= local.updatedAt) return false
+        database.eventDao().upsert(
+            remote.copy(
+                creatorId = local.creatorId,
+                deviceId = local.deviceId,
+                defaultLanguage = local.defaultLanguage,
+                version = maxOf(local.version, remote.version)
+            )
+        )
+        return true
+    }
 
     /**
      * F3 shared ingest: identical upsert/conflict rules for the periodic pull

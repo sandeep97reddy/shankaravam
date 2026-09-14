@@ -167,10 +167,12 @@ class DonationEntryViewModel(private val container: AppContainer) : ViewModel() 
                         it.copy(saveState = SaveState.Error(result.message))
                 }
             }
-            // F3 immediate upload leg: while sync is on, push now (direct call,
-            // not the Worker queue) so peers' foreground listeners fire in
-            // ~seconds. Seat-first syncEvent makes this safe for pending/viewers.
-            if (result is com.shankaravam.festival.core.util.Outcome.Ok && prefs.cloudSyncEnabled) {
+            // F3 immediate upload leg: while sync is on AND this event is
+            // cloud-published, push now (direct call, not the Worker queue)
+            // so peers' foreground listeners fire in ~seconds. Seat-first
+            // syncEvent makes this safe for pending/viewers; the isCloudEvent
+            // gate keeps unpublished local events fully offline (Gap-1).
+            if (result is com.shankaravam.festival.core.util.Outcome.Ok && prefs.cloudSyncEnabled && prefs.isCloudEvent(eventId)) {
                 launch { runCatching { container.syncService.syncEvent(eventId) } }
             }
         }

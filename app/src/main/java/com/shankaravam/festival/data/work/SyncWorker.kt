@@ -31,6 +31,9 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
         val eventId = inputData.getString(KEY_EVENT_ID)
             ?: container.sessionPrefs.currentEventId.value
             ?: return Result.success()
+        // Gap-1 gate: unpublished local events never wake the radio, even
+        // with global sync ON. syncEvent() re-checks this defense-in-depth.
+        if (!container.sessionPrefs.isCloudEvent(eventId)) return Result.success()
         return when (container.syncService.syncEvent(eventId)) {
             // F3: Blocked (pending/revoked/signed-out) succeeds quietly — the
             // Settings screen surfaces it; retrying PERMISSION_DENIED hot-loops.
