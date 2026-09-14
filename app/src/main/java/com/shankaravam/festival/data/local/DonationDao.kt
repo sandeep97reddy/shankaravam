@@ -43,11 +43,15 @@ interface DonationDao {
     suspend fun updateStatus(id: String, status: String, now: Long)
 
     /**
-     * G4 audio-cache bookkeeping. Deliberately bumps neither version nor
-     * syncStatus — cached audio is a local derived artifact, not ledger content.
+     * G4 audio-cache bookkeeping. Touches ONLY audioStatus — deliberately bumps
+     * neither version, syncStatus (local artifact, not ledger content) NOR
+     * updatedAt (T0.3: the old `updatedAt = :now` defeated `isRemoteNewer` and
+     * smeared audio timing into ledger timestamps uploaded via stampForPush).
+     * The timestamp parameter is gone entirely (not just unused) so no caller
+     * can smuggle time into this write — the compiler enforces it.
      */
-    @Query("UPDATE donations SET audioStatus = :status, updatedAt = :now WHERE id = :id")
-    suspend fun updateAudioStatus(id: String, status: String, now: Long)
+    @Query("UPDATE donations SET audioStatus = :status WHERE id = :id")
+    suspend fun updateAudioStatus(id: String, status: String)
 
     /**
      * G6 sync bookkeeping. Uploading a row never bumps version — the version

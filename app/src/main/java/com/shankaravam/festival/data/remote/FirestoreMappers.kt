@@ -11,6 +11,8 @@ import com.shankaravam.festival.data.local.ExpenseEntity
  * the Firebase SDK, and delta queries compare plain numbers.
  *
  * Audio cache paths and Sarvam keys NEVER enter these maps (Rule #2).
+ * Phase-3 receipts: only the gateway *path* (`receiptUrl`) travels — receipt
+ * bytes and local file paths never leave the device.
  */
 object FirestoreMappers {
 
@@ -78,6 +80,7 @@ object FirestoreMappers {
         "paidBy" to e.paidBy,
         "paymentMethod" to e.paymentMethod,
         "vendor" to e.vendor,
+        "receiptUrl" to e.receiptUrl,
         "addedBy" to e.addedBy,
         // F4 privacy: last-4 install tag only (see donationToMap).
         "deviceTag" to deviceTag,
@@ -101,6 +104,7 @@ object FirestoreMappers {
             vendor = map["vendor"] as? String,
             notes = null,
             receiptPath = null,
+            receiptUrl = map["receiptUrl"] as? String,
             addedBy = map["addedBy"] as? String ?: "",
             addedTime = (map["createdAt"] as? Number)?.toLong() ?: 0L,
             createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
@@ -189,6 +193,11 @@ object FirestoreMappers {
      * written by another device, and `joinedAt` is omitted when null so
      * approvals preserve the original join order. Full deviceIds are never
      * accepted here — callers pass the last-4 `deviceTag`.
+     *
+     * `viaCode` binds a join to its invite: requestToJoin stamps the normalized
+     * 6-char code so firestore.rules can verify the code is live (status +
+     * expiry + event match) server-side. Omitted everywhere else (presence,
+     * approvals) — merge-write preserves the original stamp for audit.
      */
     fun memberToMap(
         role: String,
@@ -199,7 +208,8 @@ object FirestoreMappers {
         displayName: String? = null,
         counterName: String? = null,
         deviceTag: String? = null,
-        lastActiveAt: Long? = null
+        lastActiveAt: Long? = null,
+        viaCode: String? = null
     ): Map<String, Any?> = buildMap {
         put("role", role)
         put("status", status)
@@ -210,6 +220,7 @@ object FirestoreMappers {
         counterName?.takeIf { it.isNotBlank() }?.let { put("counterName", it) }
         deviceTag?.takeIf { it.isNotBlank() }?.let { put("deviceTag", it) }
         if (lastActiveAt != null && lastActiveAt > 0L) put("lastActiveAt", lastActiveAt)
+        viaCode?.takeIf { it.isNotBlank() }?.let { put("viaCode", it.trim().uppercase()) }
     }
 
     /**

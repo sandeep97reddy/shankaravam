@@ -7,18 +7,18 @@ import com.shankaravam.festival.core.audio.AudioRoute
 import com.shankaravam.festival.core.tts.AnnouncementLanguage
 import com.shankaravam.festival.core.tts.ClipDonor
 import com.shankaravam.festival.core.tts.FestivalPreset
-import com.shankaravam.festival.core.tts.audioHashFor
 import com.shankaravam.festival.core.tts.buildClosingAnnouncement
-import com.shankaravam.festival.core.tts.buildDonationAnnouncement
 import com.shankaravam.festival.core.tts.buildOpeningAnnouncement
-import com.shankaravam.festival.core.tts.buildRosterItemAnnouncement
 import com.shankaravam.festival.core.tts.matchRosterClips
 import com.shankaravam.festival.core.tts.presetForEventName
 import com.shankaravam.festival.data.local.SessionPrefs
 import com.shankaravam.festival.di.AppContainer
+import com.shankaravam.festival.domain.model.Correction
 import com.shankaravam.festival.domain.model.Donation
 import com.shankaravam.festival.domain.model.DonationStatus
 import com.shankaravam.festival.domain.model.Event
+import com.shankaravam.festival.domain.model.effectiveDonationAmount
+import com.shankaravam.festival.domain.model.groupCorrectionsByTarget
 import com.shankaravam.festival.presentation.donation.DonationListViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -51,7 +51,7 @@ data class QueueUiState(
     val rosterMode: Boolean = true,
     val festivalPreset: String = "VINAYAKA_CHAVITHI",
     val festivalPresetAuto: Boolean = false,
-    val gapSeconds: Int = 5,
+    val gapSeconds: Int = 2,
     val sort: String = SessionPrefs.SORT_NEWEST,
     val language: String = SessionPrefs.LANG_TELUGU,
     val showPledged: Boolean = false,
@@ -80,8 +80,8 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
     private val detector = container.routeDetector
     private val donationRepo = container.donationRepository
     private val eventRepo = container.eventRepository
+    private val correctionRepo = container.correctionRepository
     private val secureKeys = container.secureKeys
-    private val syncService = container.syncService
 
     private val sort = MutableStateFlow(prefs.queueSort)
     private val language = MutableStateFlow(prefs.queueLanguage)
@@ -132,11 +132,28 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
     init {
         detector.start()
         prefetchWhenIdle()
+        observeCorrectionsSnapshot()
         // A new event gets a fresh auto-detected intro; manual picks don't leak across events.
         viewModelScope.launch {
             prefs.currentEventId.collect { presetOverride.value = null }
         }
     }
+
+    /** T0.2: keeps [correctionsSnapshot] fresh for speech text (never blocks UI). */
+    private fun observeCorrectionsSnapshot() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            prefs.currentEventId.flatMapLatest { eventId ->
+                if (eventId == null) flowOf(emptyList())
+                else correctionRepo.observeForEvent(eventId)
+            }.collect { correctionsSnapshot.value = groupCorrectionsByTarget(it) }
+        }
+    }
+
+    /** T0.2: post-correction spoken figure for [donation] (raw row when no log). */
+    private fun effectiveOf(donation: Donation): Double =
+        effectiveDonationAmount(donation, correctionsSnapshot.value[donation.id].orEmpty())
+
+
 
     override fun onCleared() {
         stop()
@@ -158,9 +175,20 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
     private data class PrefetchInputs(
         val event: Event?,
         val donations: List<Donation>,
-        val speaker: String,
-        val mode: com.shankaravam.festival.domain.model.VoiceEngineMode
+        val corrections: List<Correction> = emptyList(),
+        val speaker: String = "",
+        val mode: com.shankaravam.festival.domain.model.VoiceEngineMode =
+            com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD
     )
+
+    /**
+     * T0.2 effective-amount snapshot for the imperative playback path
+     * ([playSequence] reads `uiState.value`, which carries raw ledger rows).
+     * Kept fresh by [observeCorrectionsSnapshot]; prefetch reads its own
+     * combined corrections instead so a new correction re-runs the pass.
+     */
+    private val correctionsSnapshot =
+        MutableStateFlow<Map<String, List<Correction>>>(emptyMap())
 
     private data class PlayOpts(
         val index: Int,
@@ -501,7 +529,9 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
             // Speak the donation row in the ACTIVE speaker (Phase 1: the engine
             // resolves via its provider, but passing explicitly documents the
             // contract and survives any wiring lapse).
+            // T0.2: speech uses the effective (post-correction) figure.
             val activeSpeaker = prefs.sarvamSpeaker
+            val effective = effectiveOf(item)
             kotlinx.coroutines.suspendCancellableCoroutine { cont ->
                 if (state.rosterMode) {
                     engine.playRosterItem(
@@ -509,7 +539,8 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                         languageOf(),
                         onDone = { if (cont.isActive) cont.resume(Unit) {} },
                         onError = { if (cont.isActive) cont.resume(Unit) {} },
-                        speaker = activeSpeaker
+                        speaker = activeSpeaker,
+                        effectiveAmount = effective
                     )
                 } else {
                     engine.playBest(
@@ -518,7 +549,8 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                         languageOf(),
                         onDone = { if (cont.isActive) cont.resume(Unit) {} },
                         onError = { if (cont.isActive) cont.resume(Unit) {} },
-                        speaker = activeSpeaker
+                        speaker = activeSpeaker,
+                        effectiveAmount = effective
                     )
                 }
                 cont.invokeOnCancellation { engine.stopAll() }
@@ -660,7 +692,9 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                         prefs.voiceEngineModeFlow,
                         secureKeys.keyVersion
                     ) { event, donations, speaker, mode, _ ->
-                        PrefetchInputs(event, donations, speaker, mode)
+                        PrefetchInputs(event, donations, speaker = speaker, mode = mode)
+                    }.combine(correctionRepo.observeForEvent(eventId)) { inputs, corrections ->
+                        inputs.copy(corrections = corrections)
                     }
                 }
             }.collect { inputs ->
@@ -675,6 +709,12 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                     val eventName = event.name
                     val roster = prefs.queueRosterMode
                     val speaker = inputs?.speaker ?: prefs.sarvamSpeaker
+                    // T0.2: prefetch/hash speak effective figures; a new
+                    // correction re-runs this pass via the combined flow.
+                    val correctionsByTarget =
+                        groupCorrectionsByTarget(inputs?.corrections.orEmpty())
+                    fun prefetchEffective(d: Donation): Double =
+                        effectiveDonationAmount(d, correctionsByTarget[d.id].orEmpty())
                     // Phase 2: explicit offline mode burns zero cloud quota —
                     // playback serves device voice (+ human imports) only.
                     // Fix-B3: leaving cloud also dismisses a stale quota pill.
@@ -725,11 +765,25 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                             maxAgeDays = SessionPrefs.AUDIO_CACHE_MAX_AGE_DAYS
                         )
                     }
+                    // Phase-3 CAS prefetch: rows missing disk CAS (and without a
+                    // human override) resolve per missing hash via the engine's
+                    // cloud-first branch. The P4.5 Firestore meta N+1 loop and
+                    // its T0.4 stopgap are deleted — the bucket HEAD inside
+                    // `resolve` is the freshness signal; stamps have no
+                    // readers left. Bounded concurrency: ≤50 rows/pass.
+                    val lang = languageOf()
                     val missing = eligible
-                        // Human imports cover playback under any speaker, so a
-                        // row with a human clip needs no cloud generation.
                         .filter { d ->
-                            engine.cachedFile(d.id, roster, speaker) == null &&
+                            val eff = prefetchEffective(d)
+                            engine.cachedCas(
+                                engine.casHashFor(d, eventName, lang, speaker, roster, eff)
+                            ) == null &&
+                                // F1: a corrected row regenerates CAS even when
+                                // a stale legacy clip exists (it speaks the old
+                                // figure and is skipped at playback too). This
+                                // also heals rows corrected on peer devices.
+                                (!com.shankaravam.festival.domain.model.legacyCacheCovers(d.amount, eff) ||
+                                    engine.cachedFile(d.id, roster, speaker) == null) &&
                                 engine.importedFile(d.id, roster) == null &&
                                 engine.importedFile(d.id) == null
                         }
@@ -742,34 +796,7 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                     // pass spends (or is denied) slots.
                     refreshQuotaPill()
                     prefetchRemaining.value = missing.size
-                    // P4.5 guard only when sync is on: needs a Firestore read.
-                    val guardEventId = if (prefs.cloudSyncEnabled) event.id else null
                     for (donation in missing) {
-                        if (engine.cachedFile(donation.id, roster, speaker) != null ||
-                            engine.importedFile(donation.id, roster) != null ||
-                            engine.importedFile(donation.id) != null
-                        ) continue
-                        val lang = languageOf()
-                        // P4.5 re-fetch guard: a peer generated this exact rendering
-                        // within 30 min → skip the call, native covers playback.
-                        if (guardEventId != null) {
-                            val hash = runCatching {
-                                val text = if (roster) buildRosterItemAnnouncement(donation, lang)
-                                else buildDonationAnnouncement(donation, eventName, lang)
-                                audioHashFor(text, lang.name, speaker, roster)
-                            }.getOrNull()
-                            val fresh = hash != null && runCatching {
-                                syncService.readAudioMeta(guardEventId, donation.id)
-                            }.getOrNull()?.let { meta ->
-                                meta.hash == hash &&
-                                    System.currentTimeMillis() - meta.generatedAt <
-                                    SessionPrefs.AUDIO_META_FRESH_MILLIS
-                            } == true
-                            if (fresh) {
-                                prefetchRemaining.value = (prefetchRemaining.value - 1).coerceAtLeast(0)
-                                continue
-                            }
-                        }
                         // P4 budget: 20 cloud calls per 30 min per device (see
                         // SessionPrefs.SARVAM_MAX_CALLS). Phase 3: denial sets
                         // the quota pill (with reset time) instead of silently
@@ -792,7 +819,13 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                                 donationRepo.updateAudioStatus(donation.id, status)
                             },
                             roster = roster,
-                            speaker = speaker
+                            speaker = speaker,
+                            effectiveAmount = prefetchEffective(donation),
+                            // Gateway 429 gets its own pill line (temple
+                            // budget spent vs this phone throttled).
+                            onServerQuota = {
+                                quotaPill.value = com.shankaravam.festival.domain.model.gatewayQuotaPillText()
+                            }
                         )
                         // Simple circuit-breaker: any Sarvam/network failure stops
                         // this pass instead of burning the remaining rows. Native
@@ -803,24 +836,6 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                         }
                         // A slot went through, so budget exists — clear any pill.
                         if (quotaPill.value.isNotBlank()) quotaPill.value = ""
-                        // Stamp the generation so peers skip their duplicate call.
-                        if (guardEventId != null) {
-                            val by = container.authRepository.user.value?.uid
-                                ?: prefs.attributionName()
-                            runCatching {
-                                val text = if (roster) buildRosterItemAnnouncement(donation, lang)
-                                else buildDonationAnnouncement(donation, eventName, lang)
-                                syncService.stampAudioMeta(
-                                    guardEventId,
-                                    donation.id,
-                                    com.shankaravam.festival.data.remote.FirestoreSyncService.AudioMeta(
-                                        hash = audioHashFor(text, lang.name, speaker, roster),
-                                        generatedAt = System.currentTimeMillis(),
-                                        generatedBy = by
-                                    )
-                                )
-                            }
-                        }
                         prefetchRemaining.value = (prefetchRemaining.value - 1).coerceAtLeast(0)
                     }
                 }

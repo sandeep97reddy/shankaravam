@@ -138,6 +138,15 @@ class ExpenseEntryViewModel(private val container: AppContainer) : ViewModel() {
             _form.update { it.copy(saveState = ExpenseSaveState.Error("This festival is closed — entries are locked.")) }
             return
         }
+        // P3 status-aware gate (see DonationEntryViewModel.save): refuse
+        // pending/revoked/viewer writes up front instead of stranding them.
+        com.shankaravam.festival.domain.model.AccessPolicy.writeBlockedReason(
+            com.shankaravam.festival.domain.model.roleOf(container.sessionPrefs.myRole(eventId)),
+            com.shankaravam.festival.domain.model.memberStatusOf(container.sessionPrefs.myStatus(eventId))
+        )?.let { reason ->
+            _form.update { it.copy(saveState = ExpenseSaveState.Error(reason)) }
+            return
+        }
         val f = _form.value
         val who = addedBy.ifBlank { container.sessionPrefs.attributionName() }
         _form.update { it.copy(saveState = ExpenseSaveState.Saving) }
@@ -165,6 +174,15 @@ class ExpenseEntryViewModel(private val container: AppContainer) : ViewModel() {
             // isCloudEvent gate keeps unpublished events offline).
             if (result is Outcome.Ok && container.sessionPrefs.cloudSyncEnabled && container.sessionPrefs.isCloudEvent(eventId)) {
                 launch { runCatching { container.syncService.syncEvent(eventId) } }
+            }
+            // Phase-3 receipts: background gateway PUT (CONNECTED + backoff).
+            // The worker no-ops quietly when no gateway URL is configured.
+            if (result is Outcome.Ok && result.value.receiptPath != null) {
+                runCatching {
+                    com.shankaravam.festival.data.work.ReceiptUploadWorker.schedule(
+                        container.appContext, result.value.id, eventId
+                    )
+                }
             }
         }
     }

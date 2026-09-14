@@ -116,7 +116,13 @@ class ExportViewModel(container: AppContainer) : ViewModel() {
         val expenses: List<Expense> = emptyList(),
         val corrections: List<Correction> = emptyList()
     ) {
-        val totals: BalanceSnapshot get() = calculateBalance(donations, expenses)
+        // T0.2: on-screen totals are effective (post-correction) figures; the
+        // audit trail below still lists original → effective per row.
+        val totals: BalanceSnapshot get() = calculateBalance(
+            donations,
+            expenses,
+            com.shankaravam.festival.domain.model.groupCorrectionsByTarget(corrections)
+        )
     }
 
     val currentLang: StateFlow<String> = container.sessionPrefs.appLanguage

@@ -56,8 +56,8 @@ class DonationRepositoryImpl(private val dao: DonationDao) : DonationRepository 
     override suspend fun updateStatus(id: String, status: DonationStatus, now: Long) =
         withContext(Dispatchers.IO) { dao.updateStatus(id, status.name, now) }
 
-    override suspend fun updateAudioStatus(id: String, status: AudioStatus, now: Long) =
-        withContext(Dispatchers.IO) { dao.updateAudioStatus(id, status.name, now) }
+    override suspend fun updateAudioStatus(id: String, status: AudioStatus) =
+        withContext(Dispatchers.IO) { dao.updateAudioStatus(id, status.name) }
 
     override suspend fun updateSyncState(id: String, status: SyncStatus) =
         withContext(Dispatchers.IO) { dao.updateSyncState(id, status.name) }
@@ -84,6 +84,12 @@ class ExpenseRepositoryImpl(private val dao: ExpenseDao) : ExpenseRepository {
 
     override suspend fun updateSyncState(id: String, status: SyncStatus) =
         withContext(Dispatchers.IO) { dao.updateSyncState(id, status.name) }
+
+    override suspend fun attachReceiptUrl(id: String, url: String) =
+        withContext(Dispatchers.IO) { dao.attachReceiptUrl(id, url) }
+
+    override suspend fun applyRemoteReceiptUrl(id: String, url: String) =
+        withContext(Dispatchers.IO) { dao.applyRemoteReceiptUrl(id, url) }
 
     override suspend fun pendingSync(): List<Expense> =
         withContext(Dispatchers.IO) { dao.pendingSync().map { it.toDomain() } }

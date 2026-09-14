@@ -94,6 +94,12 @@ fun DonationDetailSheet(
             DetailRow("Added", formatTime(donation.addedTime))
             donation.notes?.let { DetailRow("Notes", it) }
 
+            // T0.2: preview speaks the effective (post-correction) figure.
+            val previewVm: DonationDetailViewModel =
+                containerViewModel { DonationDetailViewModel(it, donation.id) }
+            val previewCorrections by previewVm.corrections.collectAsState()
+            val previewEffective =
+                com.shankaravam.festival.domain.model.effectiveDonationAmount(donation, previewCorrections)
             Card {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
@@ -102,7 +108,7 @@ fun DonationDetailSheet(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        runCatching { buildAnnouncementPreview(donation, eventName.ifBlank { "ఉత్సవం" }) }
+                        runCatching { buildAnnouncementPreview(donation, eventName.ifBlank { "ఉత్సవం" }, previewEffective) }
                             .getOrDefault("పరీక్ష. ఆడియో సరిగ్గా పనిచేస్తోంది."),
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -111,13 +117,13 @@ fun DonationDetailSheet(
 
             CorrectionHistory(donationId = donation.id)
 
-            SinglePlayButton(donation = donation, eventName = eventName)
+            SinglePlayButton(donation = donation, eventName = eventName, effectiveAmount = previewEffective)
 
             ShareAudioButton(donation = donation)
 
             ImportAudioButton(donation = donation)
 
-            WhatsAppReceiptButton(donation = donation, eventName = eventName)
+            WhatsAppReceiptButton(donation = donation, eventName = eventName, effectiveAmount = previewEffective)
 
             CorrectEntryButton(donation = donation)
             Spacer(Modifier.height(4.dp))
@@ -135,12 +141,22 @@ private fun CorrectEntryButton(donation: Donation) {
     if (donation.status == com.shankaravam.festival.domain.model.DonationStatus.CANCELLED) return
     var showDialog by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var graceNotice by remember(donation.id) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val container = rememberContainer()
     val viewModel: DonationDetailViewModel =
         containerViewModel { DonationDetailViewModel(it, donation.id) }
+    // T0.2 writer fix: the dialog edits the current EFFECTIVE figure so new
+    // deltas are incremental (the ViewModel re-resolves authoritatively too).
+    val dialogCorrections by viewModel.corrections.collectAsState()
+    val dialogEffective =
+        com.shankaravam.festival.domain.model.effectiveDonationAmount(donation, dialogCorrections)
 
     error?.let {
         Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+    }
+    graceNotice?.let {
+        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     OutlinedButton(onClick = { showDialog = true }, modifier = Modifier.fillMaxWidth()) {
         Text("Fix amount")
@@ -148,7 +164,7 @@ private fun CorrectEntryButton(donation: Donation) {
     if (showDialog) {
         com.shankaravam.festival.presentation.correction.CorrectDialog(
             title = "Fix donation",
-            originalAmount = donation.amount,
+            originalAmount = dialogEffective,
             addedTimeMillis = donation.addedTime,
             onDismiss = { showDialog = false; error = null },
             onConfirm = { newAmount, reason ->
@@ -159,6 +175,17 @@ private fun CorrectEntryButton(donation: Donation) {
                         is com.shankaravam.festival.core.util.Outcome.Ok -> {
                             showDialog = false
                             error = null
+                            // T0.1: grace edit returns null correction and purges
+                            // stale audio; surface what happened. Post-grace
+                            // appends a Correction row (spoken via T0.2
+                            // effective amounts).
+                            graceNotice = if (result.value == null) {
+                                val backedUp = runCatching {
+                                    container.ttsEngine.hasAudioBackup(donation.id)
+                                }.getOrDefault(false)
+                                if (backedUp) "Custom recording kept as backup — announcement will use the corrected amount."
+                                else "Announcement audio will regenerate with the corrected amount."
+                            } else null
                         }
                         is com.shankaravam.festival.core.util.Outcome.Err -> {
                             error = result.message
@@ -175,7 +202,7 @@ private fun CorrectEntryButton(donation: Donation) {
  * present, native Telugu otherwise). Stops when the sheet goes away.
  */
 @Composable
-private fun SinglePlayButton(donation: Donation, eventName: String) {
+private fun SinglePlayButton(donation: Donation, eventName: String, effectiveAmount: Double? = null) {
     val container = rememberContainer()
     var playing by remember(donation.id) { mutableStateOf(false) }
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
@@ -201,7 +228,8 @@ private fun SinglePlayButton(donation: Donation, eventName: String) {
                         eventName,
                         language,
                         onDone = { mainHandler.post { playing = false } },
-                        onError = { mainHandler.post { playing = false } }
+                        onError = { mainHandler.post { playing = false } },
+                        effectiveAmount = effectiveAmount
                     )
                 }
             }.onFailure { mainHandler.post { playing = false } }
@@ -218,13 +246,17 @@ private fun SinglePlayButton(donation: Donation, eventName: String) {
  * the phone when sharing.
  */
 @Composable
-private fun WhatsAppReceiptButton(donation: Donation, eventName: String) {
+private fun WhatsAppReceiptButton(
+    donation: Donation,
+    eventName: String,
+    effectiveAmount: Double? = null
+) {
     val context = LocalContext.current
     OutlinedButton(
         onClick = {
             shareTextViaWhatsApp(
                 context,
-                buildWhatsAppReceipt(donation, eventName, donation.addedBy)
+                buildWhatsAppReceipt(donation, eventName, donation.addedBy, effectiveAmount)
             )
         },
         modifier = Modifier.fillMaxWidth()

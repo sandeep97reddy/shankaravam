@@ -409,9 +409,20 @@ class FirestoreSyncService(
             if (local == null) {
                 database.expenseDao().upsert(remote)
                 downloaded++
-            } else if (FirestoreMappers.isRemoteNewer(local.updatedAt, local.version, remote.updatedAt, remote.version)) {
-                database.expenseDao().updateSyncState(local.id, SyncStatus.CONFLICT.name)
-                conflicts++
+            } else {
+                // Phase-3 receipts: attachments merge independently of ledger
+                // versioning. A newer receiptUrl is adopted even when the
+                // money row is identical (versions equal → isRemoteNewer is
+                // false and would drop it), and a concurrent money edit still
+                // flows through the CONFLICT path below untouched.
+                if (remote.receiptUrl != null && remote.receiptUrl != local.receiptUrl) {
+                    database.expenseDao().applyRemoteReceiptUrl(local.id, remote.receiptUrl)
+                    downloaded++
+                }
+                if (FirestoreMappers.isRemoteNewer(local.updatedAt, local.version, remote.updatedAt, remote.version)) {
+                    database.expenseDao().updateSyncState(local.id, SyncStatus.CONFLICT.name)
+                    conflicts++
+                }
             }
         }
         if (maxSeen > prefs.lastSyncMillis(eventId)) prefs.setLastSyncMillis(eventId, maxSeen)
@@ -469,7 +480,12 @@ class FirestoreSyncService(
                             "eventName" to eventName,
                             "createdBy" to uid,
                             "createdAt" to now,
-                            "expiresAt" to now + CODE_TTL_MILLIS,
+                            // Timestamp (not millis-Long) so firestore.rules
+                            // can compare expiry against request.time
+                            // server-side; readers accept legacy Longs too.
+                            "expiresAt" to com.google.firebase.Timestamp(
+                                java.util.Date(now + CODE_TTL_MILLIS)
+                            ),
                             "status" to CODE_STATUS_ACTIVE
                         )
                     ).await()
@@ -553,10 +569,15 @@ class FirestoreSyncService(
                 val eventId = codeDoc.getString("eventId")
                     ?: throw IllegalStateException("Invite code not found.")
                 // Expiry/closure gate (feature #2): enforced here, client-side,
-                // for cooperative volunteers — the codes rules intentionally stay
-                // untouched (no redeploy). Pre-expiry codes lack both fields and
-                // grandfather as live (see isCodeLive).
-                if (!isCodeLive(codeDoc.getString("status"), codeDoc.getLong("expiresAt"), System.currentTimeMillis())) {
+                // for cooperative volunteers — AND server-side via the viaCode
+                // stamp below (rules re-verify liveness; direct member writes
+                // with a dead/forged code are denied). Pre-expiry codes lack
+                // both fields and grandfather as live (see isCodeLive).
+                // expiresAt travels as Timestamp now, Long on legacy codes.
+                val expiresAt = runCatching {
+                    codeDoc.getTimestamp("expiresAt")?.toDate()?.time
+                }.getOrNull() ?: codeDoc.getLong("expiresAt")
+                if (!isCodeLive(codeDoc.getString("status"), expiresAt, System.currentTimeMillis())) {
                     throw IllegalStateException("Invite code has expired or was closed by the head.")
                 }
                 prefs.markCloudEvent(eventId)
@@ -572,7 +593,8 @@ class FirestoreSyncService(
                 // Membership first: self-create is allowed for pending/member
                 // and (S1 clause) for the whitelisted admin as active/head.
                 // Merge-write + preserved joinedAt: rejoins never rewind order
-                // nor wipe presence written by another device.
+                // nor wipe presence written by another device. viaCode binds
+                // the seat to this invite for the server-side liveness check.
                 val seatRef = Firebase.firestore.collection("events").document(eventId)
                     .collection("members").document(uid)
                 val existingJoinedAt =
@@ -587,7 +609,8 @@ class FirestoreSyncService(
                         displayName = effectiveName,
                         counterName = prefs.syncCounterName(),
                         deviceTag = prefs.deviceId.takeLast(4).uppercase(),
-                        lastActiveAt = now
+                        lastActiveAt = now,
+                        viaCode = normalized
                     ),
                     SetOptions.merge()
                 ).await()
@@ -753,7 +776,7 @@ class FirestoreSyncService(
         runCatching {
             val doc = Firebase.firestore.collection("config").document("tts_settings").get().await()
             val key = doc.getString("sarvamApiKey") ?: ""
-            val speaker = doc.getString("defaultSpeaker") ?: "priya"
+            val speaker = doc.getString("defaultSpeaker") ?: "shubh"
             key to com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(speaker)
         }.fold(
             onSuccess = { Outcome.Ok(it) },

@@ -62,9 +62,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
+import com.shankaravam.festival.core.ui.haptics.LocalAppHaptics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -86,7 +85,7 @@ import java.util.Calendar
  * - Category chips with clear layout
  * - Clean date selector
  * - Fast background receipt compression
- * - Instant Room commit (<10ms) with haptic feedback
+ * - Instant Room commit (<10ms) with subtle haptic feedback
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -98,7 +97,7 @@ fun ExpenseEntryScreen(
     val form by viewModel.form.collectAsState()
     val eventId by viewModel.currentEventId.collectAsState()
     val isClosed by viewModel.isEventClosed.collectAsState()
-    val haptics = LocalHapticFeedback.current
+    val haptics = LocalAppHaptics.current
     val snackbar = remember { SnackbarHostState() }
     val strings = appStrings()
 
@@ -109,7 +108,7 @@ fun ExpenseEntryScreen(
     LaunchedEffect(form.saveState) {
         when (val s = form.saveState) {
             is ExpenseSaveState.Saved -> {
-                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptics.success()
                 viewModel.consumeSaved()
                 onDone()
             }
@@ -368,7 +367,10 @@ fun ExpenseEntryScreen(
 
             // 9. Large Prominent Save Button
             Button(
-                onClick = { viewModel.save() },
+                onClick = {
+                    haptics.click()
+                    viewModel.save()
+                },
                 enabled = form.canSave && !isClosed,
                 modifier = Modifier
                     .fillMaxWidth()

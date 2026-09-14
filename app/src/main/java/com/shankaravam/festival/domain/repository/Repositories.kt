@@ -22,8 +22,11 @@ interface DonationRepository {
     fun observeById(id: String): Flow<Donation?>
     suspend fun save(donation: Donation)
     suspend fun updateStatus(id: String, status: DonationStatus, now: Long = System.currentTimeMillis())
-    /** G4 audio-cache bookkeeping — never bumps version/sync (local artifact). */
-    suspend fun updateAudioStatus(id: String, status: AudioStatus, now: Long = System.currentTimeMillis())
+    /**
+     * G4 audio-cache bookkeeping — local-only derived state. Never bumps
+     * version, syncStatus, or updatedAt (T0.3); takes no timestamp by design.
+     */
+    suspend fun updateAudioStatus(id: String, status: AudioStatus)
     /** G6 sync bookkeeping — never bumps version (sync is not a ledger edit). */
     suspend fun updateSyncState(id: String, status: SyncStatus)
     suspend fun pendingSync(): List<Donation>
@@ -38,6 +41,10 @@ interface ExpenseRepository {
     suspend fun cancel(id: String, now: Long = System.currentTimeMillis())
     /** G6 sync bookkeeping — never bumps version (sync is not a ledger edit). */
     suspend fun updateSyncState(id: String, status: SyncStatus)
+    /** Phase-3 upload path: record gateway path + re-queue (no ledger movement). */
+    suspend fun attachReceiptUrl(id: String, url: String)
+    /** Phase-3 download path: adopt peer path without re-queueing. */
+    suspend fun applyRemoteReceiptUrl(id: String, url: String)
     suspend fun pendingSync(): List<Expense>
 }
 

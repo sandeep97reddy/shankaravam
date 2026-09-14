@@ -121,6 +121,16 @@ class DonationEntryViewModel(private val container: AppContainer) : ViewModel() 
             _form.update { it.copy(saveState = SaveState.Error("This festival is closed — entries are locked.")) }
             return
         }
+        // P3 status-aware gate: pending/revoked/viewer writes would be denied
+        // by firestore.rules and strand as PENDING_UPLOAD — refuse up front
+        // with the same copy sync shows. Offline/local events stay ACTIVE.
+        com.shankaravam.festival.domain.model.AccessPolicy.writeBlockedReason(
+            com.shankaravam.festival.domain.model.roleOf(prefs.myRole(eventId)),
+            com.shankaravam.festival.domain.model.memberStatusOf(prefs.myStatus(eventId))
+        )?.let { reason ->
+            _form.update { it.copy(saveState = SaveState.Error(reason)) }
+            return
+        }
         val f = _form.value
         if (f.duplicatePrompt != null && !confirmed) return
         val who = addedBy.ifBlank { prefs.attributionName() }

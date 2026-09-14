@@ -1,6 +1,7 @@
 package com.shankaravam.festival.presentation.dashboard
 
 import androidx.compose.foundation.background
+import com.shankaravam.festival.core.ui.haptics.LocalAppHaptics
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -455,13 +456,17 @@ private fun DualActionHeader(
     addDonationText: String,
     addExpenseText: String
 ) {
+    val haptics = LocalAppHaptics.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // + Add Donation Button (Temple Saffron)
         Button(
-            onClick = onAddDonation,
+            onClick = {
+                haptics.click()
+                onAddDonation()
+            },
             modifier = Modifier
                 .weight(1f)
                 .height(54.dp),
@@ -485,7 +490,10 @@ private fun DualActionHeader(
 
         // - Add Expense Button (Deep Maroon / Rose accent)
         Button(
-            onClick = onAddExpense,
+            onClick = {
+                haptics.click()
+                onAddExpense()
+            },
             modifier = Modifier
                 .weight(1f)
                 .height(54.dp),
@@ -656,8 +664,12 @@ private fun NavHubCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val haptics = LocalAppHaptics.current
     OutlinedCard(
-        onClick = onClick,
+        onClick = {
+            haptics.tick()
+            onClick()
+        },
         modifier = modifier,
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.outlinedCardColors(
@@ -723,12 +735,16 @@ private fun SecondaryUtilitiesRow(
     reportsText: String,
     syncText: String
 ) {
+    val haptics = LocalAppHaptics.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         OutlinedCard(
-            onClick = onReports,
+            onClick = {
+                haptics.tick()
+                onReports()
+            },
             modifier = Modifier.weight(1f),
             shape = RoundedCornerShape(12.dp)
         ) {
@@ -754,7 +770,10 @@ private fun SecondaryUtilitiesRow(
         }
 
         OutlinedCard(
-            onClick = onSync,
+            onClick = {
+                haptics.tick()
+                onSync()
+            },
             modifier = Modifier.weight(1f),
             shape = RoundedCornerShape(12.dp)
         ) {

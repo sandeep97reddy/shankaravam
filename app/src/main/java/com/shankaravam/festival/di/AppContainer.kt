@@ -9,6 +9,7 @@ import com.shankaravam.festival.core.tts.SarvamTtsClient
 import com.shankaravam.festival.data.local.AppDatabase
 import com.shankaravam.festival.data.local.SecureKeyStore
 import com.shankaravam.festival.data.local.SessionPrefs
+import com.shankaravam.festival.data.remote.AudioCloudClient
 import com.shankaravam.festival.data.remote.AuthRepository
 import com.shankaravam.festival.data.remote.ForegroundSyncManager
 import com.shankaravam.festival.data.remote.FirestoreSyncService
@@ -73,7 +74,7 @@ class AppContainer(context: Context) {
         ReportExporter(appContext)
     }
     val observeEventTotals: ObserveEventTotalsUseCase by lazy {
-        ObserveEventTotalsUseCase(donationRepository, expenseRepository)
+        ObserveEventTotalsUseCase(donationRepository, expenseRepository, correctionRepository)
     }
     val deleteLocalEvent: DeleteLocalEventUseCase by lazy {
         DeleteLocalEventUseCase(database, sessionPrefs, appContext)
@@ -92,7 +93,11 @@ class AppContainer(context: Context) {
             audioFocus,
             chimeEnabled = { sessionPrefs.playTempleChime },
             speakerProvider = { sessionPrefs.sarvamSpeaker },
-            engineModeProvider = { sessionPrefs.voiceEngineMode }
+            engineModeProvider = { sessionPrefs.voiceEngineMode },
+            // Phase-3 cloud-first branch (lambdas evaluated per call; both
+            // lazies below are safe to capture — no init-time access).
+            cloudClientProvider = { audioCloud },
+            idTokenProvider = { authRepository.idToken() }
         )
     }
 
@@ -102,6 +107,11 @@ class AppContainer(context: Context) {
     val authRepository: AuthRepository by lazy { AuthRepository(appContext, sessionPrefs) }
     val syncService: FirestoreSyncService by lazy {
         FirestoreSyncService(database, sessionPrefs, secureKeys)
+    }
+
+    /** Phase-3 gateway client. Inert until a gateway URL is configured (Rule #1). */
+    val audioCloud: AudioCloudClient by lazy {
+        AudioCloudClient(sessionPrefs)
     }
 
     /** F3 foreground listener (app-lifecycle driven from ShankaRavamApp). */

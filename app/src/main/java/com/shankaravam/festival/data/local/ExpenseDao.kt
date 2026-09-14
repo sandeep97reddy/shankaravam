@@ -34,6 +34,22 @@ interface ExpenseDao {
     @Query("UPDATE expenses SET syncStatus = :status WHERE id = :id")
     suspend fun updateSyncState(id: String, status: String)
 
+    /**
+     * Phase-3 receipts (upload path): records the gateway path and re-queues
+     * the row for delta upload. Local-only bookkeeping otherwise — version
+     * and updatedAt are ledger content and never move here (the push stamp
+     * carries visibility to peers via max(local,now) at cloud entry).
+     */
+    @Query("UPDATE expenses SET receiptUrl = :url, syncStatus = 'PENDING_UPLOAD' WHERE id = :id")
+    suspend fun attachReceiptUrl(id: String, url: String)
+
+    /**
+     * Phase-3 receipts (download path): adopts a peer's gateway path.
+     * Sync state untouched — adopting must never re-upload (no ping-pong).
+     */
+    @Query("UPDATE expenses SET receiptUrl = :url WHERE id = :id")
+    suspend fun applyRemoteReceiptUrl(id: String, url: String)
+
     /** F3 push-stamp mirror (see DonationDao.markSynced). Version untouched. */
     @Query("UPDATE expenses SET syncStatus = :status, updatedAt = :stampedAt WHERE id = :id")
     suspend fun markSynced(id: String, status: String, stampedAt: Long)

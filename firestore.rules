@@ -64,6 +64,31 @@ service cloud.firestore {
         && request.resource.data.role in ['organizer', 'member'];
     }
 
+    function codeDoc(code) {
+      return get(/databases/$(database)/documents/codes/$(code)).data;
+    }
+
+    // Server-side invite liveness: the stamped viaCode must resolve to a code
+    // doc for THIS event that is still active and unexpired. Mirrors the
+    // client isCodeLive() (ShareCodes.kt). Grandfathering: docs without a
+    // status/expiresAt (pre-expiry codes) count as live; legacy numeric
+    // expiresAt values are unreadable against request.time, so they also pass
+    // here — only Timestamp expiries (written by current builds) are compared.
+    // Client-side isCodeLive stays the friendly gate; this is the boundary.
+    function codeNotExpired(data) {
+      return !('expiresAt' in data)
+        || (data.expiresAt is timestamp && data.expiresAt > request.time)
+        || (data.expiresAt is number);
+    }
+
+    function isLiveCode(code, eventId) {
+      return code is string && code.size() == 6
+        && exists(/databases/$(database)/documents/codes/$(code))
+        && codeDoc(code).eventId == eventId
+        && (!('status' in codeDoc(code)) || codeDoc(code).status == 'active')
+        && codeNotExpired(codeDoc(code));
+    }
+
     // ---- event headers: active members + creator read; doc-holding members
     // (incl. pending joiners, S3 addendum) may read the header so a second
     // Google account's join resolves after filing membership. Ledger reads
@@ -100,7 +125,11 @@ service cloud.firestore {
       // own active/global_head seat; whitelisted admin auto-claims head on any
       // festival; updates are head/creator full-manage, collectors approve
       // pending→active (organizer/member only), self may merge-touch presence
-      // + identity keys without changing role/status. No deletes. ----
+      // + identity keys without changing role/status. No deletes.
+      // Joins must stamp viaCode (the invite used) — the pending/member
+      // create path verifies it is live for this event (status + expiry +
+      // event match), so expired/closed/forged codes fail server-side even
+      // when the client check is bypassed. ----
       match /members/{userId} {
         allow read: if signedIn()
           && (isActiveMember(eventId) || request.auth.uid == userId || isGlobalAdmin());
@@ -110,6 +139,8 @@ service cloud.firestore {
             (
               request.resource.data.status == 'pending'
               && request.resource.data.role == 'member'
+              && 'viaCode' in request.resource.data
+              && isLiveCode(request.resource.data.viaCode, eventId)
             ) || (
               isEventCreator(eventId)
               && request.resource.data.status == 'active'
@@ -125,7 +156,7 @@ service cloud.firestore {
           || (
             signedIn() && request.auth.uid == userId
             && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['lastActiveAt', 'counterName', 'deviceTag', 'displayName', 'email'])
+              .hasOnly(['lastActiveAt', 'counterName', 'deviceTag', 'displayName', 'email', 'viaCode'])
             && request.resource.data.role == resource.data.role
             && request.resource.data.status == resource.data.status
           );

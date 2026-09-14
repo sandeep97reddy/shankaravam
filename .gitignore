@@ -15,3 +15,11 @@ app/release/
 # ---> OS
 .DS_Store
 Thumbs.db
+
+# ---> Node
+node_modules/
+tools/worker/node_modules/
+# ---> Cloudflare Worker gateway (tools/worker)
+tools/worker/node_modules/
+tools/worker/.wrangler/
+tools/worker/dist/

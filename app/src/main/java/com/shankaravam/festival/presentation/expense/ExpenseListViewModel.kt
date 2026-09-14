@@ -9,20 +9,25 @@ import com.shankaravam.festival.di.AppContainer
 import com.shankaravam.festival.domain.model.ActivityActions
 import com.shankaravam.festival.domain.model.ActivityRecord
 import com.shankaravam.festival.domain.model.AccessPolicy
+import com.shankaravam.festival.domain.model.memberStatusOf
 import com.shankaravam.festival.domain.model.roleOf
 import com.shankaravam.festival.domain.model.Correction
 import com.shankaravam.festival.domain.model.CorrectionTargetType
 import com.shankaravam.festival.domain.model.Expense
 import com.shankaravam.festival.domain.model.SyncStatus
+import com.shankaravam.festival.domain.model.effectiveExpenseAmount
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Immutable
 data class ExpenseListUiState(
@@ -90,6 +95,11 @@ class ExpenseListViewModel(private val container: AppContainer) : ViewModel() {
             error.value = "Cancelling expenses needs a collector role."
             return
         }
+        // P3 status gate (see DonationDetailViewModel.correct).
+        AccessPolicy.writeBlockedReason(
+            roleOf(container.sessionPrefs.myRole(expense.eventId)),
+            memberStatusOf(container.sessionPrefs.myStatus(expense.eventId))
+        )?.let { error.value = it; return }
         val who = actor.ifBlank { container.sessionPrefs.attributionName() }
         viewModelScope.launch {
             val now = System.currentTimeMillis()
@@ -113,14 +123,29 @@ class ExpenseListViewModel(private val container: AppContainer) : ViewModel() {
             error.value = "Fixing entries needs a collector role."
             return
         }
+        // P3 status gate (see DonationDetailViewModel.correct).
+        AccessPolicy.writeBlockedReason(
+            roleOf(container.sessionPrefs.myRole(expense.eventId)),
+            memberStatusOf(container.sessionPrefs.myStatus(expense.eventId))
+        )?.let { error.value = it; return }
         val who = actor.ifBlank { container.sessionPrefs.attributionName() }
         viewModelScope.launch {
+            // T0.2 writer fix: chain off the current EFFECTIVE figure (see
+            // DonationDetailViewModel.correct for the rationale).
+            val base = runCatching {
+                withContext(Dispatchers.IO) {
+                    effectiveExpenseAmount(
+                        expense,
+                        container.correctionRepository.observeForTarget(expense.id).first()
+                    )
+                }
+            }.getOrDefault(expense.amount)
             when (
                 val result = container.correctRecord(
                     eventId = expense.eventId,
                     targetRecordId = expense.id,
                     targetType = CorrectionTargetType.EXPENSE,
-                    originalAmount = expense.amount,
+                    originalAmount = base,
                     addedTimeMillis = expense.addedTime,
                     newAmount = newAmount,
                     reason = reason,

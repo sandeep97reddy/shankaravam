@@ -56,10 +56,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.shankaravam.festival.core.export.ReportContent
 import com.shankaravam.festival.core.theme.DeepMaroon
 import com.shankaravam.festival.core.theme.TempleGold
@@ -67,7 +73,9 @@ import com.shankaravam.festival.core.theme.TempleSaffron
 import com.shankaravam.festival.core.util.formatInr
 import com.shankaravam.festival.domain.model.Expense
 import com.shankaravam.festival.domain.model.ExpenseStatus
+import com.shankaravam.festival.domain.model.effectiveExpenseAmount
 import com.shankaravam.festival.presentation.common.containerViewModel
+import com.shankaravam.festival.presentation.common.rememberContainer
 import com.shankaravam.festival.presentation.correction.CorrectDialog
 
 /**
@@ -199,9 +207,13 @@ fun ExpenseListScreen(
     }
 
     toCorrect?.let { expense ->
+        // T0.2 writer fix: dialog edits the current EFFECTIVE figure.
+        val container = rememberContainer()
+        val targetCorrections by container.correctionRepository
+            .observeForTarget(expense.id).collectAsState(initial = emptyList())
         CorrectDialog(
             title = "Fix expense",
-            originalAmount = expense.amount,
+            originalAmount = effectiveExpenseAmount(expense, targetCorrections),
             addedTimeMillis = expense.addedTime,
             onDismiss = { toCorrect = null },
             onConfirm = { newAmount, reason ->
@@ -359,10 +371,66 @@ private fun ExpenseCard(
                         label = "Date",
                         value = ReportContent.formatTime(expense.dateMillis)
                     )
+                    // Phase-3 shared receipt, lazy on expand only (never bucket
+                    // listing; auth header per load; short Coil memory cache).
+                    if (expense.receiptUrl != null) {
+                        SharedReceiptImage(expense.receiptUrl)
+                    }
                 }
             }
         }
     }
+}
+
+/**
+ * Phase-3 shared receipt view: loads the gateway WebP with the Firebase ID
+ * token auth header (private bucket — no public URLs). Token is fetched once
+ * per expansion; rows without a synced receipt show nothing extra (the paper
+ * clip icon above already signals the on-device file).
+ */
+@Composable
+private fun SharedReceiptImage(receiptUrl: String) {
+    val container = rememberContainer()
+    val context = LocalContext.current
+    // F4: gateway URL is read once per expansion (Settings edits remount via
+    // navigation); a missing URL or account is a CONFIG state, not loading.
+    val gatewaySet = remember(receiptUrl) { container.sessionPrefs.gatewayBaseUrl.isNotBlank() }
+    var token by remember(receiptUrl) { mutableStateOf<String?>(null) }
+    var tokenTried by remember(receiptUrl) { mutableStateOf(false) }
+    LaunchedEffect(receiptUrl) {
+        token = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { container.authRepository.idToken() }.getOrNull()
+        }
+        tokenTried = true
+    }
+    val url = remember(receiptUrl) { container.audioCloud.absoluteUrl(receiptUrl) }
+    when {
+        !gatewaySet -> ReceiptHint("Shared receipt needs the media gateway — set it in Settings → Cloud Sync.")
+        url != null && token != null -> AsyncImage(
+            model = ImageRequest.Builder(context)
+                .data(url)
+                .addHeader("Authorization", "Bearer $token")
+                .crossfade(true)
+                .build(),
+            contentDescription = "Shared receipt",
+            modifier = Modifier.fillMaxWidth()
+                .heightIn(max = 320.dp)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)),
+            contentScale = ContentScale.FillWidth
+        )
+        // Token fetch finished with no token = signed out (not loading).
+        tokenTried -> ReceiptHint("Sign in to view the shared receipt.")
+        else -> ReceiptHint("Loading shared receipt…")
+    }
+}
+
+@Composable
+private fun ReceiptHint(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 @Composable

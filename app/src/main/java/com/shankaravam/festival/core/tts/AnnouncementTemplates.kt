@@ -8,6 +8,14 @@ import com.shankaravam.festival.domain.model.HONORIFIC_SRIMATI
 
 enum class AnnouncementLanguage { TELUGU, ENGLISH, BILINGUAL }
 
+/**
+ * T0.2 spoken-template version. Template byte changes already alter the built
+ * text (hence any content hash over it); this constant rides along as the
+ * explicit generation marker for Phase-3 content-addressed audio. Bump on any
+ * edit to the builders below.
+ */
+const val TTS_TEMPLATE_VERSION = "v1"
+
 /** Pandal mic title as stored on the donation (never blank — defaults to శ్రీ). */
 fun honorificTe(donation: Donation): String =
     donation.honorific.ifBlank { HONORIFIC_SRI }
@@ -116,19 +124,24 @@ enum class FestivalPreset(val id: String, val titleTe: String, val titleEn: Stri
 
 /**
  * Single donation announcement (for real-time pop-up when entered at counter).
+ * T0.2: [effectiveAmount] overrides the spoken cash figure (post-correction);
+ * defaults to the raw row so existing callers keep working. Non-cash rows
+ * ignore it (qty/item corrections are out of scope).
  */
 fun buildDonationAnnouncement(
     donation: Donation,
     eventName: String,
-    language: AnnouncementLanguage = AnnouncementLanguage.TELUGU
+    language: AnnouncementLanguage = AnnouncementLanguage.TELUGU,
+    effectiveAmount: Double? = null
 ): String {
     val teluguName = donation.pronunciationText?.ifBlank { null } ?: donation.donorName
     val event = eventName.ifBlank { "ఉత్సవం" }
-    val telugu = teluguSingleAnnouncement(donation, teluguName, event)
+    val amount = effectiveAmount ?: donation.amount
+    val telugu = teluguSingleAnnouncement(donation, teluguName, event, amount)
     return when (language) {
         AnnouncementLanguage.TELUGU -> telugu
-        AnnouncementLanguage.ENGLISH -> englishSingleAnnouncement(donation, event)
-        AnnouncementLanguage.BILINGUAL -> "$telugu ${englishSingleAnnouncement(donation, event)}"
+        AnnouncementLanguage.ENGLISH -> englishSingleAnnouncement(donation, event, amount)
+        AnnouncementLanguage.BILINGUAL -> "$telugu ${englishSingleAnnouncement(donation, event, amount)}"
     }
 }
 
@@ -139,12 +152,14 @@ fun buildDonationAnnouncement(
  */
 fun buildRosterItemAnnouncement(
     donation: Donation,
-    language: AnnouncementLanguage = AnnouncementLanguage.TELUGU
+    language: AnnouncementLanguage = AnnouncementLanguage.TELUGU,
+    effectiveAmount: Double? = null
 ): String {
     val teluguName = donation.pronunciationText?.ifBlank { null } ?: donation.donorName
     val honorific = honorificTe(donation)
+    val amount = effectiveAmount ?: donation.amount
     val telugu = if (!donation.isNonCash) {
-        "$honorific $teluguName గారు, ${safeWordsForAmount(donation.amount)}."
+        "$honorific $teluguName గారు, ${safeWordsForAmount(amount)}."
     } else {
         val item = donation.itemDescription?.ifBlank { null } ?: "సేవ"
         val qty = donation.quantity?.let { q ->
@@ -155,7 +170,7 @@ fun buildRosterItemAnnouncement(
     }
 
     val english = if (!donation.isNonCash) {
-        "${honorificEn(donation.honorific)} ${donation.donorName}, ${formatInr(donation.amount)}."
+        "${honorificEn(donation.honorific)} ${donation.donorName}, ${formatInr(amount)}."
     } else {
         val qty = buildString {
             donation.quantity?.let { append("$it ") }
@@ -192,12 +207,12 @@ fun buildClosingAnnouncement(
         "విరాళాలు సమర్పించిన దాతలందరికీ ఉత్సవ కమిటీ తరపున హృదయపూర్వక ధన్యవాదాలు. Heartfelt thanks to all the donors from the committee."
 }
 
-private fun teluguSingleAnnouncement(donation: Donation, name: String, event: String): String {
+private fun teluguSingleAnnouncement(donation: Donation, name: String, event: String, amount: Double = donation.amount): String {
     val thanks = "ధన్యవాదాలు!"
     val honorific = honorificTe(donation)
     return if (!donation.isNonCash) {
         "$honorific $name గారు $event కోసం " +
-            "${safeWordsForAmount(donation.amount)} విరాళంగా అందించారు. $thanks"
+            "${safeWordsForAmount(amount)} విరాళంగా అందించారు. $thanks"
     } else {
         val item = donation.itemDescription?.ifBlank { null } ?: "సేవ"
         val qty = donation.quantity?.let { q ->
@@ -208,12 +223,12 @@ private fun teluguSingleAnnouncement(donation: Donation, name: String, event: St
     }
 }
 
-private fun englishSingleAnnouncement(donation: Donation, event: String): String {
+private fun englishSingleAnnouncement(donation: Donation, event: String, amount: Double = donation.amount): String {
     val name = donation.donorName
     val honorific = honorificEn(donation.honorific)
     val eventEn = event.ifBlank { "the festival" }
     return if (!donation.isNonCash) {
-        "$honorific $name donated ${formatInr(donation.amount)} towards $eventEn. Thank you!"
+        "$honorific $name donated ${formatInr(amount)} towards $eventEn. Thank you!"
     } else {
         val qty = buildString {
             donation.quantity?.let { append("$it ") }

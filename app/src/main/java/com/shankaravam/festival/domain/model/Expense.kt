@@ -14,8 +14,14 @@ data class Expense(
     val paymentMethod: String = "Cash",
     val vendor: String? = null,
     val notes: String? = null,
-    /** Local file path of the WebP-compressed receipt (plan §18). Never a cloud URL in G1–G5. */
+    /** Local file path of the WebP-compressed receipt (plan §18). Never leaves the device. */
     val receiptPath: String? = null,
+    /**
+     * Phase-3 gateway path (`v1/receipts/{eventId}/{expenseId}`) after
+     * ReceiptUploadWorker PUTs the bytes. Display/sync only — the local
+     * [receiptPath] file stays the offline source of truth.
+     */
+    val receiptUrl: String? = null,
     val addedBy: String = "",
     val addedTime: Long = 0L,
     val createdAt: Long = 0L,

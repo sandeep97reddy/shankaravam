@@ -1,6 +1,7 @@
 package com.shankaravam.festival.presentation.common
 
 import androidx.compose.foundation.horizontalScroll
+import com.shankaravam.festival.core.ui.haptics.LocalAppHaptics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -108,7 +109,7 @@ fun ModernTextField(
 
 /**
  * Traditional auspicious festival amounts (₹101, ₹501, ₹1116, ₹2116, ₹5116).
- * Enables lightning-fast 1-tap counter data entry.
+ * Enables lightning-fast 1-tap counter data entry with subtle tactile feedback.
  */
 @Composable
 fun QuickAmountRow(
@@ -117,6 +118,7 @@ fun QuickAmountRow(
     modifier: Modifier = Modifier,
     amounts: List<Int> = listOf(101, 501, 1116, 2116, 5116, 10116)
 ) {
+    val haptics = LocalAppHaptics.current
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -129,7 +131,10 @@ fun QuickAmountRow(
             val isSelected = currentAmount == amtStr
             FilterChip(
                 selected = isSelected,
-                onClick = { onAmountSelected(amtStr) },
+                onClick = {
+                    haptics.tick()
+                    onAmountSelected(amtStr)
+                },
                 label = {
                     Text(
                         "₹$amtStr",

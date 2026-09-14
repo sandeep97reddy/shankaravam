@@ -79,6 +79,7 @@ import com.shankaravam.festival.domain.model.presenceOf
 import com.shankaravam.festival.domain.model.resolveMemberName
 import com.shankaravam.festival.domain.model.roleOf
 import com.shankaravam.festival.presentation.common.containerViewModel
+import com.shankaravam.festival.presentation.common.rememberContainer
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -271,7 +272,9 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
      * fresh code. Republishing re-opens by design (fresh 10-day window).
      */
     fun closeCode(eventId: String, code: String) {
-        if (!isHeadNow(eventId)) return
+        // Rules admit only the code creator (or master admin) for updates —
+        // a non-creator head's tap would fail server-side, so refuse locally.
+        if (!canManageCode()) return
         viewModelScope.launch {
             _busy.value = "closecode"
             when (val result = container.syncService.closeShareCode(code)) {
@@ -360,6 +363,12 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun approve(eventId: String, member: CloudMember, asRole: String, approvedBy: String) {
+        // Collectors may approve pending→active (rules S1.2), but revoked or
+        // viewer seats cannot — gate locally instead of failing server-side.
+        if (!canApproveNow(eventId)) {
+            _notice.value = "Only active collectors can approve requests."
+            return
+        }
         viewModelScope.launch {
             _busy.value = "approve:${member.userId}"
             when (
@@ -403,6 +412,40 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
         container.authRepository.user.value != null &&
             container.sessionPrefs.myStatus(eventId) == SessionPrefs.STATUS_ACTIVE
 
+    /**
+     * Creator-or-admin check: firestore.rules admits member updates and code
+     * closes only for the event creator (globalHeadId) or the master admin —
+     * a promoted non-creator head would fail server-side. The whitelisted
+     * admin flag/email covers foreign-event heads (rules isGlobalAdmin path).
+     */
+    fun canManageTeam(eventId: String): Boolean {
+        if (!isHeadNow(eventId)) return false
+        val user = container.authRepository.user.value
+        val event = uiState.value.event?.takeIf { it.id == eventId }
+        if (user != null && event != null &&
+            event.globalHeadId.isNotBlank() && event.globalHeadId == user.uid
+        ) return true
+        if (container.sessionPrefs.isGlobalHeadUser) return true
+        return AdminConfig.isGlobalHeadEmail(user?.email)
+    }
+
+    /**
+     * Invite-close check: codes rules admit updates only for the code creator
+     * (usually the event creator who published) or the master admin. The
+     * client does not store createdBy, so the event-creator proxy above is
+     * the closest local signal — non-creator heads get a clear notice instead
+     * of a server denial.
+     */
+    fun canManageCode(): Boolean {
+        val eventId = uiState.value.event?.id ?: return false
+        return canManageTeam(eventId)
+    }
+
+    /** Active-collector check for the approve path (rules isCollector). */
+    fun canApproveNow(eventId: String): Boolean =
+        container.sessionPrefs.myStatus(eventId) == SessionPrefs.STATUS_ACTIVE &&
+            AccessPolicy.canApproveMembers(roleOf(container.sessionPrefs.myRole(eventId)))
+
     fun refreshMembers(eventId: String) {
         if (!canViewRoster(eventId)) return
         viewModelScope.launch {
@@ -429,7 +472,12 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun setMemberRole(eventId: String, member: CloudMember, role: String, status: String) {
-        if (!isHeadNow(eventId)) return
+        // Full-manage is creator-or-admin server-side (approve path excepted,
+        // which flows through approve()); refuse other heads locally.
+        if (!canManageTeam(eventId)) {
+            _notice.value = "Only the festival creator can change roles."
+            return
+        }
         viewModelScope.launch {
             _busy.value = "role:${member.userId}"
             val me = container.authRepository.user.value?.uid ?: ""
@@ -458,6 +506,7 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 }
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -592,6 +641,7 @@ fun CloudSyncScreen(
                     }
                 }
             }
+            GatewayCard()
             val event = state.event
             val user = state.user
             if (event == null) {
@@ -634,7 +684,9 @@ fun CloudSyncScreen(
                     )
                 } else {
                     var selectedTab by remember(event.id) { mutableStateOf(0) }
-                    val isHead = viewModel.isHeadNow(event.id)
+                    // Creator-or-admin proxy: non-creator heads see the team
+                    // read-only and no close button (rules would deny them).
+                    val canManage = viewModel.canManageTeam(event.id)
                     // Verdict Q3: active collectors get a read-only team view.
                     val canView = viewModel.canViewRoster(event.id)
 
@@ -664,7 +716,7 @@ fun CloudSyncScreen(
                             code = state.myCode,
                             busy = busy == "code",
                             onPublish = { viewModel.publishCode(event, user.uid) },
-                            canClose = isHead,
+                            canClose = canManage,
                             closing = busy == "closecode",
                             onClose = { state.myCode?.let { viewModel.closeCode(event.id, it) } }
                         )
@@ -675,7 +727,7 @@ fun CloudSyncScreen(
                             busy = busy == "join",
                             onJoin = { viewModel.join(joinCode, user.uid) {} }
                         )
-                        if (AccessPolicy.canApproveMembers(roleOf(state.myRole))) {
+                        if (viewModel.canApproveNow(event.id)) {
                             ApprovalsCard(
                                 pending = pending,
                                 busyKey = busy,
@@ -690,7 +742,7 @@ fun CloudSyncScreen(
                             team = team,
                             selfUid = user.uid,
                             busyKey = busy,
-                            manageEnabled = isHead,
+                            manageEnabled = canManage,
                             onRefresh = { viewModel.refreshMembers(event.id) },
                             onSetRole = { member, role, status ->
                                 viewModel.setMemberRole(event.id, member, role, status)

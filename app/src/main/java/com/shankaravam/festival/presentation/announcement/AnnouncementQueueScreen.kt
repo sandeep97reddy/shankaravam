@@ -68,6 +68,9 @@ import com.shankaravam.festival.core.theme.DeepMaroon
 import com.shankaravam.festival.core.theme.TempleGold
 import com.shankaravam.festival.core.theme.TempleSaffron
 import com.shankaravam.festival.data.local.SessionPrefs
+import com.shankaravam.festival.domain.model.SARVAM_SPEAKER_ORDER
+import com.shankaravam.festival.domain.model.sarvamPickerLabel
+import com.shankaravam.festival.domain.model.sarvamPickerSublabel
 import com.shankaravam.festival.presentation.common.containerViewModel
 import com.shankaravam.festival.presentation.common.rememberContainer
 import com.shankaravam.festival.presentation.donation.DonationCard
@@ -222,9 +225,12 @@ private fun VoiceSettingsCard() {
     val speaker by prefs.sarvamSpeakerFlow.collectAsState()
     val nativeVoice by prefs.nativeTtsVoiceFlow.collectAsState()
     val hasKey by container.secureKeys.hasKeyFlow.collectAsState()
+    val gatewayUrl by prefs.gatewayBaseUrlFlow.collectAsState()
+    val hasGateway = gatewayUrl.isNotBlank()
+    val hasCloudActive = hasKey || hasGateway
 
     var showKeyDialog by remember { mutableStateOf(false) }
-    var pendingSpeaker by remember { mutableStateOf("priya") }
+    var pendingSpeaker by remember { mutableStateOf("shubh") }
 
     val nativeReady by container.ttsEngine.nativeReady.collectAsState()
     // Reactive: the native engine boots async (~200ms), so reload the list
@@ -247,7 +253,8 @@ private fun VoiceSettingsCard() {
         engineMode = engineMode,
         sarvamSpeaker = speaker,
         nativeVoice = nativeVoice,
-        hasSarvamKey = hasKey
+        hasSarvamKey = hasKey,
+        hasGateway = hasGateway
     )
 
     // Every pick writes prefs (the single source of truth) AND takes effect
@@ -256,7 +263,7 @@ private fun VoiceSettingsCard() {
     fun pickCloud(next: String) {
         prefs.sarvamSpeaker = next
         showMenu = false
-        if (!hasKey) {
+        if (!hasCloudActive) {
             pendingSpeaker = next
             showKeyDialog = true
         } else {
@@ -297,7 +304,15 @@ private fun VoiceSettingsCard() {
                     Text("Temple Voice / గొంతు ఎంపిక", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 }
 
-                if (hasKey) {
+                if (hasGateway) {
+                    Text(
+                        "Gateway ✓",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color(0xFF2E7D32),
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                } else if (hasKey) {
                     Text(
                         "Cloud key ✓",
                         style = MaterialTheme.typography.labelMedium,
@@ -314,7 +329,7 @@ private fun VoiceSettingsCard() {
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                     ) {
                         Text(
-                            "+ Add cloud key",
+                            "+ Connect Gateway",
                             style = MaterialTheme.typography.labelMedium,
                             color = com.shankaravam.festival.core.theme.TempleSaffron,
                             fontWeight = FontWeight.Bold
@@ -344,43 +359,27 @@ private fun VoiceSettingsCard() {
                     expanded = showMenu,
                     onDismissRequest = { showMenu = false }
                 ) {
-                    // Cloud Section
-                    DropdownMenuItem(
-                        text = {
-                            Column {
-                                Text("🌸 Priya (Female) • Recommended", fontWeight = FontWeight.SemiBold)
-                                Text("Sarvam AI Bulbul v3 • Studio Telugu", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        },
-                        onClick = { pickCloud("priya") }
-                    )
-                    DropdownMenuItem(
-                        text = {
-                            Column {
-                                Text("🎙️ Shubh (Male) • Recommended", fontWeight = FontWeight.SemiBold)
-                                Text("Sarvam AI Bulbul v3 • Studio Telugu", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        },
-                        onClick = { pickCloud("shubh") }
-                    )
-                    DropdownMenuItem(
-                        text = {
-                            Column {
-                                Text("🌸 Kavitha (Female)", fontWeight = FontWeight.SemiBold)
-                                Text("Sarvam AI Bulbul v3 • Clear Telugu", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        },
-                        onClick = { pickCloud("kavitha") }
-                    )
-                    DropdownMenuItem(
-                        text = {
-                            Column {
-                                Text("🎙️ Ratan (Male)", fontWeight = FontWeight.SemiBold)
-                                Text("Sarvam AI Bulbul v3 • Clear Telugu", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        },
-                        onClick = { pickCloud("ratan") }
-                    )
+                    // Cloud Section (T0.5 lineup: Shubh default, Pooja
+                    // secondary — single order in Voice.kt).
+                    SARVAM_SPEAKER_ORDER.forEach { option ->
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(
+                                        sarvamPickerLabel(option) +
+                                            if (option == "shubh") " • Recommended" else "",
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        sarvamPickerSublabel(option),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            },
+                            onClick = { pickCloud(option) }
+                        )
+                    }
 
                     HorizontalDivider()
 
@@ -441,7 +440,7 @@ private fun VoiceSettingsCard() {
             onDismissRequest = { showKeyDialog = false },
             title = {
                 Text(
-                    "Sarvam Cloud Voice / శర్వం గొంతు",
+                    "Connect Cloud Voice / క్లౌడ్ గొంతు అనుసంధానం",
                     fontWeight = FontWeight.Bold,
                     color = DeepMaroon
                 )
@@ -449,7 +448,7 @@ private fun VoiceSettingsCard() {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "To use studio Telugu voice (${pendingSpeaker.replaceFirstChar { it.uppercase() }}), enter your Sarvam AI API key. It will be stored securely on this device.",
+                        "To use studio Telugu voice (${pendingSpeaker.replaceFirstChar { it.uppercase() }}), enter your Cloudflare Gateway URL (Recommended — no API key needed on this phone!) or a direct Sarvam API key.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -459,11 +458,21 @@ private fun VoiceSettingsCard() {
                             keyInput = it
                             inputError = null
                         },
-                        label = { Text("Sarvam API Key") },
-                        placeholder = { Text("Paste your API key here") },
+                        label = { Text("Gateway URL or Sarvam Key") },
+                        placeholder = { Text("https://shankaravam-gateway.<subdomain>.workers.dev") },
                         singleLine = true,
                         isError = inputError != null,
-                        supportingText = inputError?.let { { Text(it, color = CrimsonRose) } },
+                        supportingText = {
+                            if (inputError != null) {
+                                Text(inputError!!, color = CrimsonRose)
+                            } else {
+                                Text(
+                                    "Paste your Cloudflare Worker URL (e.g. https://...workers.dev)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -474,7 +483,12 @@ private fun VoiceSettingsCard() {
                     onClick = {
                         val trimmed = keyInput.trim().removeSurrounding("\"").removeSurrounding("'").trim()
                         if (trimmed.isBlank()) {
-                            inputError = "API key cannot be blank"
+                            inputError = "Please enter a Gateway URL or API key"
+                        } else if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.contains("workers.dev")) {
+                            prefs.gatewayBaseUrl = trimmed.trimEnd('/')
+                            prefs.sarvamSpeaker = pendingSpeaker
+                            prefs.voiceEngineMode = com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD
+                            showKeyDialog = false
                         } else {
                             container.secureKeys.setSarvamKey(trimmed)
                             prefs.sarvamSpeaker = pendingSpeaker

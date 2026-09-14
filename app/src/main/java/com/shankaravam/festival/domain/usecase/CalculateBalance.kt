@@ -1,10 +1,13 @@
 package com.shankaravam.festival.domain.usecase
 
 import androidx.compose.runtime.Immutable
+import com.shankaravam.festival.domain.model.Correction
 import com.shankaravam.festival.domain.model.Donation
 import com.shankaravam.festival.domain.model.DonationStatus
 import com.shankaravam.festival.domain.model.Expense
 import com.shankaravam.festival.domain.model.ExpenseStatus
+import com.shankaravam.festival.domain.model.effectiveDonationAmount
+import com.shankaravam.festival.domain.model.effectiveExpenseAmount
 
 /**
  * Balance formula (plan §19): collected confirmed+received cash minus active
@@ -22,19 +25,32 @@ data class BalanceSnapshot(
     val expenseCount: Int = 0
 )
 
-fun calculateBalance(donations: List<Donation>, expenses: List<Expense>): BalanceSnapshot {
+/**
+ * T0.2: sums **effective** (post-correction) amounts via [correctionsByTarget]
+ * (grouped by target record id — see `groupCorrectionsByTarget`). Defaults to
+ * empty so pre-migration call sites keep compiling; pass the grouped log
+ * everywhere money is totaled.
+ */
+fun calculateBalance(
+    donations: List<Donation>,
+    expenses: List<Expense>,
+    correctionsByTarget: Map<String, List<Correction>> = emptyMap()
+): BalanceSnapshot {
     val live = donations.filter { it.status != DonationStatus.CANCELLED }
-    val cash = live.filter { it.countsTowardBalance }.sumOf { it.amount }
+    val cash = live.filter { it.countsTowardBalance }
+        .sumOf { effectiveDonationAmount(it, correctionsByTarget[it.id].orEmpty()) }
     val pledged = live.filter {
         it.status == DonationStatus.PLEDGED || it.status == DonationStatus.PARTIALLY_RECEIVED
-    }.sumOf { it.amount }
+    }.sumOf { effectiveDonationAmount(it, correctionsByTarget[it.id].orEmpty()) }
     val activeExpenses = expenses.filter { it.status == ExpenseStatus.ACTIVE }
+    val expenseTotal = activeExpenses
+        .sumOf { effectiveExpenseAmount(it, correctionsByTarget[it.id].orEmpty()) }
     return BalanceSnapshot(
         cashCollected = cash,
         pledgedTotal = pledged,
         nonCashCount = live.count { it.isNonCash },
-        expenseTotal = activeExpenses.sumOf { it.amount },
-        balance = cash - activeExpenses.sumOf { it.amount },
+        expenseTotal = expenseTotal,
+        balance = cash - expenseTotal,
         donorCount = live.map { it.donorName.trim().lowercase() }.toSet().size,
         expenseCount = activeExpenses.size
     )

@@ -73,6 +73,35 @@ class VoiceConfigTest {
     }
 
     @Test
+    fun cloud_label_shows_speaker_when_gateway_present_without_key() {
+        assertEquals(
+            "🎙️ Shubh (Sarvam Cloud HD)",
+            VoiceConfig(VoiceEngineMode.SARVAM_CLOUD, "shubh", null, hasSarvamKey = false, hasGateway = true).displayLabel()
+        )
+        assertEquals(
+            "🌸 Pooja (Sarvam Cloud HD)",
+            VoiceConfig(VoiceEngineMode.SARVAM_CLOUD, "pooja", null, hasSarvamKey = false, hasGateway = true).displayLabel()
+        )
+    }
+
+    @Test
+    fun status_line_shows_gateway_active() {
+        assertTrue(
+            VoiceConfig(VoiceEngineMode.SARVAM_CLOUD, "shubh", null, hasSarvamKey = false, hasGateway = true)
+                .statusLine().contains("Temple media gateway active")
+        )
+    }
+
+    @Test
+    fun gateway_quota_pill_is_distinct_from_device_pill() {
+        val server = gatewayQuotaPillText()
+        val device = quotaPillText(used = 20, max = 20, resetAt = 1_700_000_000_000L)
+        kotlin.test.assertTrue(server.contains("Temple voice budget"))
+        kotlin.test.assertTrue(device.contains("Cloud quota reached"))
+        kotlin.test.assertNotEquals(server, device)
+    }
+
+    @Test
     fun voiceModeOf_defaults_to_cloud_and_parses_offline() {
         assertEquals(VoiceEngineMode.SARVAM_CLOUD, voiceModeOf(null))
         assertEquals(VoiceEngineMode.SARVAM_CLOUD, voiceModeOf("bogus"))
@@ -95,13 +124,28 @@ class VoiceConfigTest {
     }
 
     @Test
-    fun all_four_sarvam_speakers_render_hd_label_when_key_present() {
-        val speakers = listOf("priya" to "🌸 Priya", "shubh" to "🎙️ Shubh", "kavitha" to "🌸 Kavitha", "ratan" to "🎙️ Ratan")
+    fun all_five_sarvam_speakers_render_hd_label_when_key_present() {
+        val speakers = listOf(
+            "shubh" to "🎙️ Shubh",
+            "pooja" to "🌸 Pooja",
+            "priya" to "🌸 Priya",
+            "kavitha" to "🌸 Kavitha",
+            "ratan" to "🎙️ Ratan"
+        )
         for ((speaker, prefix) in speakers) {
             val config = VoiceConfig(VoiceEngineMode.SARVAM_CLOUD, speaker, null, true)
-            assertTrue(config.displayLabel().startsWith(prefix))
-            assertTrue(config.displayLabel().contains("Sarvam Cloud HD"))
+            assertTrue(config.displayLabel().startsWith(prefix), speaker)
+            assertTrue(config.displayLabel().contains("Sarvam Cloud HD"), speaker)
         }
+    }
+
+    @Test
+    fun default_voice_config_speaks_shubh() {
+        assertEquals("shubh", VoiceConfig().sarvamSpeaker)
+        assertEquals(
+            "🎙️ Shubh (Sarvam Cloud HD)",
+            VoiceConfig(VoiceEngineMode.SARVAM_CLOUD, VoiceConfig().sarvamSpeaker, null, true).displayLabel()
+        )
     }
 
     @Test

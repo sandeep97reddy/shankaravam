@@ -10,12 +10,13 @@ class SarvamCacheNamingTest {
 
     @Test
     fun full_sentence_and_roster_caches_never_collide() {
+        // T0.5: omitted speaker defaults to Shubh (temple default voice).
         assertEquals(
-            "donation_abc123_priya.mp3",
+            "donation_abc123_shubh.mp3",
             SarvamTtsClient.cacheFileName("abc123", roster = false)
         )
         assertEquals(
-            "donation_abc123_priya_roster.mp3",
+            "donation_abc123_shubh_roster.mp3",
             SarvamTtsClient.cacheFileName("abc123", roster = true)
         )
         assertNotEquals(
@@ -100,15 +101,32 @@ class SarvamCacheNamingTest {
     }
 
     @Test
+    fun cas_slots_are_hash_namespaced_and_round_trip() {
+        assertEquals(
+            "audio_27b47756fd423f48871ac61ae97d6e2e6457a5852535da434528308f94d4eb1d.mp3",
+            SarvamTtsClient.casFileName("27b47756fd423f48871ac61ae97d6e2e6457a5852535da434528308f94d4eb1d")
+        )
+        kotlin.test.assertTrue(SarvamTtsClient.isCasHash("a".repeat(64)))
+        // Donation ids, short hex, and uppercase never qualify (never write garbage names).
+        kotlin.test.assertFalse(SarvamTtsClient.isCasHash("abc123"))
+        kotlin.test.assertFalse(SarvamTtsClient.isCasHash("A".repeat(64)))
+        kotlin.test.assertFalse(SarvamTtsClient.isCasHash("donation_abc123_shubh.mp3"))
+    }
+
+    @Test
     fun normalizeSarvamSpeaker_maps_legacy_and_defaults_correctly() {
         assertEquals("kavitha", normalizeSarvamSpeaker("meera"))
         assertEquals("aditya", normalizeSarvamSpeaker("arvind"))
+        // T0.5: stored choices pass through (never force-migrated)…
         assertEquals("priya", normalizeSarvamSpeaker("priya"))
         assertEquals("shubh", normalizeSarvamSpeaker("shubh"))
+        assertEquals("pooja", normalizeSarvamSpeaker("pooja"))
         assertEquals("ratan", normalizeSarvamSpeaker("ratan"))
         assertEquals("kavitha", normalizeSarvamSpeaker("kavitha"))
-        assertEquals("priya", normalizeSarvamSpeaker(null))
-        assertEquals("priya", normalizeSarvamSpeaker("invalid_speaker"))
+        // …while unset/corrupt values land on Shubh (temple default).
+        assertEquals("shubh", normalizeSarvamSpeaker(null))
+        assertEquals("shubh", normalizeSarvamSpeaker("  "))
+        assertEquals("shubh", normalizeSarvamSpeaker("invalid_speaker"))
     }
 
     @Test

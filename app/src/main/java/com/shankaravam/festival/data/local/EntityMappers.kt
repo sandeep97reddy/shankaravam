@@ -67,7 +67,8 @@ fun ExpenseEntity.toDomain() = Expense(
     id = id, eventId = eventId, amount = amount, description = description,
     category = category, dateMillis = dateMillis, paidBy = paidBy,
     paymentMethod = paymentMethod, vendor = vendor, notes = notes,
-    receiptPath = receiptPath, addedBy = addedBy, addedTime = addedTime,
+    receiptPath = receiptPath, receiptUrl = receiptUrl,
+    addedBy = addedBy, addedTime = addedTime,
     createdAt = createdAt, updatedAt = updatedAt,
     status = decodeEnum(status, ExpenseStatus.ACTIVE), version = version,
     syncStatus = decodeEnum(syncStatus, SyncStatus.PENDING_UPLOAD)
@@ -77,7 +78,8 @@ fun Expense.toEntity() = ExpenseEntity(
     id = id, eventId = eventId, amount = amount, description = description,
     category = category, dateMillis = dateMillis, paidBy = paidBy,
     paymentMethod = paymentMethod, vendor = vendor, notes = notes,
-    receiptPath = receiptPath, addedBy = addedBy, addedTime = addedTime,
+    receiptPath = receiptPath, receiptUrl = receiptUrl,
+    addedBy = addedBy, addedTime = addedTime,
     createdAt = createdAt, updatedAt = updatedAt, status = status.name,
     version = version, syncStatus = syncStatus.name
 )

@@ -29,8 +29,7 @@ private class FakeDonationRepository : DonationRepository {
     override suspend fun updateSyncState(id: String, status: SyncStatus) = Unit
     override suspend fun updateAudioStatus(
         id: String,
-        status: com.shankaravam.festival.domain.model.AudioStatus,
-        now: Long
+        status: com.shankaravam.festival.domain.model.AudioStatus
     ) = Unit
     override suspend fun pendingSync(): List<Donation> = saved.toList()
     override suspend fun latestForEvent(eventId: String): Donation? =

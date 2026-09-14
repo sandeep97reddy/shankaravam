@@ -153,6 +153,10 @@ Stored role vocabulary: `global_head` (Head) / `organizer` (Collector: money + a
 Status is orthogonal: `active` / `pending` / `revoked`. Never store `role="revoked"`.
 
 - Unknown/corrupt role strings fall back to `member` (least privilege).
+- Money writes need BOTH: `AccessPolicy.canWriteMoney` = active + non-member (pending/revoked/viewer refused locally with sync-matching copy — the rules would deny them and strand PENDING_UPLOAD).
+- Team management (promote/revoke) and invite-close need creator-or-admin (`globalHeadId == uid` or whitelisted admin); approvals need active-collector. Client gates mirror the rules so buttons never fail server-side.
+
+- Unknown/corrupt role strings fall back to `member` (least privilege).
 - Client email check is UI-only. `firestore.rules` (`isGlobalAdmin`, Google-provider + verified pin) is the security boundary.
 - Global Head account is whitelisted in one place client-side (`AdminConfig`) and in `firestore.rules`; rotate both together.
 - Member docs are merge-written only (presence/identity touch never wipes `joinedAt` or role/status).
@@ -162,12 +166,12 @@ Status is orthogonal: `active` / `pending` / `revoked`. Never store `role="revok
 
 ```text
 users/{userId}
-codes/{code}                        # invite code → eventId, createdBy owner, 10-day expiry (client-enforced)
+codes/{code}                        # invite code → eventId, createdBy owner, 10-day expiry (Timestamp expiresAt; client + server enforced, legacy grandfathered), head-closeable
 config/tts_settings                 # { sarvamApiKey, defaultSpeaker } — head-write, member-read
-  # F5: collectors auto-pull it after every sync + on Settings entry/sign-in
-  # (15-min throttle; blank/same → no-op; explicit offline lock survives).
+# F5: collectors auto-pull it after every sync + on Settings entry/sign-in
+# (15-min throttle; blank/same → no-op; explicit offline lock survives).
 events/{eventId}                    # header { name, temple, location, dates, status, globalHeadId }
-  members/{userId}                  # { role, status, approvedBy, joinedAt, email?, displayName?, counterName?, deviceTag?, lastActiveAt }
+  members/{userId}                  # { role, status, approvedBy, joinedAt, viaCode (join invite, server-verified live), email?, displayName?, counterName?, deviceTag?, lastActiveAt }
   # F4: counterName = entered counter → Google name → omitted (never Counter-XXXX); deviceTag = last-4 only; ledger maps carry deviceTag, never the full UUID.
   donations/{id} | expenses/{id}    # ledger (no audio fields)
   corrections/{id}                  # append-only (create-only, no update/delete)

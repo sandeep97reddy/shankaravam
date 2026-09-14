@@ -120,6 +120,18 @@ class AuthRepository(
             )
         }
 
+    /**
+     * Phase-3 gateway calls: fresh Firebase ID token for the Worker's
+     * `Authorization: Bearer` gate. Null when signed out/unconfigured — the
+     * caller falls back (native TTS / local file), never blocks. Never throws.
+     */
+    suspend fun idToken(): String? = withContext(Dispatchers.IO) {
+        val a = auth ?: return@withContext null
+        runCatching {
+            a.currentUser?.getIdToken(false)?.await()?.token?.takeIf { it.isNotBlank() }
+        }.getOrNull()
+    }
+
     fun signOut() {
         sessionPrefs.googleDisplayName = null
         sessionPrefs.googleEmail = null

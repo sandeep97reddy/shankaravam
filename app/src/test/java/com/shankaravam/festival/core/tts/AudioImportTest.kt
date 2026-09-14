@@ -19,6 +19,17 @@ class AudioImportTest {
     }
 
     @Test
+    fun hash_matches_worker_cross_language_vector() {
+        // Byte-twin contract with tools/worker (canonicalHashInput): the
+        // Worker recomputes this exact hex over the received fields. If this
+        // vector drifts, every resolve fails with hash-mismatch.
+        assertEquals(
+            "27b47756fd423f48871ac61ae97d6e2e6457a5852535da434528308f94d4eb1d",
+            audioHashFor("hello", "TELUGU", "shubh", false)
+        )
+    }
+
+    @Test
     fun normalize_strips_numbers_punctuation_but_keeps_telugu() {
         assertEquals("01ramesh", normalizeClipName("01 Ramesh.mp3"))
         assertEquals("రమేష్", normalizeClipName("రమేష్.mp3"))

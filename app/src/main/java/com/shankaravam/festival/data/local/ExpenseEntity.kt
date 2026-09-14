@@ -20,6 +20,8 @@ data class ExpenseEntity(
     val vendor: String?,
     val notes: String?,
     val receiptPath: String?,
+    /** Phase-3 gateway path (display/sync only; bytes never enter Room/Firestore). */
+    val receiptUrl: String?,
     val addedBy: String,
     val addedTime: Long,
     val createdAt: Long,

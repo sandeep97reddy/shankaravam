@@ -86,6 +86,7 @@ dependencies {
     implementation(libs.androidx.security.crypto)
     implementation(libs.play.services.auth)
     implementation(libs.zxing.core)
+    implementation(libs.coil.compose)
     implementation(libs.kotlinx.coroutines.play.services)
     ksp(libs.androidx.room.compiler)
 

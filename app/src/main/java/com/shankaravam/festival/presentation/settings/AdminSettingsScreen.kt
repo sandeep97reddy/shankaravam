@@ -41,6 +41,9 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material.icons.filled.Vibration
+import com.shankaravam.festival.core.i18n.appStrings
+import com.shankaravam.festival.core.ui.haptics.LocalAppHaptics
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -90,6 +93,8 @@ import com.shankaravam.festival.core.util.newRecordId
 import com.shankaravam.festival.data.local.SessionPrefs
 import com.shankaravam.festival.di.AppContainer
 import com.shankaravam.festival.domain.model.AccessPolicy
+import com.shankaravam.festival.domain.model.SARVAM_SPEAKER_ORDER
+import com.shankaravam.festival.domain.model.sarvamPickerLabel
 import com.shankaravam.festival.domain.model.ActivityActions
 import com.shankaravam.festival.domain.model.ActivityRecord
 import com.shankaravam.festival.domain.model.AdminConfig
@@ -216,8 +221,13 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
     val appLanguage: StateFlow<String> = container.sessionPrefs.appLanguage
     fun setLanguage(lang: String) = container.sessionPrefs.setAppLanguage(lang)
 
+    val hapticFeedbackEnabled: StateFlow<Boolean> = container.sessionPrefs.hapticFeedbackEnabled
+    fun setHapticFeedbackEnabled(enabled: Boolean) = container.sessionPrefs.setHapticFeedbackEnabled(enabled)
+
     val counterName: StateFlow<String> = container.sessionPrefs.counterName
     fun setCounterName(name: String) = container.sessionPrefs.setCounterName(name)
+
+    val gatewayBaseUrl: StateFlow<String> = container.sessionPrefs.gatewayBaseUrlFlow
 
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice.asStateFlow()
@@ -501,6 +511,7 @@ fun AdminSettingsScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val currentLang by viewModel.appLanguage.collectAsState()
+    val hapticEnabled by viewModel.hapticFeedbackEnabled.collectAsState()
     val counterName by viewModel.counterName.collectAsState()
     val notice by viewModel.notice.collectAsState()
     val busy by viewModel.busy.collectAsState()
@@ -514,6 +525,8 @@ fun AdminSettingsScreen(
     val signInIntent by viewModel.signInIntent.collectAsState()
     val deleting by viewModel.deleting.collectAsState()
     val engineMode by viewModel.engineMode.collectAsState()
+    val gatewayBaseUrl by viewModel.gatewayBaseUrl.collectAsState()
+    val hasGateway = gatewayBaseUrl.isNotBlank()
     // Phase 2: live speaker flow — a pick in the queue card refreshes the
     // cloud-card chips here without reopening Settings.
     val liveSpeaker by viewModel.speakerFlow.collectAsState()
@@ -601,7 +614,13 @@ fun AdminSettingsScreen(
                 onSelectLanguage = { viewModel.setLanguage(it) }
             )
 
-            // 2. Google Account (Direct authentication & committee identity)
+            // 2. App Preferences (Subtle Tactile Haptics)
+            AppPreferencesCard(
+                hapticEnabled = hapticEnabled,
+                onToggleHaptic = { viewModel.setHapticFeedbackEnabled(it) }
+            )
+
+            // 3. Google Account (Direct authentication & committee identity)
             GoogleAccountCard(
                 user = state.user,
                 isConfigured = state.isAuthConfigured,
@@ -780,8 +799,10 @@ fun AdminSettingsScreen(
             // Fix-B5: the summary follows the engine mode — a saved key while
             // offline must not claim "Cloud Voice Configured" as active.
             val cloudSummary = when {
-                engineMode == com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE && state.hasSarvamKey ->
-                    if (currentLang == SessionPrefs.LANG_TELUGU) "ఆఫ్‌లైన్ మోడ్ (కీ సేవ్ చేయబడింది)" else "Offline Mode Active (Key Saved)"
+                engineMode == com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE && (state.hasSarvamKey || hasGateway) ->
+                    if (currentLang == SessionPrefs.LANG_TELUGU) "ఆఫ్‌లైన్ మోడ్" else "Offline Mode Active"
+                hasGateway ->
+                    if (currentLang == SessionPrefs.LANG_TELUGU) "గేట్‌వే క్లౌడ్ గొంతు సిద్ధంగా ఉంది" else "Gateway Cloud Voice Active (Cloudflare R2)"
                 state.hasSarvamKey ->
                     if (currentLang == SessionPrefs.LANG_TELUGU) "శర్వం క్లౌడ్ గొంతు సిద్ధంగా ఉంది" else "Sarvam Cloud Voice Configured"
                 else ->
@@ -798,6 +819,11 @@ fun AdminSettingsScreen(
                 isExpanded = cloudExpanded,
                 onToggle = { cloudExpanded = !cloudExpanded }
             ) {
+                // Primary: Temple Media Gateway (Cloudflare Worker + R2)
+                GatewayCard()
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
                 // F5 shared-vs-local pill: honest about where the key came from.
                 val voiceSource = when {
                     state.hasSarvamKey && state.voiceSyncedAt > 0L -> {
@@ -822,6 +848,7 @@ fun AdminSettingsScreen(
                     testStatus = sarvamTestStatus,
                     testing = testingSarvam,
                     hasKey = state.hasSarvamKey,
+                    hasGateway = hasGateway,
                     canPublish = AccessPolicy.canManageKeys(state.role)
                         && AdminConfig.isGlobalHeadEmail(state.cloudEmail),
                     onSaveLocal = { key, speaker -> viewModel.saveKeyLocally(key, speaker) },
@@ -1113,6 +1140,103 @@ private fun LanguageSelectionCard(
                     selected = currentLang == SessionPrefs.LANG_TELUGU,
                     onClick = { onSelectLanguage(SessionPrefs.LANG_TELUGU) },
                     label = { Text("తెలుగు (Telugu)", fontWeight = FontWeight.SemiBold) }
+                )
+            }
+        }
+    }
+}
+
+/** App Preferences Card — subtle tactile haptics control. */
+@Composable
+private fun AppPreferencesCard(
+    hapticEnabled: Boolean,
+    onToggleHaptic: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val strings = appStrings()
+    val haptics = LocalAppHaptics.current
+    OutlinedCard(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        border = CardDefaults.outlinedCardBorder()
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(SaffronWash)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Vibration,
+                        contentDescription = null,
+                        tint = TempleSaffron,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+                Column {
+                    Text(
+                        text = strings.preferencesSectionTitle,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = if (hapticEnabled) strings.hapticFeedbackTitle else "Vibration off / వైబ్రేషన్ ఆఫ్",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    .clickable {
+                        val next = !hapticEnabled
+                        if (next) haptics.tick()
+                        onToggleHaptic(next)
+                    }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text(
+                        text = strings.hapticFeedbackTitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = strings.hapticFeedbackSubtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = hapticEnabled,
+                    onCheckedChange = {
+                        if (it) haptics.tick()
+                        onToggleHaptic(it)
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = androidx.compose.ui.graphics.Color.White,
+                        checkedTrackColor = TempleSaffron
+                    )
                 )
             }
         }
@@ -1493,6 +1617,7 @@ private fun VoiceKeyContent(
     testStatus: String?,
     testing: Boolean,
     hasKey: Boolean,
+    hasGateway: Boolean = false,
     canPublish: Boolean,
     onSaveLocal: (String, String) -> Unit,
     onClearKey: () -> Unit,
@@ -1504,6 +1629,33 @@ private fun VoiceKeyContent(
     voiceShared: Boolean = false
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (hasGateway) {
+            Surface(
+                color = Color(0xFFE8F5E9),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.CheckCircle,
+                        contentDescription = null,
+                        tint = Color(0xFF2E7D32),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "Temple Media Gateway is active. The cloud Worker manages Sarvam AI voice synthesis without requiring a key on this phone.",
+                        color = Color(0xFF2E7D32),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+
         if (voiceSource != null) {
             Surface(
                 color = if (voiceShared) Color(0xFFE8F5E9)
@@ -1522,15 +1674,18 @@ private fun VoiceKeyContent(
             }
         }
         Text(
-            text = "Optional high-fidelity cloud Telugu voice for announcements. Leave empty to use free offline Android voice.",
+            text = if (hasGateway)
+                "Direct Sarvam API Key (Optional local override — gateway handles cloud voice automatically):"
+            else
+                "Optional high-fidelity cloud Telugu voice for announcements. Leave empty to use free offline Android voice.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         OutlinedTextField(
             value = key,
             onValueChange = onKeyChange,
-            label = { Text("Sarvam API Key") },
-            placeholder = { Text("Empty = offline voice only") },
+            label = { Text(if (hasGateway) "Direct Sarvam API Key (Override)" else "Sarvam API Key") },
+            placeholder = { Text(if (hasGateway) "Managed by gateway" else "Empty = offline voice only") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
@@ -1565,16 +1720,12 @@ private fun VoiceKeyContent(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf(
-                "priya" to "🌸 Priya (Female)",
-                "shubh" to "🎙️ Shubh (Male)",
-                "kavitha" to "🌸 Kavitha (Female)",
-                "ratan" to "🎙️ Ratan (Male)"
-            ).forEach { (option, label) ->
+            // T0.5 lineup: Shubh default, Pooja secondary (single order in Voice.kt).
+            SARVAM_SPEAKER_ORDER.forEach { option ->
                 FilterChip(
                     selected = com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(speaker) == option,
                     onClick = { onSpeakerChange(option) },
-                    label = { Text(label, fontWeight = FontWeight.Medium) }
+                    label = { Text(sarvamPickerLabel(option), fontWeight = FontWeight.Medium) }
                 )
             }
         }

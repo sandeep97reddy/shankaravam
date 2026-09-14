@@ -1,0 +1,26 @@
+# ShankaRavam temple-media gateway (R2_IMPLEMENTATION_PLAN Phase 2).
+# Deploy: npx wrangler deploy   (SARVAM_API_KEY must already exist: wrangler secret put SARVAM_API_KEY)
+# FIREBASE_* below are PUBLIC client identifiers (already shipped in the APK
+# via google-services.json) — not secrets. SARVAM_API_KEY is the only secret
+# and lives only here, never in the repo.
+
+name = "shankaravam-gateway"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[[r2_buckets]]
+binding = "AUDIO_BUCKET"
+bucket_name = "shankaravam-media"
+
+[vars]
+FIREBASE_PROJECT_ID = "shankaravam-bcec6"
+FIREBASE_WEB_API_KEY = "AIzaSyAG2PSPjw4P2LO2nzNFkejH9ZDhvsZF2vM"
+
+# Optional hardening: daily-new-synthesis cap backend. Without this the cap
+# falls back to per-isolate memory (best-effort). To enable:
+#   npx wrangler kv:namespace create RATE_KV
+# then uncomment:
+# [[kv_namespaces]]
+# binding = "RATE_KV"
+# id = "<paste id here>"

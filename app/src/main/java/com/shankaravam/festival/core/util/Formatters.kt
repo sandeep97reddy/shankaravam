@@ -31,10 +31,16 @@ fun formatReceiptDateTime(millis: Long): String =
  * native ACTION_SEND intent (zero cloud). No gothram: it is never collected.
  * IDs are UUIDs, so the reference is the first 8 chars, honestly labeled.
  */
+/**
+ * F1-class fix (receipt edition): [effectiveAmount] overrides the printed
+ * cash figure (post-correction); defaults to the raw row so existing callers
+ * keep working. Non-cash rows ignore it (qty/item corrections out of scope).
+ */
 fun buildWhatsAppReceipt(
     donation: Donation,
     eventName: String,
-    counterName: String
+    counterName: String,
+    effectiveAmount: Double? = null
 ): String {
     val ref = donation.id.take(8).uppercase().ifBlank { "—" }
     val donorLine = "${donation.honorific} ${donation.donorName.trim()} గారు"
@@ -47,7 +53,7 @@ fun buildWhatsAppReceipt(
             .joinToString(" ").ifEmpty { "వస్తు కానుక" }
         "🎁 *కానుక / Offering:* $item"
     } else {
-        "💰 *మొత్తం / Amount:* ${formatInr(donation.amount)} (${donation.paymentMethod})"
+        "💰 *మొత్తం / Amount:* ${formatInr(effectiveAmount ?: donation.amount)} (${donation.paymentMethod})"
     }
     val counter = counterName.trim().ifBlank { "ప్రధాన కౌంటర్" }
     val event = eventName.trim().ifBlank { "ఉత్సవ సమితి" }

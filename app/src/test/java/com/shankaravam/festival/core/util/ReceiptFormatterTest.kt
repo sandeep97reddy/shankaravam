@@ -67,6 +67,16 @@ class ReceiptFormatterTest {
     }
 
     @Test
+    fun corrected_receipt_prints_effective_amount() {
+        val raw = buildWhatsAppReceipt(donation(amount = 500.0), "E", "C")
+        assertTrue(raw.contains("₹500"))
+        // F3: post-grace correction speaks/prints the effective figure.
+        val fixed = buildWhatsAppReceipt(donation(amount = 500.0), "E", "C", effectiveAmount = 5000.0)
+        assertTrue(fixed.contains("₹5,000"))
+        assertFalse(fixed.contains("₹500)"))
+    }
+
+    @Test
     fun date_line_renders_in_a_fixed_locale() {
         val default = TimeZone.getDefault()
         try {

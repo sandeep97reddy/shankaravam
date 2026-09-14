@@ -60,8 +60,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
+import com.shankaravam.festival.core.ui.haptics.LocalAppHaptics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -81,7 +80,7 @@ import com.shankaravam.festival.presentation.common.containerViewModel
 /**
  * Counter-optimized donation form with modernized input boxes,
  * leading icons, highlighted star marks (*), quick auspicious amount chips,
- * and bilingual support. Commits to Room in <10ms + haptic feedback.
+ * and bilingual support. Commits to Room in <10ms + subtle haptic feedback.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -93,14 +92,14 @@ fun DonationEntryScreen(
     val form by viewModel.form.collectAsState()
     val eventId by viewModel.currentEventId.collectAsState()
     val isClosed by viewModel.isEventClosed.collectAsState()
-    val haptics = LocalHapticFeedback.current
+    val haptics = LocalAppHaptics.current
     val snackbar = remember { SnackbarHostState() }
     val strings = appStrings()
 
     LaunchedEffect(form.saveState) {
         when (val s = form.saveState) {
             is SaveState.Saved -> {
-                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptics.success()
                 viewModel.consumeSaved()
                 onDone()
             }
@@ -425,7 +424,10 @@ fun DonationEntryScreen(
 
             // 9. Large Prominent Save Button
             Button(
-                onClick = { viewModel.save() },
+                onClick = {
+                    haptics.click()
+                    viewModel.save()
+                },
                 enabled = form.canSave && !isClosed,
                 modifier = Modifier
                     .fillMaxWidth()

@@ -43,10 +43,27 @@ class SessionPrefs(context: Context) {
     private val _playTempleChimeFlow = MutableStateFlow(playTempleChime)
     val playTempleChimeFlow: StateFlow<Boolean> = _playTempleChimeFlow.asStateFlow()
 
+    private val _hapticFeedbackEnabled = MutableStateFlow(prefs.getBoolean(KEY_HAPTIC_ENABLED, true))
+    val hapticFeedbackEnabled: StateFlow<Boolean> = _hapticFeedbackEnabled.asStateFlow()
+
+    fun setHapticFeedbackEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_HAPTIC_ENABLED, enabled).apply()
+        _hapticFeedbackEnabled.value = enabled
+    }
+
     private val _voiceEngineModeFlow =
         MutableStateFlow(com.shankaravam.festival.domain.model.voiceModeOf(prefs.getString(KEY_ENGINE_MODE, null)))
     val voiceEngineModeFlow: StateFlow<com.shankaravam.festival.domain.model.VoiceEngineMode> =
         _voiceEngineModeFlow.asStateFlow()
+
+    private val _gatewayBaseUrlFlow = MutableStateFlow(
+        when (val stored = prefs.getString(KEY_GATEWAY_URL, null)) {
+            null -> DEFAULT_GATEWAY_URL
+            "OFFLINE" -> ""
+            else -> stored.trim().trimEnd('/')
+        }
+    )
+    val gatewayBaseUrlFlow: StateFlow<String> = _gatewayBaseUrlFlow.asStateFlow()
 
     fun setCurrentEventId(id: String?) {
         prefs.edit().apply { if (id == null) remove(KEY_EVENT) else putString(KEY_EVENT, id) }.apply()
@@ -138,9 +155,9 @@ class SessionPrefs(context: Context) {
         get() = prefs.getString(KEY_STATUS_FILTER, null)
         set(value) = prefs.edit().apply { if (value == null) remove(KEY_STATUS_FILTER) else putString(KEY_STATUS_FILTER, value) }.apply()
 
-    /** Seconds of silence between queue announcements (plan §11: 2s/5s/10s). */
+    /** Seconds of silence between queue announcements (plan §11: 2s/5s/10s; default 2s). */
     var queueGapSeconds: Int
-        get() = prefs.getInt(KEY_QUEUE_GAP, 5).coerceIn(0, 30)
+        get() = prefs.getInt(KEY_QUEUE_GAP, 2).coerceIn(0, 30)
         set(value) = prefs.edit().putInt(KEY_QUEUE_GAP, value).apply()
 
     var queueSort: String
@@ -186,8 +203,12 @@ class SessionPrefs(context: Context) {
         get() = prefs.getString(KEY_SARVAM, "") ?: ""
         set(value) = prefs.edit().putString(KEY_SARVAM, value.trim()).apply()
 
+    /**
+     * T0.5: fresh installs (no stored key) resolve to Shubh. Stored choices
+     * pass through normalization untouched — never force-migrated.
+     */
     var sarvamSpeaker: String
-        get() = com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(prefs.getString(KEY_SPEAKER, "priya"))
+        get() = com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(prefs.getString(KEY_SPEAKER, "shubh"))
         set(value) {
             val norm = com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(value)
             prefs.edit().putString(KEY_SPEAKER, norm).apply()
@@ -214,6 +235,24 @@ class SessionPrefs(context: Context) {
     var audioCacheV2Migrated: Boolean
         get() = prefs.getBoolean(KEY_AUDIO_V2, false)
         set(value) = prefs.edit().putBoolean(KEY_AUDIO_V2, value).apply()
+
+    /**
+     * Phase-3 temple gateway base URL. Defaults to the deployed Cloudflare Worker gateway
+     * (`DEFAULT_GATEWAY_URL`) for out-of-the-box cloud voice (Sarvam AI) and receipt photos.
+     * Stored as "OFFLINE" if explicitly disconnected by the user.
+     */
+    var gatewayBaseUrl: String
+        get() = when (val stored = prefs.getString(KEY_GATEWAY_URL, null)) {
+            null -> DEFAULT_GATEWAY_URL
+            "OFFLINE" -> ""
+            else -> stored.trim().trimEnd('/')
+        }
+        set(value) {
+            val cleaned = value.trim().trimEnd('/')
+            val toStore = if (cleaned.isBlank()) "OFFLINE" else cleaned
+            prefs.edit().putString(KEY_GATEWAY_URL, toStore).apply()
+            _gatewayBaseUrlFlow.value = if (cleaned.isBlank()) "" else cleaned
+        }
 
     /**
      * P4 Sarvam budget: 20 cloud generations per 30-min rolling window per
@@ -429,6 +468,10 @@ class SessionPrefs(context: Context) {
         private const val KEY_SARVAM_WINDOW = "sarvam_window_start"
         private const val KEY_SARVAM_COUNT = "sarvam_window_count"
         private const val KEY_AUDIO_V2 = "audio_cache_v2_migrated"
+        private const val KEY_GATEWAY_URL = "gateway_base_url"
+
+        /** Phase-3 default Cloudflare Worker media gateway. */
+        const val DEFAULT_GATEWAY_URL = "https://shankaravam-gateway.kingsandeepreddy1.workers.dev"
 
         /** P4 budget: 20 Sarvam calls per 30 minutes per device. */
         const val SARVAM_MAX_CALLS = 20
@@ -447,6 +490,7 @@ class SessionPrefs(context: Context) {
         private const val KEY_NATIVE_SPEED = "native_tts_speed"
         private const val KEY_QUEUE_ROSTER_MODE = "queue_roster_mode"
         private const val KEY_TEMPLE_CHIME = "temple_chime"
+        private const val KEY_HAPTIC_ENABLED = "haptic_feedback_enabled"
         private const val KEY_QUEUE_PRESET = "queue_festival_preset"
         private const val KEY_GOOGLE_NAME = "google_display_name"
         private const val KEY_GOOGLE_EMAIL = "google_email"

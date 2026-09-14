@@ -2,6 +2,7 @@ package com.shankaravam.festival.core.tts
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import java.io.File
 import java.nio.file.Files
@@ -44,6 +45,62 @@ class AudioCachePruneTest {
             assertTrue("donation_mid2.mp3" !in victims)
             assertTrue("donation_fresh.mp3" !in victims)
             assertEquals(2, victims.size)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun prunable_filter_covers_phrases_and_spares_backups_chime_and_test() {
+        // T0.4: phrase clips join the ceiling; everything else keeps its exemption.
+        assertTrue(SarvamTtsClient.isPrunableCacheFile("donation_abc_priya.mp3"))
+        assertTrue(SarvamTtsClient.isPrunableCacheFile("donation_abc.mp3"))
+        assertTrue(SarvamTtsClient.isPrunableCacheFile("phrase_intro_vinayaka_shubh.mp3"))
+        assertFalse(SarvamTtsClient.isPrunableCacheFile("donation_abc.mp3.bak-1700000000000"))
+        assertFalse(SarvamTtsClient.isPrunableCacheFile("phrase_intro_shubh.mp3.bak-1"))
+        assertFalse(SarvamTtsClient.isPrunableCacheFile("temple_chime.wav"))
+        assertFalse(SarvamTtsClient.isPrunableCacheFile("audio_test_sample.mp3"))
+        assertFalse(SarvamTtsClient.isPrunableCacheFile("random_voice.mp3"))
+        assertFalse(SarvamTtsClient.isPrunableCacheFile("donation_abc.wav"))
+    }
+
+    @Test
+    fun aged_phrase_clips_are_pruned_live_donation_clips_survive() {
+        val dir = Files.createTempDirectory("audio-prune-phrase").toFile()
+        try {
+            clip(dir, "phrase_intro_old_shubh.mp3", 30)
+            clip(dir, "phrase_outro_old_priya.mp3", 30)
+            clip(dir, "donation_live_priya.mp3", 30)
+            clip(dir, "temple_chime.wav", 30)
+            val candidates = dir.listFiles()!!
+                .filter { SarvamTtsClient.isPrunableCacheFile(it.name) }
+
+            val cutoff = System.currentTimeMillis() - 20L * 24L * 60L * 60L * 1000L
+            val victims = SarvamTtsClient.selectPruneVictims(
+                files = candidates,
+                maxFiles = 10,
+                cutoffMillis = cutoff,
+                excludeNames = setOf("donation_live_priya.mp3")
+            ).map { it.name }.toSet()
+
+            assertTrue("phrase_intro_old_shubh.mp3" in victims)
+            assertTrue("phrase_outro_old_priya.mp3" in victims)
+            assertTrue("donation_live_priya.mp3" !in victims)
+            assertEquals(2, victims.size)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun per_donation_scrub_never_touches_shared_phrases() {
+        val dir = Files.createTempDirectory("audio-scrub-phrase").toFile()
+        try {
+            java.io.File(dir, "donation_id1_priya.mp3").writeBytes(byteArrayOf(1))
+            java.io.File(dir, "phrase_intro_old_shubh.mp3").writeBytes(byteArrayOf(2))
+            val deleted = SarvamTtsClient.deleteDonationFiles(dir, "id1")
+            assertEquals(1, deleted)
+            assertTrue(java.io.File(dir, "phrase_intro_old_shubh.mp3").exists())
         } finally {
             dir.deleteRecursively()
         }

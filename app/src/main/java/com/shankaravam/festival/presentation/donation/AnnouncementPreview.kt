@@ -9,5 +9,9 @@ import com.shankaravam.festival.domain.model.Donation
  * Signature frozen since G3 — delegates to the G4 template engine so text
  * and speech can never drift apart.
  */
-fun buildAnnouncementPreview(donation: Donation, eventName: String): String =
-    buildDonationAnnouncement(donation, eventName, AnnouncementLanguage.TELUGU)
+fun buildAnnouncementPreview(
+    donation: Donation,
+    eventName: String,
+    effectiveAmount: Double? = null
+): String =
+    buildDonationAnnouncement(donation, eventName, AnnouncementLanguage.TELUGU, effectiveAmount)

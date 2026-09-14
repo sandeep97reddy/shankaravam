@@ -112,6 +112,9 @@ data class AppStrings(
     // Settings
     val settingsTitle: String,
     val languageSectionTitle: String,
+    val preferencesSectionTitle: String,
+    val hapticFeedbackTitle: String,
+    val hapticFeedbackSubtitle: String,
     val voiceSettingsTitle: String
 )
 
@@ -210,6 +213,9 @@ val EnglishStrings = AppStrings(
 
     settingsTitle = "Settings & Voice",
     languageSectionTitle = "App Language",
+    preferencesSectionTitle = "App Preferences",
+    hapticFeedbackTitle = "Haptic Feedback (Vibration)",
+    hapticFeedbackSubtitle = "Subtle vibration on button taps and saved entries",
     voiceSettingsTitle = "Cloud Voice (Sarvam AI)"
 )
 
@@ -308,6 +314,9 @@ val TeluguStrings = AppStrings(
 
     settingsTitle = "సెట్టింగ్స్ & వాయిస్",
     languageSectionTitle = "యాప్ భాష (Language)",
+    preferencesSectionTitle = "యాప్ ప్రాధాన్యతలు",
+    hapticFeedbackTitle = "స్పర్శ స్పందన (వైబ్రేషన్)",
+    hapticFeedbackSubtitle = "బటన్లు నొక్కినప్పుడు మరియు భద్రపరచినప్పుడు సున్నితమైన స్పందన",
     voiceSettingsTitle = "క్లౌడ్ వాయిస్ (Sarvam AI)"
 )
 

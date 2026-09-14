@@ -3,9 +3,9 @@
 > Single source of truth for build progress. Update this file at the END of every Group session, in the same task as the code changes. Stale rows mislead the next session.
 
 ## Current Pointer
-- **Status:** ALL GROUPS DONE ✅ + Fix Track F1–F6 ALL DONE ✅ — network voice default + offline retry fallback + one-voice Sarvam phrase cache, 131/131 tests green
-- **Next session:** on-device field verification & production deployment
-- **Plan:** `festival organizer app plan.md` §24 (6 groups, 1 group = 1 session) + `SYNC_VOICE_FIX_PLAN.md` (F1–F6 complete)
+- **Status:** ALL GROUPS DONE ✅ + Fix Track F1–F6 ALL DONE ✅ + **R2 Media-Sharing Phase 0–3 DONE ✅ (uncommitted)** — local ledger/voice fixes, Worker gateway code, Android receipts + CAS audio; `assembleDebug` + 31 suites green
+- **Next session:** user deploys Worker (`tools/worker/README.md`), runs `verify.mjs`, pastes gateway URL in Settings → Cloud Sync, two-device pilot; then Phase 4 (Sarvam-key removal)
+- **Plan:** `festival organizer app plan.md` 📎24 + `SYNC_VOICE_FIX_PLAN.md` (F1–F6) + `R2_IMPLEMENTATION_PLAN.md` / `R2_TASKS.md` / `R2_CONTEXT.md` (Phase 0–3 done, Phase 4 + cloud deploy pending)
 - **Handoff details:** see `SESSION_HANDOFF.md`
 
 ## Sync/Voice Fix Track — Phase 6 (F6) ✅ done 13-09-2026
@@ -104,6 +104,23 @@ Legend: ⬜ todo · 🟡 in_progress · ✅ done · ⏭️ skipped (G6 may ship 
 - **Tests:** +`SarvamCacheNamingTest` speaker/migration/deletion, +`VoiceConfigTest` label + pill text
 - **Fix batch (control-flow trace, 5/5):** prefetch now observes speaker/mode/key flows (speaker switch + fresh key retrigger generation); human imports play before Sarvam in full mode (share sheet aligned); quota pill clears on offline switch; device-voice picks no longer hijack engine mode; card summaries are mode-aware (cloud names speaker, offline+key says "Key Saved")
 - **Next:** on-device pass — switch Priya→Shubh mid-queue, exhaust 20 calls and watch the pill, offline-mode queue with horn speaker
+
+## Access Hardening Batch (P3 status gate + creator gates + server invite binding) — ✅ done 14-09-2026
+- **P3 status-aware money gate:** `AccessPolicy.canWriteMoney(role, status)` + `writeBlockedReason()` (sync-matching copy); wired into donation/expense entry `save()` + donation correct + expense correct/cancel; `canAddExpense` fixed to `role != MEMBER` (was `true` for viewers — contradicted `canWriteLedger`). Offline/local events unaffected (status defaults ACTIVE).
+- **Creator-or-admin UI gates:** `CloudSyncViewModel.canManageTeam()/canManageCode()/canApproveNow()` — close-invite + promote/revoke hidden from non-creator heads (rules deny them), approvals require active-collector; `setMemberRole/approve/closeCode` re-gated in VM with clear notices.
+- **Server-side invite binding:** `memberToMap(viaCode)` stamped on join; `firestore.rules` `isLiveCode()` verifies code→event match + active status + Timestamp expiry on every pending/member create; `viaCode` added to self-touch keys; `expiresAt` now written as Firestore `Timestamp` (legacy Longs tolerated client-side, grandfathered server-side). Rules dry-run compiles.
+- **R2 lifecycle codified:** `tools/worker/r2-lifecycle.json` (`audio/` → 30d, receipts retained) + README apply/verify steps (matches the dashboard rule already set).
+- **Tests:** +`canWriteMoney`/`writeBlockedReason`/unknown-status tests, +`member_via_code` mapper test; `member_can_only_view` corrected.
+- **Verify:** `assembleDebug` + `testDebugUnitTest` 175/175 green + `firebase deploy --only firestore:rules --dry-run` compiles. **Needs real deploy:** `firebase deploy --only firestore:rules` (joins from old builds without `viaCode` will be denied until updated — republish codes after deploy).
+
+## R2 Media-Sharing Track — Phase 0–3 ✅ done 14-09-2026 (uncommitted)
+- **Phase 0 local (T0.1–T0.5):** grace-edit audio purge + human `.bak` quarantine; effective amounts latest-wins (balance + voice + export + writers); `updateAudioStatus` timestamp drop; prefetch read-cap + phrase prune (cap later deleted); Shubh default / Pooja secondary lineup
+- **Phase 2 Worker (`tools/worker/`, uncommitted):** `src/index.ts` + `src/lib.ts` — JWKS verify, forwarded-token Firestore seat read (fail-closed, no service account), `POST /v1/audio/resolve` (hash-recompute compare, 500-char cap, HEAD→Sarvam-JIT-once→PUT, 1,000/day cap via optional KV else per-isolate), receipt PUT/GET (150 KB + WebP-magic), auth-gated GETs (no signed-URL expiry machinery). Verify: 15 vitest + `tsc` clean; live matrix via `verify.mjs` after user deploy
+- **Phase 3 Android (uncommitted):** Room v2→v3 (`expenses.receiptUrl`, `MIGRATION_2_3`), mappers carry path-only (bytes never leave device), `attach/applyReceiptUrl` DAOs + receipt merge branch in `ingestExpenseDocs` (never CONFLICT, never re-upload loop), `ReceiptUploadWorker` + save-time schedule + Coil `SharedReceiptImage` on expand + gateway URL card in Cloud Sync; CAS `audio_{hash}.mp3` dual-read (new writes CAS-only), engine cloud-first branch, prefetch rewire (N+1 loop deleted), server-429 pill; cross-language hash vector pinned both sides (`27b47756…eb1d`); worst bilingual measured 357 chars → 500 cap kept (300 would 400 legit rows)
+- **Verify:** `assembleDebug` + `testDebugUnitTest` 31 suites green (incl. `EffectiveAmountsTest` 12, `GraceAudioInvalidationTest` 7, `VoiceLineupTest` 4, `AudioStatusWriteContractTest` 2, `MaxTemplateLengthTest` 2, receipt mapper test)
+- **User-side before pilot:** add `FIREBASE_PROJECT_ID`/`FIREBASE_WEB_API_KEY` vars (values in `tools/worker/README.md`), `wrangler deploy`, `verify.mjs` run, paste URL in app Settings, two-device matrix (§5.2.5). Phase 4 key-removal only after audio proven on two devices
+- **Deviations (deliberate, in `tools/worker/README.md`):** auth-gated GETs instead of short-lived URLs; receipt GET streams bytes (no 302); race convergence via re-HEAD; `?eventId=` carries opaque UUID only
+- **Post-build audit fixes F1–F4 (14-09-2026, uncommitted):** F1 post-grace purge + `legacyCacheCovers()` bypass in engine (both play paths) and prefetch filter (heals peer-corrected rows too); F2 conditional FAILED (only when cloud work was attempted — no spurious FAILED on keyless installs); F3 WhatsApp receipt prints effective amount; F4 receipt view distinguishes unconfigured/signed-out/loading. Suite green after each
 
 ## How To Update (end of each session)
 1. Flip the finished Group row to ✅, next row to 🟡.

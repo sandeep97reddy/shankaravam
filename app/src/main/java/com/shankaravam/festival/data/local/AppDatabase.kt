@@ -14,6 +14,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * exportSchema=false: schema snapshots start when the first migration ships (post-G5).
  *
  * v2: donations.honorific (pandal mic title — శ్రీ/శ్రీమతి/కుమారి, default శ్రీ).
+ * v3: expenses.receiptUrl (Phase-3 gateway path, NULL until first upload).
  */
 @Database(
     entities = [
@@ -23,7 +24,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CorrectionEntity::class,
         ActivityEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -60,9 +61,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Phase-3 receipts: nullable gateway path (no backfill — NULL until upload). */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE expenses ADD COLUMN receiptUrl TEXT")
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, NAME)
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
     }
 }

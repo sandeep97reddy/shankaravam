@@ -40,7 +40,13 @@ class ReportExporter(context: Context) {
         expenses: List<Expense>,
         corrections: List<Correction>
     ): File = withContext(Dispatchers.IO) {
-        val totals = calculateBalance(donations, expenses)
+        // T0.2: executive summary uses effective figures; ledger tables keep
+        // raw rows with the audit-trail section showing corrections.
+        val totals = calculateBalance(
+            donations,
+            expenses,
+            com.shankaravam.festival.domain.model.groupCorrectionsByTarget(corrections)
+        )
         val file = reportFile("shankaravam_report_${System.currentTimeMillis()}.pdf")
         val writer = PdfStatementWriter(
             templeName = templeName.trim().ifBlank { "ఉత్సవ సమితి" },

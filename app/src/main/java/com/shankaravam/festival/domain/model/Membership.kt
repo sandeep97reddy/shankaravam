@@ -21,7 +21,10 @@ fun memberStatusOf(name: String?): MemberStatus =
 object AccessPolicy {
     fun canAddDonation(role: UserRole): Boolean = role != UserRole.MEMBER
     fun canAnnounce(role: UserRole): Boolean = role != UserRole.MEMBER
-    fun canAddExpense(role: UserRole): Boolean = true
+    // Viewer/member never writes money: firestore.rules canWriteLedger admits
+    // active global_head/organizer/creator only. (Was `true` for all roles —
+    // contradicted the rules and stranded viewer rows as PENDING_UPLOAD.)
+    fun canAddExpense(role: UserRole): Boolean = role != UserRole.MEMBER
     fun canExport(role: UserRole): Boolean = role != UserRole.MEMBER
     fun canCorrect(role: UserRole): Boolean = role != UserRole.MEMBER
     fun canCancelExpense(role: UserRole): Boolean = role != UserRole.MEMBER
@@ -30,6 +33,28 @@ object AccessPolicy {
     fun canManageKeys(role: UserRole): Boolean = role == UserRole.GLOBAL_HEAD
     fun canViewTeamRoster(role: UserRole): Boolean = role == UserRole.GLOBAL_HEAD
     fun canManageMembers(role: UserRole): Boolean = role == UserRole.GLOBAL_HEAD
+
+    /**
+     * Status-aware money gate (P3): role alone is not enough — pending and
+     * revoked collectors must not write locally either, or the row strands as
+     * PENDING_UPLOAD after the rules deny it. Offline/local-only events keep
+     * full powers (myStatus defaults ACTIVE there).
+     */
+    fun canWriteMoney(role: UserRole, status: MemberStatus): Boolean =
+        status == MemberStatus.ACTIVE && role != UserRole.MEMBER
+
+    /**
+     * Human copy for a blocked write, matching the sync Blocked vocabulary
+     * (FirestoreSyncService SyncOutcome.Blocked). Null when allowed.
+     */
+    fun writeBlockedReason(role: UserRole, status: MemberStatus): String? {
+        if (canWriteMoney(role, status)) return null
+        return when (status) {
+            MemberStatus.REVOKED -> "Access revoked by the head — changes stay on this device."
+            MemberStatus.PENDING -> "Waiting for head approval — entries stay on this device until approved."
+            MemberStatus.ACTIVE -> "Viewing access — only collectors can record money."
+        }
+    }
 }
 
 /**
