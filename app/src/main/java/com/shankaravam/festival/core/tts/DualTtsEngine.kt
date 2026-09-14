@@ -269,6 +269,50 @@ class DualTtsEngine(
         withChime(onDone, onError) { speakNative(text, onDone, onError) }
     }
 
+    /** F6: Checks if a pre-generated phrase (intro/outro) is cached for [speaker]. */
+    fun cachedPhrase(key: String, speaker: String? = null): File? =
+        sarvam.cachedPhraseFile(
+            key,
+            normalizeSarvamSpeaker(speaker ?: runCatching { speakerProvider() }.getOrDefault("priya"))
+        )
+
+    /** F6: Prefetch helper to synthesize and cache an intro or outro phrase. */
+    suspend fun ensurePhraseCached(
+        key: String,
+        text: String,
+        apiKey: String,
+        speaker: String = "priya"
+    ): File? {
+        if (apiKey.isBlank()) return null
+        return runCatching {
+            sarvam.getOrGeneratePhraseAudio(key, text, apiKey, speaker)
+        }.getOrNull()
+    }
+
+    /**
+     * F6: Speaks opening intro or closing outro phrase in the active Sarvam voice
+     * if cached, otherwise falls back to Android native TTS. Single voice queue by construction.
+     */
+    fun playPhraseBest(
+        text: String,
+        cacheKey: String,
+        onDone: () -> Unit,
+        onError: () -> Unit,
+        speaker: String? = null
+    ) {
+        withChime(onDone, onError) {
+            val offlineOnly = engineModeProvider() == com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE
+            if (!offlineOnly) {
+                val activeSpeaker = normalizeSarvamSpeaker(speaker ?: runCatching { speakerProvider() }.getOrDefault("priya"))
+                cachedPhrase(cacheKey, activeSpeaker)?.let {
+                    playFile(it, onDone, onError)
+                    return@withChime
+                }
+            }
+            speakNative(text, onDone, onError)
+        }
+    }
+
     fun playFile(file: File, onDone: () -> Unit, onError: () -> Unit) {
         playFileInternal(file, abandonOnDone = true, onDone = onDone, onError = onError)
     }

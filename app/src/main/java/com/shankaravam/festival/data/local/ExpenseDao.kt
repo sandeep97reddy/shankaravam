@@ -17,6 +17,13 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE syncStatus IN ('LOCAL_ONLY','PENDING_UPLOAD','SYNC_FAILED') ORDER BY createdAt ASC")
     suspend fun pendingSync(): List<ExpenseEntity>
 
+    /**
+     * Event-scoped pending rows for cloud upload (P0 fix — see
+     * DonationDao.pendingSyncForEvent). Sync must never use the unscoped query.
+     */
+    @Query("SELECT * FROM expenses WHERE eventId = :eventId AND syncStatus IN ('LOCAL_ONLY','PENDING_UPLOAD','SYNC_FAILED') ORDER BY createdAt ASC")
+    suspend fun pendingSyncForEvent(eventId: String): List<ExpenseEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(expense: ExpenseEntity)
 
@@ -26,6 +33,10 @@ interface ExpenseDao {
     /** G6 sync bookkeeping — no version bump (see DonationDao). */
     @Query("UPDATE expenses SET syncStatus = :status WHERE id = :id")
     suspend fun updateSyncState(id: String, status: String)
+
+    /** F3 push-stamp mirror (see DonationDao.markSynced). Version untouched. */
+    @Query("UPDATE expenses SET syncStatus = :status, updatedAt = :stampedAt WHERE id = :id")
+    suspend fun markSynced(id: String, status: String, stampedAt: Long)
 
     // No @Delete for ledger cancels: cancelled expenses stay in the ledger (plan §18).
     // Event-scoped deletes below exist ONLY for DeleteLocalEventUseCase, gated on

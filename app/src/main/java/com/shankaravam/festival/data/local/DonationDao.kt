@@ -27,6 +27,15 @@ interface DonationDao {
     @Query("SELECT * FROM donations WHERE syncStatus IN ('LOCAL_ONLY','PENDING_UPLOAD','SYNC_FAILED') ORDER BY createdAt ASC")
     suspend fun pendingSync(): List<DonationEntity>
 
+    /**
+     * Event-scoped pending rows for cloud upload (P0 fix). The unscoped
+     * [pendingSync] above is display-only (dashboard badge); sync MUST use
+     * this — uploading another festival's rows into this event's Firestore
+     * subcollection is cross-festival ledger contamination.
+     */
+    @Query("SELECT * FROM donations WHERE eventId = :eventId AND syncStatus IN ('LOCAL_ONLY','PENDING_UPLOAD','SYNC_FAILED') ORDER BY createdAt ASC")
+    suspend fun pendingSyncForEvent(eventId: String): List<DonationEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(donation: DonationEntity)
 
@@ -46,6 +55,14 @@ interface DonationDao {
      */
     @Query("UPDATE donations SET syncStatus = :status WHERE id = :id")
     suspend fun updateSyncState(id: String, status: String)
+
+    /**
+     * F3 push-stamp: marks uploaded AND mirrors the cloud stamp into the local
+     * row atomically, so later edits compare against the base peers actually
+     * saw (no phantom conflicts, no re-upload loops). Version untouched.
+     */
+    @Query("UPDATE donations SET syncStatus = :status, updatedAt = :stampedAt WHERE id = :id")
+    suspend fun markSynced(id: String, status: String, stampedAt: Long)
 
     // No @Delete for ledger voids: voided rows are flagged CANCELLED, never removed (plan §16).
     // Event-scoped deletes below exist ONLY for DeleteLocalEventUseCase, gated on

@@ -6,9 +6,13 @@ import com.shankaravam.festival.core.util.CODE_TTL_MILLIS
 import com.shankaravam.festival.core.util.Outcome
 import com.shankaravam.festival.core.util.isCodeLive
 import com.shankaravam.festival.data.local.AppDatabase
+import com.shankaravam.festival.data.local.EventEntity
+import com.shankaravam.festival.data.local.SecureKeyStore
 import com.shankaravam.festival.data.local.SessionPrefs
 import com.shankaravam.festival.domain.model.AdminConfig
 import com.shankaravam.festival.domain.model.SyncStatus
+import com.shankaravam.festival.domain.model.VoiceEngineMode
+import com.shankaravam.festival.domain.model.shouldApplySharedKey
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
@@ -21,6 +25,33 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
 data class SyncResult(val uploaded: Int, val downloaded: Int, val conflicts: Int)
+
+/** F3 read fudge: covers inter-device clock skew on push stamps (see [stampForPush]). */
+const val SYNC_FUDGE_MILLIS: Long = 120_000L
+
+/** F5 voice auto-pull throttle (owner ruling: 15 min ≈ <1% of Spark quota). */
+const val VOICE_PULL_THROTTLE_MILLIS: Long = 15L * 60L * 1000L
+
+/**
+ * F3 push stamp (pure + unit-tested): offline rows carry stale `updatedAt`
+ * that peers' watermarks would skip forever ("worked yesterday, dead today").
+ * Stamping `max(local, now)` at cloud entry guarantees every peer syncing
+ * after the push downloads them. `createdAt` (audit) is never touched; the
+ * stamp is mirrored into Room atomically via `markSynced`.
+ */
+fun stampForPush(localUpdatedAt: Long, now: Long = System.currentTimeMillis()): Long =
+    maxOf(localUpdatedAt, now)
+
+/**
+ * F3 sync result: Done (synced), Blocked (pending/revoked/signed-out — show
+ * the message, NEVER retry: retrying PERMISSION_DENIED hot-loops the worker),
+ * Failed (network/unknown — retry).
+ */
+sealed interface SyncOutcome {
+    data class Done(val result: SyncResult) : SyncOutcome
+    data class Blocked(val message: String) : SyncOutcome
+    data class Failed(val message: String) : SyncOutcome
+}
 
 /**
  * Team-directory row (ADMIN_HEAD_PLAN S2.2). Identity/presence fields are
@@ -48,72 +79,101 @@ data class CloudMember(
  */
 class FirestoreSyncService(
     private val database: AppDatabase,
-    private val prefs: SessionPrefs
+    private val prefs: SessionPrefs,
+    /** F5: auto-pull target. Set post-construction-safe via AppContainer (lazy). */
+    private val secureKeys: SecureKeyStore? = null
 ) {
     private fun events() = Firebase.firestore.collection("events")
 
-    suspend fun syncEvent(eventId: String): Outcome<SyncResult> = withContext(Dispatchers.IO) {
-        runCatching {
+    suspend fun syncEvent(eventId: String): SyncOutcome = withContext(Dispatchers.IO) {
+        try {
+            // Seat-first (F3): learn approval/revoke BEFORE touching ledger —
+            // a pending joiner's ledger read throws PERMISSION_DENIED and used
+            // to abort the whole sync before the seat refresh below ever ran
+            // (approval deadlock: stuck pending forever). Seat MISSING is
+            // fine: the head's first sync has no member doc yet and passes via
+            // the isEventCreator rules path (creator bootstrap).
+            val me = runCatching { Firebase.auth.currentUser }.getOrNull()
+                ?: return@withContext SyncOutcome.Blocked("Sign in to sync — entries stay on this device.")
+            var seatRole: String? = null
+            var seatStatus: String? = null
+            var seatApprovedBy = ""
+            if (prefs.isCloudEvent(eventId)) {
+                val seat = runCatching {
+                    events().document(eventId).collection("members").document(me.uid).get().await()
+                }.getOrNull()
+                val role = seat?.getString("role")
+                val status = seat?.getString("status")
+                if (role != null && status != null) {
+                    seatRole = role
+                    seatStatus = status
+                    seatApprovedBy = seat.getString("approvedBy") ?: ""
+                    prefs.setMyRole(eventId, role)
+                    prefs.setMyStatus(eventId, status)
+                    if (status == SessionPrefs.STATUS_PENDING) {
+                        return@withContext SyncOutcome.Blocked("Waiting for head approval — entries stay on this device until approved.")
+                    }
+                    if (status == SessionPrefs.STATUS_REVOKED) {
+                        return@withContext SyncOutcome.Blocked("Access revoked by the head — changes stay on this device.")
+                    }
+                }
+            }
+
             var uploaded = 0
             var downloaded = 0
             var conflicts = 0
             val eventRef = events().document(eventId)
 
-            // Event header first: joiners resolve codes to an id, but the doc
-            // itself was never uploaded — Device B saw an empty dashboard.
+            // Event header (merge — never wipe fields another device owns).
             runCatching {
                 val local = database.eventDao().observeEvent(eventId).first()
                 if (local != null) {
-                    eventRef.set(FirestoreMappers.eventToMap(local)).await()
+                    eventRef.set(FirestoreMappers.eventToMap(local), SetOptions.merge()).await()
                 }
             }
 
-            database.donationDao().pendingSync().forEach { row ->
+            // Uploads: push-stamped (F3) + mirrored locally, event-scoped (P0).
+            database.donationDao().pendingSyncForEvent(eventId).forEach { row ->
+                val stamp = stampForPush(row.updatedAt)
                 eventRef.collection("donations").document(row.id)
-                    .set(FirestoreMappers.donationToMap(row, prefs.deviceId)).await()
-                database.donationDao().updateSyncState(row.id, SyncStatus.SYNCED.name)
+                    .set(FirestoreMappers.donationToMap(row.copy(updatedAt = stamp), prefs.deviceId.takeLast(4).uppercase())).await()
+                database.donationDao().markSynced(row.id, SyncStatus.SYNCED.name, stamp)
                 uploaded++
             }
-            database.expenseDao().pendingSync().forEach { row ->
+            database.expenseDao().pendingSyncForEvent(eventId).forEach { row ->
+                val stamp = stampForPush(row.updatedAt)
                 eventRef.collection("expenses").document(row.id)
-                    .set(FirestoreMappers.expenseToMap(row, prefs.deviceId)).await()
-                database.expenseDao().updateSyncState(row.id, SyncStatus.SYNCED.name)
+                    .set(FirestoreMappers.expenseToMap(row.copy(updatedAt = stamp), prefs.deviceId.takeLast(4).uppercase())).await()
+                database.expenseDao().markSynced(row.id, SyncStatus.SYNCED.name, stamp)
                 uploaded++
             }
-            database.correctionDao().pendingSync().forEach { row ->
+            database.correctionDao().pendingSyncForEvent(eventId).forEach { row ->
                 eventRef.collection("corrections").document(row.id)
                     .set(FirestoreMappers.correctionToMap(row)).await()
                 database.correctionDao().updateSyncState(row.id, SyncStatus.SYNCED.name)
                 uploaded++
             }
 
-            val since = prefs.lastSyncMillis(eventId)
+            // Downloads share one ingest path with the foreground listener.
+            val since = (prefs.lastSyncMillis(eventId) - SYNC_FUDGE_MILLIS).coerceAtLeast(0L)
             downloaded += pullDonations(eventRef, eventId, since).also { conflicts += it.second }.first
             downloaded += pullExpenses(eventRef, eventId, since).also { conflicts += it.second }.first
+            // Corrections (F3: previously upload-only — peers never got them).
+            downloaded += pullCorrections(eventRef, eventId, prefs.lastCorrectionMillis(eventId))
 
-            // S3.2/S3.5 presence + own-status refresh: best-effort, NEVER fails
-            // the ledger sync. One merge-write per sync per device (Spark-safe);
-            // signed-out / never-joined devices skip silently. Role/status are
-            // echoed back verbatim so the S1 self-touch rule (equality-pinned)
-            // always holds; the read also enforces revoke/approve locally.
-            if (prefs.isCloudEvent(eventId)) {
+            // Presence: best-effort merge for the known-active seat only.
+            // Never fails the ledger sync; never runs from snapshot callbacks.
+            if (prefs.isCloudEvent(eventId) && seatRole != null && seatStatus != null) {
                 runCatching {
-                    val me = Firebase.auth.currentUser ?: return@runCatching
-                    val seatRef = eventRef.collection("members").document(me.uid)
-                    val snap = seatRef.get().await()
-                    val curRole = snap.getString("role") ?: return@runCatching
-                    val curStatus = snap.getString("status") ?: return@runCatching
-                    prefs.setMyRole(eventId, curRole)
-                    prefs.setMyStatus(eventId, curStatus)
-                    seatRef.set(
+                    eventRef.collection("members").document(me.uid).set(
                         FirestoreMappers.memberToMap(
-                            role = curRole,
-                            status = curStatus,
-                            approvedBy = snap.getString("approvedBy") ?: "",
+                            role = seatRole,
+                            status = seatStatus,
+                            approvedBy = seatApprovedBy,
                             joinedAt = null,
                             email = me.email,
                             displayName = me.displayName,
-                            counterName = prefs.rawCounterName(),
+                            counterName = prefs.syncCounterName(),
                             deviceTag = prefs.deviceId.takeLast(4).uppercase(),
                             lastActiveAt = System.currentTimeMillis()
                         ),
@@ -123,26 +183,96 @@ class FirestoreSyncService(
             }
 
             prefs.setLastSyncMillis(eventId, System.currentTimeMillis())
-            SyncResult(uploaded, downloaded, conflicts)
-        }.fold(
-            onSuccess = { Outcome.Ok(it) },
-            onFailure = { Outcome.Err(it.message ?: "Sync failed. Will retry.") }
-        )
+            // F5: shared voice follows every successful sync (throttled, silent,
+            // never fails the ledger result).
+            runCatching { maybeAutoPullVoice() }
+            SyncOutcome.Done(SyncResult(uploaded, downloaded, conflicts))
+        } catch (e: Exception) {
+            SyncOutcome.Failed(e.message ?: "Sync failed. Will retry.")
+        }
     }
+
+    /**
+     * F5 shared-voice auto-pull (pure decision in [shouldApplySharedKey]).
+     * Throttled to [VOICE_PULL_THROTTLE_MILLIS], except when the device holds
+     * no key at all (first acquisition is always attempted). Returns whether
+     * a new key was applied and whether the cloud publishes any key, so VMs
+     * can refresh UI / phrase notices. Never throws.
+     */
+    data class VoicePullResult(val applied: Boolean, val remotePresent: Boolean)
+
+    suspend fun maybeAutoPullVoice(force: Boolean = false, respectLock: Boolean = true): VoicePullResult =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val store = secureKeys ?: return@runCatching VoicePullResult(false, false)
+                val now = System.currentTimeMillis()
+                val localKey = store.getSarvamKey()
+                if (!force && localKey.isNotBlank() &&
+                    now - prefs.lastVoicePullAt() < VOICE_PULL_THROTTLE_MILLIS
+                ) {
+                    return@runCatching VoicePullResult(false, true)
+                }
+                prefs.setLastVoicePullAt(now)
+                val remote = when (val r = readTtsKey()) {
+                    is Outcome.Ok -> r.value
+                    is Outcome.Err -> return@runCatching VoicePullResult(false, false)
+                }
+                val decision = shouldApplySharedKey(
+                    localKey, remote.first, prefs.voiceOfflineLocked, respectLock
+                )
+                if (!decision.applyKey) return@runCatching VoicePullResult(false, true)
+                store.setSarvamKey(remote.first)
+                prefs.sarvamSpeaker = remote.second
+                if (decision.flipToCloud) prefs.voiceEngineMode = VoiceEngineMode.SARVAM_CLOUD
+                prefs.setLastVoiceSyncAt(now)
+                VoicePullResult(true, true)
+            }.getOrDefault(VoicePullResult(false, false))
+        }
 
     private suspend fun pullDonations(
         eventRef: com.google.firebase.firestore.DocumentReference,
         eventId: String,
         since: Long
+    ): Pair<Int, Int> = ingestDonationDocs(
+        eventId,
+        eventRef.collection("donations").whereGreaterThan("updatedAt", since).get().await().documents
+    )
+
+    private suspend fun pullExpenses(
+        eventRef: com.google.firebase.firestore.DocumentReference,
+        eventId: String,
+        since: Long
+    ): Pair<Int, Int> = ingestExpenseDocs(
+        eventId,
+        eventRef.collection("expenses").whereGreaterThan("updatedAt", since).get().await().documents
+    )
+
+    private suspend fun pullCorrections(
+        eventRef: com.google.firebase.firestore.DocumentReference,
+        eventId: String,
+        since: Long
+    ): Int = ingestCorrectionDocs(
+        eventId,
+        eventRef.collection("corrections").whereGreaterThan("createdAt", since).get().await().documents
+    )
+
+    /**
+     * F3 shared ingest: identical upsert/conflict rules for the periodic pull
+     * and the foreground listener. Advances the ledger watermark past
+     * everything seen (monotonic — re-deliveries are idempotent no-ops).
+     * Returns (downloaded, conflicts).
+     */
+    suspend fun ingestDonationDocs(
+        eventId: String,
+        docs: List<com.google.firebase.firestore.DocumentSnapshot>
     ): Pair<Int, Int> {
         var downloaded = 0
         var conflicts = 0
-        val snapshot = eventRef.collection("donations")
-            .whereGreaterThan("updatedAt", since)
-            .get().await()
-        for (doc in snapshot.documents) {
+        var maxSeen = prefs.lastSyncMillis(eventId)
+        for (doc in docs) {
             val data = doc.data ?: continue
             val remote = FirestoreMappers.donationFromMap(doc.id, eventId, data) ?: continue
+            if (remote.updatedAt > maxSeen) maxSeen = remote.updatedAt
             val local = database.donationDao().observeById(doc.id).first()
             if (local == null) {
                 database.donationDao().upsert(remote)
@@ -152,22 +282,22 @@ class FirestoreSyncService(
                 conflicts++
             }
         }
+        if (maxSeen > prefs.lastSyncMillis(eventId)) prefs.setLastSyncMillis(eventId, maxSeen)
         return downloaded to conflicts
     }
 
-    private suspend fun pullExpenses(
-        eventRef: com.google.firebase.firestore.DocumentReference,
+    /** F3 shared ingest for expenses (see [ingestDonationDocs]). */
+    suspend fun ingestExpenseDocs(
         eventId: String,
-        since: Long
+        docs: List<com.google.firebase.firestore.DocumentSnapshot>
     ): Pair<Int, Int> {
         var downloaded = 0
         var conflicts = 0
-        val snapshot = eventRef.collection("expenses")
-            .whereGreaterThan("updatedAt", since)
-            .get().await()
-        for (doc in snapshot.documents) {
+        var maxSeen = prefs.lastSyncMillis(eventId)
+        for (doc in docs) {
             val data = doc.data ?: continue
             val remote = FirestoreMappers.expenseFromMap(doc.id, eventId, data) ?: continue
+            if (remote.updatedAt > maxSeen) maxSeen = remote.updatedAt
             val local = database.expenseDao().observeById(doc.id).first()
             if (local == null) {
                 database.expenseDao().upsert(remote)
@@ -177,7 +307,32 @@ class FirestoreSyncService(
                 conflicts++
             }
         }
+        if (maxSeen > prefs.lastSyncMillis(eventId)) prefs.setLastSyncMillis(eventId, maxSeen)
         return downloaded to conflicts
+    }
+
+    /**
+     * F3 corrections ingest (createdAt cursor — correction docs carry no
+     * updatedAt). Set-by-id is idempotent; existing rows are never touched.
+     * Returns the downloaded count.
+     */
+    suspend fun ingestCorrectionDocs(
+        eventId: String,
+        docs: List<com.google.firebase.firestore.DocumentSnapshot>
+    ): Int {
+        var downloaded = 0
+        var maxSeen = prefs.lastCorrectionMillis(eventId)
+        for (doc in docs) {
+            val data = doc.data ?: continue
+            val remote = FirestoreMappers.correctionFromMap(doc.id, eventId, data) ?: continue
+            if (remote.createdAt > maxSeen) maxSeen = remote.createdAt
+            if (database.correctionDao().countById(doc.id) == 0) {
+                database.correctionDao().insert(remote)
+                downloaded++
+            }
+        }
+        prefs.setLastCorrectionMillis(eventId, maxSeen)
+        return downloaded
     }
 
     // ---- sharing / membership ----
@@ -188,7 +343,14 @@ class FirestoreSyncService(
      * re-opens a previously closed code — republishing IS the re-open path.
      * No rules change needed: create/update already pass for the creator.
      */
-    suspend fun publishShareCode(eventId: String, code: String, eventName: String, uid: String): Outcome<Unit> =
+    suspend fun publishShareCode(
+        eventId: String,
+        code: String,
+        eventName: String,
+        uid: String,
+        email: String? = null,
+        displayName: String? = null
+    ): Outcome<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val fs: FirebaseFirestore = Firebase.firestore
@@ -225,7 +387,12 @@ class FirestoreSyncService(
                         FirestoreMappers.memberToMap(
                             role = "global_head", status = "active",
                             approvedBy = uid,
-                            joinedAt = existingJoinedAt ?: System.currentTimeMillis()
+                            joinedAt = existingJoinedAt ?: System.currentTimeMillis(),
+                            email = email,
+                            displayName = displayName,
+                            counterName = prefs.syncCounterName(),
+                            deviceTag = prefs.deviceId.takeLast(4).uppercase(),
+                            lastActiveAt = now
                         ),
                         SetOptions.merge()
                     ).await()
@@ -311,7 +478,7 @@ class FirestoreSyncService(
                         joinedAt = existingJoinedAt ?: now,
                         email = effectiveEmail,
                         displayName = effectiveName,
-                        counterName = prefs.rawCounterName(),
+                        counterName = prefs.syncCounterName(),
                         deviceTag = prefs.deviceId.takeLast(4).uppercase(),
                         lastActiveAt = now
                     ),
@@ -334,9 +501,30 @@ class FirestoreSyncService(
                         database.eventDao().upsert(it)
                     }
                 }
-                if (runCatching { database.eventDao().observeEvent(eventId).first() }.getOrNull() != null) {
-                    prefs.setCurrentEventId(eventId)
+                val inRoom = runCatching { database.eventDao().observeEvent(eventId).first() }.getOrNull()
+                if (inRoom == null) {
+                    val fallbackName = codeDoc.getString("eventName")?.takeIf { it.isNotBlank() } ?: "Festival"
+                    database.eventDao().upsert(
+                        EventEntity(
+                            id = eventId,
+                            name = fallbackName,
+                            templeName = "",
+                            location = "",
+                            startDateMillis = now,
+                            endDateMillis = null,
+                            defaultLanguage = "te",
+                            status = "ACTIVE",
+                            globalHeadId = "",
+                            creatorId = "",
+                            deviceId = "",
+                            createdAt = now,
+                            updatedAt = now,
+                            version = 1L,
+                            syncStatus = "PENDING"
+                        )
+                    )
                 }
+                prefs.setCurrentEventId(eventId)
                 prefs.putShareCodeReverse(normalized, eventId)
                 eventId
             }.fold(

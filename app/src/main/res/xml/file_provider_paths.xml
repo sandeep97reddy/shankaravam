@@ -6,4 +6,6 @@
     <files-path name="receipts" path="receipts/" />
     <!-- Announcement audio clips cached under cacheDir/audio. -->
     <cache-path name="audio" path="audio/" />
+    <!-- F2 QR invite images staged under cacheDir/share for WhatsApp/FileProvider share. -->
+    <cache-path name="share" path="share/" />
 </paths>

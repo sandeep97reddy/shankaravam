@@ -65,4 +65,48 @@ class ShareCodesTest {
         assertFalse(isCodeLive("closed", null, now))
         assertFalse(isCodeLive(null, now - 1L, now))
     }
+
+    // ---- F1: parseJoinCode (typed code, QR payload, URL, garbage) ----
+
+    @Test
+    fun parse_accepts_raw_code_case_insensitive() {
+        assertEquals("ABC234", parseJoinCode("ABC234"))
+        assertEquals("ABC234", parseJoinCode("  abc234  "))
+    }
+
+    @Test
+    fun parse_accepts_qr_payload_and_urls() {
+        assertEquals("ABC234", parseJoinCode("shankaravam://join/ABC234"))
+        assertEquals("ABC234", parseJoinCode("shankaravam://join/abc234"))
+        assertEquals("ABC234", parseJoinCode("https://shankaravam.app/join/ABC234"))
+        assertEquals("ABC234", parseJoinCode("shankaravam://join/ABC234?src=whatsapp"))
+    }
+
+    @Test
+    fun parse_rejects_garbage() {
+        assertEquals(null, parseJoinCode(null))
+        assertEquals(null, parseJoinCode(""))
+        assertEquals(null, parseJoinCode("   "))
+        assertEquals(null, parseJoinCode("hello world"))
+        assertEquals(null, parseJoinCode("shankaravam://join/ABC12"))
+        assertEquals(null, parseJoinCode("shankaravam://join/"))
+    }
+
+    // ---- F3: stampForPush (offline rows must surface at cloud-entry time) ----
+
+    @Test
+    fun stamp_keeps_fresh_local_stamps() {
+        val now = 1_700_000_000_000L
+        assertEquals(
+            now + 5_000L,
+            com.shankaravam.festival.data.remote.stampForPush(now + 5_000L, now)
+        )
+    }
+
+    @Test
+    fun stamp_lifts_stale_offline_rows_to_now() {
+        val now = 1_700_000_000_000L
+        // 10:00 AM row uploaded at 11:01 AM → stamped 11:01, peers see it.
+        assertEquals(now, com.shankaravam.festival.data.remote.stampForPush(now - 3_600_000L, now))
+    }
 }

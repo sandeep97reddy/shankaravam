@@ -10,6 +10,7 @@ import com.shankaravam.festival.data.local.AppDatabase
 import com.shankaravam.festival.data.local.SecureKeyStore
 import com.shankaravam.festival.data.local.SessionPrefs
 import com.shankaravam.festival.data.remote.AuthRepository
+import com.shankaravam.festival.data.remote.ForegroundSyncManager
 import com.shankaravam.festival.data.remote.FirestoreSyncService
 import com.shankaravam.festival.data.repository.ActivityRepositoryImpl
 import com.shankaravam.festival.data.repository.CorrectionRepositoryImpl
@@ -100,6 +101,11 @@ class AppContainer(context: Context) {
     val secureKeys: SecureKeyStore by lazy { SecureKeyStore(appContext, sessionPrefs) }
     val authRepository: AuthRepository by lazy { AuthRepository(appContext, sessionPrefs) }
     val syncService: FirestoreSyncService by lazy {
-        FirestoreSyncService(database, sessionPrefs)
+        FirestoreSyncService(database, sessionPrefs, secureKeys)
+    }
+
+    /** F3 foreground listener (app-lifecycle driven from ShankaRavamApp). */
+    val foregroundSync: ForegroundSyncManager by lazy {
+        ForegroundSyncManager(sessionPrefs, authRepository, syncService)
     }
 }

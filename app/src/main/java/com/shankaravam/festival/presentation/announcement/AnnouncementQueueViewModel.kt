@@ -483,11 +483,15 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                     preset = presetObj,
                     language = languageOf()
                 )
+                val introKey = "intro_${presetObj.name.lowercase()}_${prefs.currentEventId.value?.takeLast(6) ?: "loc"}"
+                val activeSpeaker = prefs.sarvamSpeaker
                 kotlinx.coroutines.suspendCancellableCoroutine { cont ->
-                    engine.speakPhrase(
-                        introText,
+                    engine.playPhraseBest(
+                        text = introText,
+                        cacheKey = introKey,
                         onDone = { if (cont.isActive) cont.resume(Unit) {} },
-                        onError = { if (cont.isActive) cont.resume(Unit) {} }
+                        onError = { if (cont.isActive) cont.resume(Unit) {} },
+                        speaker = activeSpeaker
                     )
                     cont.invokeOnCancellation { engine.stopAll() }
                 }
@@ -551,11 +555,15 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                     playJob = viewModelScope.launch {
                         runCatching {
                             val outroText = buildClosingAnnouncement(languageOf())
+                            val outroKey = "outro_${languageOf().name.lowercase()}"
+                            val activeSpeaker = prefs.sarvamSpeaker
                             kotlinx.coroutines.suspendCancellableCoroutine { cont ->
-                                engine.speakPhrase(
-                                    outroText,
+                                engine.playPhraseBest(
+                                    text = outroText,
+                                    cacheKey = outroKey,
                                     onDone = { if (cont.isActive) cont.resume(Unit) {} },
-                                    onError = { if (cont.isActive) cont.resume(Unit) {} }
+                                    onError = { if (cont.isActive) cont.resume(Unit) {} },
+                                    speaker = activeSpeaker
                                 )
                                 cont.invokeOnCancellation { engine.stopAll() }
                             }
@@ -682,6 +690,33 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                         runCatching { engine.migrateLegacy(speaker) }
                         prefs.audioCacheV2Migrated = true
                     }
+
+                    // F6: Pre-generate intro and outro phrases in Roster Mode so full queue speaks in active Sarvam voice
+                    if (roster) {
+                        val presetObj = runCatching { FestivalPreset.valueOf(prefs.queueFestivalPreset) }
+                            .getOrDefault(FestivalPreset.VINAYAKA_CHAVITHI)
+                        val introKey = "intro_${presetObj.name.lowercase()}_${event.id.takeLast(6)}"
+                        if (engine.cachedPhrase(introKey, speaker) == null) {
+                            val introText = buildOpeningAnnouncement(
+                                location = event.location,
+                                eventName = event.name,
+                                preset = presetObj,
+                                language = languageOf()
+                            )
+                            if (prefs.takeSarvamSlot()) {
+                                engine.ensurePhraseCached(introKey, introText, key, speaker)
+                            }
+                        }
+
+                        val outroKey = "outro_${languageOf().name.lowercase()}"
+                        if (engine.cachedPhrase(outroKey, speaker) == null) {
+                            val outroText = buildClosingAnnouncement(languageOf())
+                            if (prefs.takeSarvamSlot()) {
+                                engine.ensurePhraseCached(outroKey, outroText, key, speaker)
+                            }
+                        }
+                    }
+
                     val eligible = donations.filter { it.announcementEnabled }
                     runCatching {
                         engine.pruneCache(

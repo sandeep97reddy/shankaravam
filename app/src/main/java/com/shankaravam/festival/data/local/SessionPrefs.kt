@@ -107,6 +107,19 @@ class SessionPrefs(context: Context) {
         return counter.ifBlank { "Counter-${deviceId.takeLast(4)}" }
     }
 
+    /**
+     * F4 member-doc counter (pure logic in [pickSyncCounter]): entered counter
+     * wins; else the Google display name; else null (omitted — lets
+     * `resolveMemberName` fall through to displayName/email instead of a
+     * `Counter-XXXX` placeholder). Replaces [rawCounterName] for all member
+     * writes; the ledger keeps its own attribution.
+     */
+    fun syncCounterName(): String? =
+        pickSyncCounter(
+            _counterName.value.trim().ifBlank { prefs.getString(KEY_COUNTER, "")?.trim() },
+            googleDisplayName
+        )
+
     fun setAppLanguage(lang: String) {
         prefs.edit().putString(KEY_APP_LANG, lang).apply()
         _appLanguage.value = lang
@@ -240,6 +253,27 @@ class SessionPrefs(context: Context) {
         return if (resetAt <= now) now else resetAt
     }
 
+    /**
+     * F5 shared-voice bookkeeping: last successful shared-key apply (pill),
+     * last pull attempt (15-min throttle), and the explicit offline lock (the
+     * user's Offline chip tap wins over auto-pull mode flips).
+     */
+    fun lastVoiceSyncAt(): Long = prefs.getLong(KEY_VOICE_SYNCED_AT, 0L)
+
+    fun setLastVoiceSyncAt(millis: Long) {
+        prefs.edit().putLong(KEY_VOICE_SYNCED_AT, millis).apply()
+    }
+
+    fun lastVoicePullAt(): Long = prefs.getLong(KEY_VOICE_PULL_AT, 0L)
+
+    fun setLastVoicePullAt(millis: Long) {
+        prefs.edit().putLong(KEY_VOICE_PULL_AT, millis).apply()
+    }
+
+    var voiceOfflineLocked: Boolean
+        get() = prefs.getBoolean(KEY_VOICE_OFFLINE_LOCK, false)
+        set(value) = prefs.edit().putBoolean(KEY_VOICE_OFFLINE_LOCK, value).apply()
+
     // ---- G6 cloud session (all inert until the user enables Cloud Sync) ----
 
     /** Stable per-install id used as creator/device attribution (plan §20). */
@@ -256,13 +290,36 @@ class SessionPrefs(context: Context) {
 
     var cloudSyncEnabled: Boolean
         get() = prefs.getBoolean(KEY_SYNC_ENABLED, false)
-        set(value) = prefs.edit().putBoolean(KEY_SYNC_ENABLED, value).apply()
+        set(value) {
+            prefs.edit().putBoolean(KEY_SYNC_ENABLED, value).apply()
+            _cloudSyncFlow.value = value
+        }
+
+    /**
+     * F3: reactive mirror of [cloudSyncEnabled] so the foreground listener can
+     * attach/detach without polling a plain var.
+     */
+    private val _cloudSyncFlow = MutableStateFlow(prefs.getBoolean(KEY_SYNC_ENABLED, false))
+    val cloudSyncEnabledFlow: StateFlow<Boolean> = _cloudSyncFlow.asStateFlow()
 
     fun lastSyncMillis(eventId: String): Long =
         prefs.getLong(KEY_LAST_SYNC + eventId, 0L)
 
     fun setLastSyncMillis(eventId: String, millis: Long) {
         prefs.edit().putLong(KEY_LAST_SYNC + eventId, millis).apply()
+    }
+
+    /**
+     * F3 corrections cursor (correction docs carry `createdAt`, not
+     * `updatedAt` — they need their own watermark). Monotonic: only advances.
+     */
+    fun lastCorrectionMillis(eventId: String): Long =
+        prefs.getLong(KEY_LAST_CORR + eventId, 0L)
+
+    fun setLastCorrectionMillis(eventId: String, millis: Long) {
+        if (millis > lastCorrectionMillis(eventId)) {
+            prefs.edit().putLong(KEY_LAST_CORR + eventId, millis).apply()
+        }
     }
 
     /**
@@ -299,9 +356,11 @@ class SessionPrefs(context: Context) {
      * Local role cache per event (plan §6). Default ORGANIZER keeps offline
      * behavior. The admin override is SCOPED to cloud-joined events: signing
      * in as the whitelisted head never elevates local-only events (Rule #1).
-     * Revoke is NOT handled here — callers gate on [myStatus] (S3).
+     * F4: revoked is checked FIRST — a revoked admin keeps no head powers.
+     * Callers must still gate writes on [myStatus] (S3).
      */
     fun myRole(eventId: String): String {
+        if (myStatus(eventId) == STATUS_REVOKED) return ROLE_MEMBER
         if (isGlobalHeadUser && isCloudEvent(eventId)) return ROLE_GLOBAL_HEAD
         return prefs.getString(KEY_ROLE + eventId, ROLE_ORGANIZER) ?: ROLE_ORGANIZER
     }
@@ -394,6 +453,10 @@ class SessionPrefs(context: Context) {
         private const val KEY_DEVICE = "device_id"
         private const val KEY_SYNC_ENABLED = "cloud_sync_enabled"
         private const val KEY_LAST_SYNC = "last_sync_"
+        private const val KEY_LAST_CORR = "last_corr_"
+        private const val KEY_VOICE_SYNCED_AT = "voice_key_synced_at"
+        private const val KEY_VOICE_PULL_AT = "voice_key_pull_at"
+        private const val KEY_VOICE_OFFLINE_LOCK = "voice_offline_locked"
         private const val KEY_ROLE = "my_role_"
         private const val KEY_STATUS = "member_status_"
         private const val KEY_CLOUD = "cloud_event_"
@@ -419,4 +482,16 @@ class SessionPrefs(context: Context) {
         const val LANG_ENGLISH = "en"
         const val LANG_BILINGUAL = "te-en"
     }
+}
+
+/**
+ * F4 member-doc counter pick (pure + unit-tested): entered counter wins, else
+ * the Google display name, else null (omitted from the member doc so
+ * `resolveMemberName` falls through to displayName/email — never a
+ * `Counter-XXXX` placeholder as the primary roster title).
+ */
+fun pickSyncCounter(counter: String?, googleDisplayName: String?): String? {
+    if (!counter.isNullOrBlank()) return counter.trim()
+    if (!googleDisplayName.isNullOrBlank()) return googleDisplayName.trim()
+    return null
 }

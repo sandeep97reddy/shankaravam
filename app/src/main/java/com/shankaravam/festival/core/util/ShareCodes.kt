@@ -13,6 +13,30 @@ fun generateShareCode(random: Random = Random.Default): String =
 fun isValidShareCode(code: String): Boolean =
     code.length == 6 && code.all { it in CODE_ALPHABET }
 
+/**
+ * Accepts every join-code shape a collector can produce: the raw 6-char code
+ * (typed or pasted), the QR payload `shankaravam://join/XXXXXX` (camera or
+ * gallery scan, F2), or a full URL carrying the code in its last path segment.
+ * Returns the normalized code, or null when nothing parseable is present.
+ * Pure + unit-testable.
+ */
+fun parseJoinCode(raw: String?): String? {
+    if (raw.isNullOrBlank()) return null
+    val trimmed = raw.trim()
+    // Raw code (fast path — typed entry).
+    val upper = trimmed.uppercase()
+    if (isValidShareCode(upper)) return upper
+    // QR payload / deep link / URL: strip query + fragment, take the last
+    // path segment (query params must not win over the code).
+    val path = trimmed.substringBefore('?').substringBefore('#').trim()
+    val tail = path.substringAfterLast('/').trim().uppercase().filter(Char::isLetterOrDigit)
+    if (tail.isNotEmpty() && isValidShareCode(tail)) return tail
+    // Fallback: whitespace-separated paste — last valid token wins.
+    return trimmed.split(' ', '\n', '\t')
+        .map { it.uppercase().filter(Char::isLetterOrDigit) }
+        .lastOrNull { isValidShareCode(it) }
+}
+
 /** Invite-code lifetime: 10 days from publish (feature #2). */
 const val CODE_TTL_MILLIS: Long = 10L * 24 * 60 * 60 * 1000
 

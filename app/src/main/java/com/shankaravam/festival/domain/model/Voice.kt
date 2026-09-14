@@ -60,6 +60,34 @@ data class VoiceConfig(
 }
 
 /**
+ * F5 shared-key apply decision (pure + unit-tested). The head's published key
+ * reaches collectors automatically:
+ * - blank remote → never touch local (no clobber, no mode flip)
+ * - identical → no-op (no keyVersion bump → no prefetch storm)
+ * - new remote → apply key+speaker; flip to cloud unless the user explicitly
+ *   locked offline (their Offline chip tap wins over the pull).
+ */
+@Immutable
+data class SharedKeyDecision(
+    val applyKey: Boolean,
+    val flipToCloud: Boolean
+)
+
+fun shouldApplySharedKey(
+    localKey: String,
+    remoteKey: String,
+    offlineLocked: Boolean,
+    respectLock: Boolean = true
+): SharedKeyDecision {
+    if (remoteKey.isBlank()) return SharedKeyDecision(false, false)
+    if (remoteKey.trim() == localKey.trim() && localKey.isNotBlank()) {
+        return SharedKeyDecision(false, false)
+    }
+    val locked = respectLock && offlineLocked
+    return SharedKeyDecision(applyKey = true, flipToCloud = !locked)
+}
+
+/**
  * Phase 3 transparency pill (RC4 remedy): shown in the Announcement queue
  * instead of silently switching voices mid-queue when the 20-calls/30-min
  * budget runs out. Pure + unit-testable.
@@ -74,3 +102,41 @@ fun quotaPillText(
         .format(java.util.Date(resetAt))
     return "⚠️ Cloud quota reached ($used/$max). Speaking via offline voice until $time."
 }
+
+/**
+ * F6 Native Android TTS voice metadata (pure + unit-tested).
+ * Captures network requirement and quality so the UI can badge voices
+ * and the engine can prioritize natural network voices over robotic embedded ones.
+ */
+@Immutable
+data class NativeVoiceInfo(
+    val name: String,
+    val isNetwork: Boolean,
+    val quality: Int = 300
+) {
+    val displayName: String
+        get() = name.substringAfterLast("-", name)
+
+    val badgeLabel: String
+        get() = if (isNetwork) "🌐 Network" else "💾 Offline"
+}
+
+/**
+ * F6 voice selection algorithm (pure + unit-tested):
+ * Prioritizes high-quality network Telugu voice (e.g. Google TTS high quality),
+ * then high-quality embedded Telugu voice, then system fallback.
+ */
+fun pickBestTeluguVoice(voices: List<NativeVoiceInfo>): NativeVoiceInfo? {
+    if (voices.isEmpty()) return null
+    // 1. High-quality network voice
+    val network = voices.filter { it.isNetwork }.maxByOrNull { it.quality }
+    if (network != null) return network
+
+    // 2. High-quality embedded voice
+    val embedded = voices.filter { !it.isNetwork }.maxByOrNull { it.quality }
+    if (embedded != null) return embedded
+
+    // 3. Fallback
+    return voices.firstOrNull()
+}
+

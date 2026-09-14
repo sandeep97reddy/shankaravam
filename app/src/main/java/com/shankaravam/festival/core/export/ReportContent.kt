@@ -70,8 +70,8 @@ object ReportContent {
     }
 
     /**
-     * WhatsApp share text: Telugu-first totals with English gloss (plan §20).
-     * Kept short — full detail travels in the PDF.
+     * WhatsApp share text: Devotional, elegant, structured committee announcement.
+     * Combines Telugu-first clarity, WhatsApp bolding, unicode separators, and emojis.
      */
     fun whatsAppSummary(
         eventName: String,
@@ -83,19 +83,31 @@ object ReportContent {
         balanceText: String,
         pledgedText: String
     ): String = buildString {
-        appendLine("🛕 $templeName — $eventName")
-        appendLine("నివేదిక • Report (${formatTime(System.currentTimeMillis())})")
-        appendLine()
-        appendLine("💰 వసూళ్లు Collected: $cashCollectedText")
-        appendLine("➖ ఖర్చులు Expenses: $expenseTotalText")
-        appendLine("✅ మిగులు Balance: $balanceText")
-        appendLine("🤝 వాగ్దానాలు Pledged: $pledgedText")
-        appendLine("🙏 దాతలు Donors: ${totals.donorCount} • 📦 వస్తువులు Non-cash: ${totals.nonCashCount}")
+        appendLine("🚩 *శ్రీ శుభమస్తు • SHANKARAVAM* 🚩")
+        val temple = templeName.trim().ifBlank { "ఉత్సవ సమితి" }
+        appendLine("🛕 *$temple*")
+        appendLine("🎉 *$eventName*")
+        appendLine("📅 నివేదిక • Report: ${formatTime(System.currentTimeMillis())}")
+        appendLine("━━━━━━━━━━━━━━━━━━━━")
+        appendLine("📊 *ఆర్థిక సారాంశం / FINANCIAL SUMMARY*")
+        appendLine("━━━━━━━━━━━━━━━━━━━━")
+        appendLine("💰 *వసూళ్లు (Collected):* $cashCollectedText")
+        appendLine("💸 *ఖర్చులు (Expenses):* $expenseTotalText")
+        appendLine("────────────────────")
+        appendLine("⚖️ *నికర మిగులు (Net Balance):* $balanceText")
+        appendLine("🤝 *రావలసిన వాగ్దానాలు (Pledged):* $pledgedText")
+        appendLine("━━━━━━━━━━━━━━━━━━━━")
+        appendLine("📈 *కార్యకలాపాల వివరాలు / METRICS*")
+        appendLine("━━━━━━━━━━━━━━━━━━━━")
+        appendLine("👥 *దాతలు / Donors: ${totals.donorCount}*")
+        appendLine("📦 *వస్తు కానుకలు / Non-cash: ${totals.nonCashCount}*")
         if (corrections.isNotEmpty()) {
-            appendLine("✏️ సవరణలు Corrections: ${corrections.size}")
+            appendLine("✏️ *సవరణలు / Corrections: ${corrections.size}*")
         }
-        appendLine()
-        append("వివరాలకు PDF చూడండి • See PDF for details.")
+        appendLine("━━━━━━━━━━━━━━━━━━━━")
+        appendLine("📄 *వివరాలకు PDF చూడండి • See PDF for details.*")
+        appendLine("🙏 *భక్తులందరికీ ఆయురారోగ్య ఐశ్వర్యాలు కలగాలని ప్రార్థనలు!*")
+        append("⚡ _Generated via ShankaRavam Festival App_")
     }
 
     /** Rows for the PDF body, already ordered and capped by the caller. */

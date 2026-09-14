@@ -230,12 +230,14 @@ private fun VoiceSettingsCard() {
     // Reactive: the native engine boots async (~200ms), so reload the list
     // when it becomes ready instead of snapshotting once at composition.
     var nativeVoices by remember { mutableStateOf(emptyList<String>()) }
+    var nativeVoiceInfos by remember { mutableStateOf(emptyList<com.shankaravam.festival.domain.model.NativeVoiceInfo>()) }
     androidx.compose.runtime.LaunchedEffect(nativeReady) {
         if (nativeReady) {
-            nativeVoices = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching { container.ttsEngine.native.getAvailableTeluguVoices() }
+            nativeVoiceInfos = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { container.ttsEngine.native.getAvailableTeluguVoiceInfos() }
                     .getOrDefault(emptyList())
             }
+            nativeVoices = nativeVoiceInfos.map { it.name }
         }
     }
 
@@ -393,17 +395,32 @@ private fun VoiceSettingsCard() {
                         onClick = { pickNative(null) }
                     )
 
-                    nativeVoices.forEach { voiceName ->
-                        val vLabel = voiceName.substringAfterLast("-", voiceName.takeLast(8))
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text("📱 Android Telugu ($vLabel)", fontWeight = FontWeight.SemiBold)
-                                    Text("Device voice: $voiceName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            },
-                            onClick = { pickNative(voiceName) }
-                        )
+                    if (nativeVoiceInfos.isNotEmpty()) {
+                        nativeVoiceInfos.forEach { info ->
+                            val vLabel = info.displayName.takeLast(10)
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text("📱 Android Telugu ($vLabel)", fontWeight = FontWeight.SemiBold)
+                                        Text("${info.badgeLabel} • ${info.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                },
+                                onClick = { pickNative(info.name) }
+                            )
+                        }
+                    } else {
+                        nativeVoices.forEach { voiceName ->
+                            val vLabel = voiceName.substringAfterLast("-", voiceName.takeLast(8))
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text("📱 Android Telugu ($vLabel)", fontWeight = FontWeight.SemiBold)
+                                        Text("Device voice: $voiceName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                },
+                                onClick = { pickNative(voiceName) }
+                            )
+                        }
                     }
                 }
             }

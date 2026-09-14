@@ -20,9 +20,20 @@ interface CorrectionDao {
     @Query("SELECT * FROM corrections WHERE syncStatus IN ('LOCAL_ONLY','PENDING_UPLOAD','SYNC_FAILED') ORDER BY createdAt ASC")
     suspend fun pendingSync(): List<CorrectionEntity>
 
+    /**
+     * Event-scoped pending rows for cloud upload (P0 fix — see
+     * DonationDao.pendingSyncForEvent). Sync must never use the unscoped query.
+     */
+    @Query("SELECT * FROM corrections WHERE eventId = :eventId AND syncStatus IN ('LOCAL_ONLY','PENDING_UPLOAD','SYNC_FAILED') ORDER BY createdAt ASC")
+    suspend fun pendingSyncForEvent(eventId: String): List<CorrectionEntity>
+
     /** G6 sync bookkeeping — no version column exists; append-only anyway. */
     @Query("UPDATE corrections SET syncStatus = :status WHERE id = :id")
     suspend fun updateSyncState(id: String, status: String)
+
+    /** F3 corrections ingest: existence check for idempotent set-by-id download. */
+    @Query("SELECT COUNT(*) FROM corrections WHERE id = :id")
+    suspend fun countById(id: String): Int
 
     // Append-only: no update, no per-row delete.
     // Event-scoped delete exists ONLY for DeleteLocalEventUseCase, gated on

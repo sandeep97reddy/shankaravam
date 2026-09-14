@@ -59,7 +59,7 @@ val TAG_SUGGESTIONS = listOf(
     "Rice", "Food", "Decoration", "Material", "Service", "Other"
 )
 
-class DonationEntryViewModel(container: AppContainer) : ViewModel() {
+class DonationEntryViewModel(private val container: AppContainer) : ViewModel() {
     private val saveDonation = container.saveDonation
     private val donationRepo = container.donationRepository
     private val eventRepo = container.eventRepository
@@ -166,6 +166,12 @@ class DonationEntryViewModel(container: AppContainer) : ViewModel() {
                     is com.shankaravam.festival.core.util.Outcome.Err ->
                         it.copy(saveState = SaveState.Error(result.message))
                 }
+            }
+            // F3 immediate upload leg: while sync is on, push now (direct call,
+            // not the Worker queue) so peers' foreground listeners fire in
+            // ~seconds. Seat-first syncEvent makes this safe for pending/viewers.
+            if (result is com.shankaravam.festival.core.util.Outcome.Ok && prefs.cloudSyncEnabled) {
+                launch { runCatching { container.syncService.syncEvent(eventId) } }
             }
         }
     }

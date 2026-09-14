@@ -56,9 +56,13 @@ import com.shankaravam.festival.core.theme.TempleSaffron
 import com.shankaravam.festival.presentation.common.ModernTextField
 import com.shankaravam.festival.presentation.common.containerViewModel
 
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.text.style.TextOverflow
+
 /**
- * Modernized Current Event Selector Banner.
- * Sleek card displaying the active festival with quick switch dropdown and new event dialog.
+ * Modernized, Roomy Current Event Selector Banner.
+ * Sleek card displaying the active festival with generous breathing room,
+ * prominent typography, comfortable touch targets, and new event creation.
  */
 @Composable
 fun CurrentEventBanner(
@@ -74,148 +78,295 @@ fun CurrentEventBanner(
 
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         border = CardDefaults.outlinedCardBorder()
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            val currentEventColor = state.currentEvent?.let { eventColorFor(it.id) } ?: TempleSaffron
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = currentEventColor.copy(alpha = 0.15f),
-                modifier = Modifier.size(44.dp)
+        val currentEvent = state.currentEvent
+        if (currentEvent != null) {
+            val currentEventColor = eventColorFor(currentEvent.id)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(18.dp)
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Filled.Festival,
-                        contentDescription = null,
-                        tint = currentEventColor,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
-
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = strings.currentEvent.uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = currentEventColor,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.5.sp
-                )
+                // Top Tier: Festival Emblem & Informative Details
                 Row(
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    state.currentEvent?.let {
-                        Box(
-                            modifier = Modifier
-                                .size(10.dp)
-                                .background(currentEventColor, CircleShape)
-                        )
-                    }
-                    Text(
-                        text = state.currentEvent?.name ?: strings.noEventYet,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1
-                    )
-                }
-                state.currentEvent?.let {
-                    val subtext = listOf(it.templeName, it.location).filter { s -> s.isNotBlank() }.joinToString(" • ")
-                    if (subtext.isNotBlank()) {
-                        Text(
-                            text = subtext,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1
-                        )
-                    }
-                }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (state.events.isNotEmpty()) {
-                    OutlinedButton(
-                        onClick = { showMenu = true },
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = currentEventColor.copy(alpha = 0.14f),
+                        modifier = Modifier.size(52.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.SwapHoriz,
-                            contentDescription = strings.switchButton,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false }
-                    ) {
-                        state.events.forEach { event ->
-                            val isCurrent = event.id == state.currentEvent?.id
-                            val dotColor = eventColorFor(event.id)
-                            DropdownMenuItem(
-                                leadingIcon = {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(12.dp)
-                                            .background(dotColor, CircleShape)
-                                    )
-                                },
-                                text = {
-                                    Column {
-                                        Text(
-                                            event.name,
-                                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (isCurrent) TempleSaffron else MaterialTheme.colorScheme.onSurface
-                                        )
-                                        val sub = listOf(event.templeName, event.location)
-                                            .filter { s -> s.isNotBlank() }
-                                            .joinToString(" • ")
-                                        if (sub.isNotBlank()) {
-                                            Text(
-                                                sub,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                },
-                                onClick = {
-                                    viewModel.selectEvent(event.id)
-                                    showMenu = false
-                                }
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.Festival,
+                                contentDescription = null,
+                                tint = currentEventColor,
+                                modifier = Modifier.size(28.dp)
                             )
+                        }
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(currentEventColor, CircleShape)
+                            )
+                            Text(
+                                text = strings.currentEvent.uppercase(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = currentEventColor,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.8.sp
+                            )
+                        }
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = currentEvent.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        val subtext = listOf(currentEvent.templeName, currentEvent.location)
+                            .filter { it.isNotBlank() }
+                            .joinToString(" • ")
+                        if (subtext.isNotBlank()) {
+                            Spacer(Modifier.height(2.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.LocationOn,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = subtext,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }
 
+                HorizontalDivider(
+                    modifier = Modifier.padding(top = 14.dp, bottom = 12.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                    thickness = 1.dp
+                )
+
+                // Bottom Tier: Roomy Action Buttons
+                if (state.events.size > 1) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            OutlinedButton(
+                                onClick = { showMenu = true },
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(42.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.SwapHoriz,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(Modifier.size(6.dp))
+                                Text(
+                                    text = strings.switchButton,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp
+                                )
+                            }
+
+                            DropdownMenu(
+                                expanded = showMenu,
+                                onDismissRequest = { showMenu = false }
+                            ) {
+                                state.events.forEach { event ->
+                                    val isCurrent = event.id == state.currentEvent?.id
+                                    val dotColor = eventColorFor(event.id)
+                                    DropdownMenuItem(
+                                        leadingIcon = {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(12.dp)
+                                                    .background(dotColor, CircleShape)
+                                            )
+                                        },
+                                        text = {
+                                            Column {
+                                                Text(
+                                                    event.name,
+                                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                                    color = if (isCurrent) TempleSaffron else MaterialTheme.colorScheme.onSurface
+                                                )
+                                                val sub = listOf(event.templeName, event.location)
+                                                    .filter { it.isNotBlank() }
+                                                    .joinToString(" • ")
+                                                if (sub.isNotBlank()) {
+                                                    Text(
+                                                        sub,
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        onClick = {
+                                            viewModel.selectEvent(event.id)
+                                            showMenu = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        Button(
+                            onClick = { showCreate = true },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = TempleSaffron),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(42.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.size(6.dp))
+                            Text(
+                                text = strings.newButton,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Button(
+                            onClick = { showCreate = true },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = TempleSaffron),
+                            modifier = Modifier.height(42.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 18.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.size(6.dp))
+                            Text(
+                                text = strings.newButton,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            // Zero festival selected / created state: inviting, roomy hero card
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = TempleSaffron.copy(alpha = 0.14f),
+                        modifier = Modifier.size(54.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.Celebration,
+                                contentDescription = null,
+                                tint = TempleSaffron,
+                                modifier = Modifier.size(30.dp)
+                            )
+                        }
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = strings.currentEvent.uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TempleSaffron,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.8.sp
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = strings.noEventYet,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+
+                Text(
+                    text = strings.createFirstEventHint,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 20.sp
+                )
+
                 Button(
                     onClick = { showCreate = true },
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = TempleSaffron),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Add,
                         contentDescription = null,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(20.dp)
                     )
-                    Spacer(Modifier.size(4.dp))
+                    Spacer(Modifier.size(8.dp))
                     Text(
-                        strings.newButton,
+                        text = strings.createNewEvent,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
+                        fontSize = 15.sp
                     )
                 }
             }
@@ -256,12 +407,21 @@ private fun CreateEventModernDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(20.dp),
         title = {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Icon(Icons.Filled.Celebration, contentDescription = null, tint = TempleSaffron)
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = TempleSaffron.copy(alpha = 0.15f),
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Celebration, contentDescription = null, tint = TempleSaffron, modifier = Modifier.size(20.dp))
+                    }
+                }
                 Text(
                     text = strings.createNewEvent,
                     style = MaterialTheme.typography.titleLarge,
@@ -271,7 +431,7 @@ private fun CreateEventModernDialog(
         },
         text = {
             Column(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 // Quick Festival Suggestions Chips
@@ -330,7 +490,6 @@ private fun CreateEventModernDialog(
                     singleLine = true
                 )
 
-                Spacer(Modifier.height(2.dp))
                 Text(
                     text = strings.offlineNote,
                     style = MaterialTheme.typography.bodySmall,
@@ -348,14 +507,20 @@ private fun CreateEventModernDialog(
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = TempleSaffron),
-                shape = RoundedCornerShape(8.dp)
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.height(42.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp)
             ) {
-                Text(strings.createAction, fontWeight = FontWeight.Bold)
+                Text(strings.createAction, fontWeight = FontWeight.Bold, fontSize = 14.sp)
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(strings.cancelAction)
+            TextButton(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.height(42.dp)
+            ) {
+                Text(strings.cancelAction, fontWeight = FontWeight.SemiBold)
             }
         }
     )

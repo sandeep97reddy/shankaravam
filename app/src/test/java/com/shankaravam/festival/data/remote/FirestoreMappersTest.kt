@@ -24,14 +24,16 @@ class FirestoreMappersTest {
 
     @Test
     fun donation_round_trip_preserves_ledger_fields() {
-        val map = FirestoreMappers.donationToMap(donation(), "device-123")
+        val map = FirestoreMappers.donationToMap(donation(), "A1B2")
         // Local-only artifacts must never be uploaded.
         assertFalse(map.containsKey("audioStatus"))
         assertFalse(map.containsKey("notes"))
         assertFalse(map.containsKey("syncStatus"))
-        // Attribution: addedBy is the counter name, deviceId is the real install id.
+        // F4 privacy: tag-only attribution, full install id never leaves Room.
+        assertFalse(map.containsKey("deviceId"))
+        assertEquals("A1B2", map["deviceTag"])
+        // Attribution: addedBy is the counter name.
         assertEquals("collector", map["addedBy"])
-        assertEquals("device-123", map["deviceId"])
 
         val back = FirestoreMappers.donationFromMap("d1", "e1", map)
         assertNotNull(back)

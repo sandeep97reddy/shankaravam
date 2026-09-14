@@ -3,10 +3,51 @@
 > Single source of truth for build progress. Update this file at the END of every Group session, in the same task as the code changes. Stale rows mislead the next session.
 
 ## Current Pointer
-- **Status:** ALL GROUPS DONE ✅ — v1.0.0-g6, APK 25.1 MB, 42/42 tests, zero warnings
-- **Next session:** none scheduled — app is shippable offline; cloud goes live on `google-services.json` + `firestore.rules` deploy
-- **Plan:** `festival organizer app plan.md` §24 (6 groups, 1 group = 1 session)
+- **Status:** ALL GROUPS DONE ✅ + Fix Track F1–F6 ALL DONE ✅ — network voice default + offline retry fallback + one-voice Sarvam phrase cache, 131/131 tests green
+- **Next session:** on-device field verification & production deployment
+- **Plan:** `festival organizer app plan.md` §24 (6 groups, 1 group = 1 session) + `SYNC_VOICE_FIX_PLAN.md` (F1–F6 complete)
 - **Handoff details:** see `SESSION_HANDOFF.md`
+
+## Sync/Voice Fix Track — Phase 6 (F6) ✅ done 13-09-2026
+- `NativeVoiceInfo` + `pickBestTeluguVoice`: automatic high-quality network voice selection when voice unconfigured; fallback to highest-quality embedded voice; exposed `🌐 Network` vs `💾 Offline` badges to UI dropdowns.
+- `AndroidTtsClient`: runtime offline retry fallback (switches to embedded voice on network failure during speech so playback never drops).
+- Intro/outro phrase caching (`phraseCacheFileName`, `getOrGeneratePhraseAudio`, `ensurePhraseCached`): Sarvam intro/outro clips pre-generated and cached per-speaker so roster mode speaks in a single cohesive voice without cloud audio storage.
+- `DualTtsEngine.playPhraseBest`: checks phrase cache first, falls back to native voice, seamless chime wrap.
+- Queue VM & Screen: pre-caches intro & outro in background prefetch loop, wires `playPhraseBest` in sequence & advance, loads and displays network/offline badges in VoiceSettingsCard.
+- **Tests:** +`VoiceSelectionAndPhraseTest` (9 tests: network priority, embedded fallback, displayName/badge, safe phrase caching, collision prevention)
+- **Verify:** `assembleDebug` + `testDebugUnitTest` 131/131 green
+
+## Sync/Voice Fix Track — Phase 5 (F5) ✅ done 13-09-2026
+- `maybeAutoPullVoice` (service, throttled 15 min, silent, never fails sync): runs after every sync Done + Settings entry + sign-in; `shouldApplySharedKey` matrix (blank/same → no-op; new → apply, flip to cloud unless explicitly locked offline)
+- Explicit offline lock: Offline chip / key-clear sets it, cloud choice clears it; manual Pull bypasses it
+- Cloud Voice card pill: "☁️ Shared voice: Shubh (synced …)" vs "📱 Key on this device only"
+- **Tests:** +`VoiceKeyApplyTest` (5)
+- **Verify:** `assembleDebug` + `testDebugUnitTest` 122/122 green
+
+## Sync/Voice Fix Track — Phase 4 (F4) ✅ done 13-09-2026
+- `pickSyncCounter` (counter → Google name → omit): join/presence/publish stamp human names; head seat carries identity (no more "Unknown counter"); backfills on next touch, no migration
+- `myRole()` revoked-first: revoked admins keep zero head powers
+- Ledger maps emit `deviceTag` (last-4) only — full install UUID never leaves Room
+- **Tests:** +`SyncCounterTest` (4), mapper privacy assertions
+- **Verify:** `assembleDebug` + `testDebugUnitTest` 117/117 green
+
+## Sync/Voice Fix Track — Phase 3 (F3) ✅ done 13-09-2026
+- `SyncOutcome` Done/Blocked/Failed: pending/revoked/sign-out show human copy, never retry (worker hot-loop gone); network still retries
+- Seat-first `syncEvent`: approval/revoke learned before ledger touch (deadlock gone); creator bootstrap preserved when seat missing; header merge-write; per-row push-stamp (`stampForPush` + `markSynced` mirror) + 120 s read fudge; corrections download added (`correctionFromMap`, `createdAt` cursor)
+- `ForegroundSyncManager`: app-lifecycle ledger + seat listeners (foreground only, watermark-filtered, shared ingest, presence never from callbacks); immediate upload on save (direct `syncEvent`, not Worker queue); live pending/revoked chip in Team section
+- **Tests:** +`stampForPush` lift/keep tests
+- **Verify:** `assembleDebug` + `testDebugUnitTest` 113/113 green
+
+## Sync/Voice Fix Track — Phase 2 (F2) ✅ done 13-09-2026
+- `QrInvite.kt`: gallery-pick pipeline (bounded load → `RGBLuminanceSource` decode → `parseJoinCode`, zero permission), off-thread QR render, WhatsApp-capable PNG share via `cacheDir/share/` FileProvider
+- `InviteCard` async QR (spinner meanwhile, jank gone) + Share button · `JoinCard` gallery-pick button · Team section wires both; `CloudSyncViewModel.info()` for pick results
+- **Tests:** +`QrCodecTest` pure-JVM zxing round-trip (encode→pixels→decode→parse)
+- **Verify:** `assembleDebug` + `testDebugUnitTest` 111/111 green
+
+## Sync/Voice Fix Track — Phase 1 (F1 + P0 safety) ✅ done 13-09-2026
+- **P0** event-scoped `pendingSyncForEvent(eventId)` in all 3 DAOs (sync uses scoped; global stays display-only for the badge) · `share/` FileProvider path (unblocks F2 WhatsApp share)
+- **F1** canonical Team & Cloud Sync section in gear (`TeamSyncSection`, sign-in gated, Join with zero events — no dummy duplicates) · `parseJoinCode` (raw/QR/URL) + 3 tests · join auto-enables sync + silent empty-dummy cleanup · last-sync diagnostics line · `CLOUD_SYNC` route redirects to gear `expandTeam`
+- **Verify:** `assembleDebug` + `testDebugUnitTest` 109/109 green
 
 ## Group Status
 | Group | Scope | Status | Verify | Notes |

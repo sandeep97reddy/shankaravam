@@ -3,6 +3,12 @@
 > Copy-paste starter + context bridge. Update ALL sections at the end of every Group session. The next session starts by reading this file + `PROGRESS.md` + plan §24 + `AGENTS.md`.
 
 ## 1. Where We Are
+- **Fix Track Phase 6 (F6, uncommitted):** network-default Android voice pick (`pickBestTeluguVoice`), runtime offline retry fallback (`AndroidTtsClient`), UI badges (`🌐 Network` / `💾 Offline`), intro/outro Sarvam phrase cache (`SarvamTtsClient.phraseCacheFileName` / `DualTtsEngine.playPhraseBest`), Queue VM prefetch + playback sequence wiring. Verify: `assembleDebug` + 131/131 green. **ALL F1–F6 FIX PHASES COMPLETE.** Next: on-device field verification & production deployment.
+- **Fix Track Phase 5 (F5, uncommitted):** shared-voice auto-pull (`maybeAutoPullVoice`, 15-min throttle, offline-lock, pill). Verify: `assembleDebug` + 122/122 green.
+- **Fix Track Phase 4 (F4):** `pickSyncCounter` human-name stamping, `myRole` revoked-first, `deviceTag`-only ledger maps. Verify: `assembleDebug` + 117/117 green. Next: F5 Sarvam auto-pull.
+- **Fix Track Phase 3 (F3):** `SyncOutcome`, seat-first sync, push-stamp + fudge, corrections download, `ForegroundSyncManager` (ProcessLifecycle-driven) + immediate post-save upload + live seat chip. Verify: `assembleDebug` + 113/113 green. Next: F4 names + privacy.
+- **Fix Track Phase 2 (F2):** gallery-QR join (`QrInvite.kt`, zero permission) + WhatsApp invite share + async QR render; `QrCodecTest` JVM round-trip. Verify: `assembleDebug` + 111/111 green. Next: F3 sync reliability.
+- **Fix Track Phase 1 (F1+P0):** Team & Cloud Sync lives in the gear (`TeamSyncSection`, sign-in gated, zero-event Join, `parseJoinCode`, join auto-enables sync + empty-dummy cleanup, last-sync line, `CLOUD_SYNC`→gear redirect); P0 scoped `pendingSyncForEvent` + `share/` FileProvider path. Verify: `assembleDebug` + 109/109 tests green. Next: F2 gallery-QR + share.
 - **Admin Head track S1–S5 (uncommitted):** master-admin whitelist (`sandeepreddyr97@gmail.com`, Google-pinned in rules), member escalation / code overwrite / TTS hijack seals, least-privilege `roleOf`, merge-safe member docs + presence, unified roster + `setMemberRole`, head-only Connected Team card + Verified badges + admin-only Publish, `AdminConfigTest` (12 tests). Verify: `assembleDebug` + 69/69 tests green. Next: `firebase deploy --only firestore:rules` → two-device manual matrix.
 - **Post-G6 audio iteration (uncommitted):** natural Telugu numbers (నూట/వందల), roster mode + presets, PNG chakra logo, native voice picker — plus 6 review fixes: secure-key single source (VM + queue card → `secureKeys`), roster-aware Sarvam cache (`donation_{id}_roster.mp3`, cache-first playback, roster-aware prefetch with status persistence), voice/speed applied at TTS init, reactive voice list, dead `tint` param removed. Verify: `assembleDebug` + 46/46 tests green, zero warnings.
 - **Last completed:** `G6 — Optional Cloud Sync + Admin + Hardening` ✅ — `assembleDebug` + 42/42 tests green, zero warnings, APK 25.1 MB, v1.0.0-g6. **ALL GROUPS DONE — BUILD COMPLETE.**
@@ -52,6 +58,13 @@
 - G6 root: `firestore.rules` (collectors-write/members-read, append-only corrections, join-request flow, tts_settings)
 - G6 tests (42 green): + `AccessPolicyTest`, `FirestoreMappersTest` (round-trip + conflict rule), `ShareCodesTest`
 - G6 deviations (documented, deliberate): join by typed code + QR display (no camera-scan dep); classic sign-in intent (Credential Manager 1.3.0 moved GoogleId classes); timestamps as Long millis (not Timestamp); receipts NOT auto-uploaded yet (paths local-only; upload is a 10-line worker addition once Storage is provisioned)
+- Fix Track F1–F6 (SYNC_VOICE_FIX_PLAN.md):
+  - F1: `TeamSyncSection.kt`, `AdminSettingsScreen.kt`, `CloudSyncScreen.kt`, `NavGraph.kt`, scoped `pendingSyncForEvent` in DAOs.
+  - F2: `QrInvite.kt` (gallery pick + WhatsApp share + off-thread render), `file_provider_paths.xml`, `QrCodecTest.kt`.
+  - F3: `ForegroundSyncManager.kt`, `FirestoreSyncService.kt` (seat-first sync, push-stamp `stampForPush`, corrections download), `SyncWorker.kt` (`SyncOutcome`).
+  - F4: `pickSyncCounter` identity stamping, `deviceTag` last-4 privacy (`FirestoreMappers.kt`), revoked-first role check (`Membership.kt`), `SyncCounterTest.kt`.
+  - F5: `maybeAutoPullVoice` in `FirestoreSyncService.kt`, `shouldApplySharedKey` in `Voice.kt`, offline-lock persistence in `SessionPrefs.kt`, `VoiceKeyApplyTest.kt`.
+  - F6: `NativeVoiceInfo` + `pickBestTeluguVoice` in `Voice.kt`, network voice pick + runtime speech retry fallback in `AndroidTtsClient.kt`, phrase caching in `SarvamTtsClient.kt`, `playPhraseBest` in `DualTtsEngine.kt`, sequence/advance wiring + phrase prefetch in `AnnouncementQueueViewModel.kt`, UI badges in `AnnouncementQueueScreen.kt` & `AdminSettingsScreen.kt`, `VoiceSelectionAndPhraseTest.kt`.
 
 ## 4. Gotchas For Future Work
 - Deps cached — verify ~15s incremental; use `.\gradlew.bat` or dist binary at `Temp/opencode/gradle-dist/gradle-8.11.1`
@@ -62,10 +75,11 @@
 - Cloud goes live with: Firebase Spark project → `google-services.json` in `app/` → `firebase deploy --only firestore:rules` → sign in → enable sync → publish invite
 - Suggest: `git add -A; git commit -m "..."; git tag v1.0.0-g6` — NOT done (needs your explicit word per repo rules)
 
-## 5. No Further Groups — Build Complete ✅
+## 5. No Further Groups — Build & Fix Track Complete ✅
 ```
-All 6 groups done. v1.0.0-g6: assembleDebug + 42/42 tests green, zero warnings, APK 25.1 MB.
-Future sessions: read AGENTS.md, PROGRESS.md, SESSION_HANDOFF.md and state the new feature.
+All 6 groups done + All 6 Fix Track phases (F1–F6) done.
+assembleDebug + 131/131 tests green, zero warnings.
+Future sessions: read AGENTS.md, PROGRESS.md, SESSION_HANDOFF.md, SYNC_VOICE_FIX_PLAN.md.
 ```
 
 ## 6. Template For Future Handoffs (overwrite §1/§3/§4/§5 each session)

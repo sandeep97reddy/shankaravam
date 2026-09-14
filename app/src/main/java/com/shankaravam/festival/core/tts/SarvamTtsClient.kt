@@ -117,6 +117,55 @@ class SarvamTtsClient(
         file
     }
 
+    /**
+     * F6 phrase cache (intro/outro): checks if a pre-generated phrase is cached on disk.
+     */
+    fun cachedPhraseFile(phraseKey: String, speaker: String = "priya"): File? {
+        val file = File(audioDir(), phraseCacheFileName(phraseKey, speaker))
+        return if (file.exists() && file.length() > 0) file else null
+    }
+
+    /**
+     * F6 phrase synthesis (intro/outro): generates and caches shared phrases so the
+     * whole announcement queue speaks in a single, consistent Sarvam voice.
+     */
+    suspend fun getOrGeneratePhraseAudio(
+        phraseKey: String,
+        text: String,
+        apiKey: String,
+        speaker: String = "priya"
+    ): File = withContext(Dispatchers.IO) {
+        val normSpeaker = normalizeSarvamSpeaker(speaker)
+        cachedPhraseFile(phraseKey, normSpeaker)?.let { return@withContext it }
+
+        val payload = JSONObject()
+            .put("text", text)
+            .put("language_code", "te-IN")
+            .put("speaker", normSpeaker)
+            .put("model", "bulbul:v3")
+            .put("output_audio_codec", "mp3")
+            .toString()
+            .toRequestBody("application/json; charset=utf-8".toMediaType())
+
+        val raw = try {
+            api.synthesize(apiKey.trim(), payload).string()
+        } catch (e: Throwable) {
+            throw IOException(SarvamErrorParser.parse(e), e)
+        }
+
+        val audioBase64 = runCatching {
+            val json = JSONObject(raw)
+            json.getJSONArray("audios").getString(0)
+        }.getOrNull() ?: throw IOException("Missing audio in Sarvam response: ${raw.take(100)}")
+
+        val bytes = Base64.decode(audioBase64, Base64.DEFAULT)
+        if (bytes.isEmpty()) throw IOException("Empty audio from Sarvam")
+
+        val file = File(audioDir(), phraseCacheFileName(phraseKey, normSpeaker))
+        file.writeBytes(bytes)
+        file
+    }
+
     /** Deletes every cached clip for one donation (all speakers, legacy, imports). */
     fun deleteDonationCache(donationId: String): Int =
         runCatching { deleteDonationFiles(audioDir(), donationId) }.getOrDefault(0)
@@ -167,6 +216,16 @@ class SarvamTtsClient(
             val norm = normalizeSarvamSpeaker(speaker)
             return if (roster) "donation_${donationId}_${norm}_roster.mp3"
             else "donation_${donationId}_${norm}.mp3"
+        }
+
+        /**
+         * F6 pure phrase filename mapping — unit-tested.
+         * Intro/outro clips are namespaced per normalized speaker and phraseKey.
+         */
+        fun phraseCacheFileName(phraseKey: String, speaker: String = "priya"): String {
+            val norm = normalizeSarvamSpeaker(speaker)
+            val safeKey = phraseKey.lowercase().replace(Regex("[^a-z0-9_]"), "_").take(50)
+            return "phrase_${safeKey}_${norm}.mp3"
         }
 
         /**

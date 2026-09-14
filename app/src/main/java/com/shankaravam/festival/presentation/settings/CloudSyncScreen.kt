@@ -47,6 +47,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -78,14 +79,14 @@ import com.shankaravam.festival.domain.model.presenceOf
 import com.shankaravam.festival.domain.model.resolveMemberName
 import com.shankaravam.festival.domain.model.roleOf
 import com.shankaravam.festival.presentation.common.containerViewModel
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.qrcode.QRCodeWriter
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -101,7 +102,9 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
         val configured: Boolean = false,
         val syncEnabled: Boolean = false,
         val myRole: String = "organizer",
-        val myCode: String? = null
+        val myCode: String? = null,
+        /** Last successful ledger sync for the current event (0 = never). F1 diagnostics. */
+        val lastSync: Long = 0L
     )
 
     /**
@@ -114,26 +117,36 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
     val uiState: StateFlow<UiState> =
         container.sessionPrefs.currentEventId.flatMapLatest { eventId ->
             if (eventId == null) {
-                flowOf(
+                combine(
+                    container.authRepository.user,
+                    container.sessionPrefs.cloudSyncEnabledFlow,
+                    codeTick
+                ) { user: CloudUser?, syncEnabled: Boolean, _ ->
                     UiState(
-                        user = container.authRepository.user.value,
+                        event = null,
+                        user = user,
                         configured = container.authRepository.isConfigured,
-                        syncEnabled = container.sessionPrefs.cloudSyncEnabled
+                        syncEnabled = syncEnabled,
+                        myRole = "organizer",
+                        myCode = null,
+                        lastSync = 0L
                     )
-                )
+                }
             } else {
                 combine(
                     container.eventRepository.observeEvent(eventId),
                     container.authRepository.user,
+                    container.sessionPrefs.cloudSyncEnabledFlow,
                     codeTick
-                ) { event: Event?, user: CloudUser?, _ ->
+                ) { event: Event?, user: CloudUser?, syncEnabled: Boolean, _ ->
                     UiState(
                         event = event,
                         user = user,
                         configured = container.authRepository.isConfigured,
-                        syncEnabled = container.sessionPrefs.cloudSyncEnabled,
+                        syncEnabled = syncEnabled,
                         myRole = container.sessionPrefs.myRole(eventId),
-                        myCode = container.sessionPrefs.shareCodeFor(eventId)
+                        myCode = container.sessionPrefs.shareCodeFor(eventId),
+                        lastSync = container.sessionPrefs.lastSyncMillis(eventId)
                     )
                 }
             }
@@ -153,6 +166,9 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
 
     fun consumeNotice() { _notice.value = null }
 
+    /** F2: surface an info line from composable-side flows (gallery QR results). */
+    fun info(message: String) { _notice.value = message }
+
     fun signIn() {
         when (val result = container.authRepository.googleSignInIntent()) {
             is Outcome.Ok -> _signInIntent.value = result.value
@@ -168,7 +184,11 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
             when (
                 val result = container.authRepository.handleSignInResult(data)
             ) {
-                is Outcome.Ok -> _notice.value = "Signed in as ${result.value.displayName ?: result.value.email}."
+                is Outcome.Ok -> {
+                    _notice.value = "Signed in as ${result.value.displayName ?: result.value.email}."
+                    // F5: fresh login picks up the shared voice immediately.
+                    runCatching { container.syncService.maybeAutoPullVoice() }
+                }
                 is Outcome.Err -> _notice.value = result.message
             }
             _busy.value = null
@@ -182,7 +202,7 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
     fun setSyncEnabled(enabled: Boolean, eventId: String?) {
         container.sessionPrefs.cloudSyncEnabled = enabled
         if (enabled) {
-            SyncWorker.schedulePeriodic(container.appContext)
+            ensurePeriodic()
             if (eventId != null) SyncWorker.syncNow(container.appContext, eventId)
             _notice.value = "Cloud sync on — uploads only deltas, in the background."
         } else {
@@ -191,16 +211,25 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** F1: idempotent re-assert of the 15-min schedule (KEEP — heals task-clear loss). */
+    fun ensurePeriodic() {
+        runCatching { SyncWorker.schedulePeriodic(container.appContext) }
+    }
+
     fun syncNow(eventId: String) {
         viewModelScope.launch {
             _busy.value = "sync"
             _notice.value = "Syncing with cloud…"
             when (val outcome = container.syncService.syncEvent(eventId)) {
-                is Outcome.Ok -> {
-                    val r = outcome.value
+                is com.shankaravam.festival.data.remote.SyncOutcome.Done -> {
+                    val r = outcome.result
                     _notice.value = "✓ Synced: ${r.uploaded} uploaded, ${r.downloaded} downloaded."
                 }
-                is Outcome.Err -> {
+                // F3: Blocked carries the human copy (pending/revoked/sign-in).
+                is com.shankaravam.festival.data.remote.SyncOutcome.Blocked -> {
+                    _notice.value = outcome.message
+                }
+                is com.shankaravam.festival.data.remote.SyncOutcome.Failed -> {
                     _notice.value = "Sync: ${outcome.message}"
                 }
             }
@@ -216,8 +245,12 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
             if (container.sessionPrefs.myRole(event.id) == SessionPrefs.ROLE_ORGANIZER) {
                 container.sessionPrefs.setMyRole(event.id, SessionPrefs.ROLE_GLOBAL_HEAD)
             }
+            val me = container.authRepository.user.value
             when (
-                val result = container.syncService.publishShareCode(event.id, code, event.name, uid)
+                val result = container.syncService.publishShareCode(
+                    event.id, code, event.name, uid,
+                    email = me?.email, displayName = me?.displayName
+                )
             ) {
                 is Outcome.Ok -> _notice.value = "Invite live: $code"
                 is Outcome.Err -> {
@@ -258,13 +291,30 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
             _busy.value = "join"
             // Service owns role+status (incl. whitelisted-admin elevation) —
             // the VM must NOT blindly overwrite with MEMBER (S3.1).
+            // parseJoinCode accepts typed codes, QR payloads and shared URLs (F1).
+            val normalized = com.shankaravam.festival.core.util.parseJoinCode(code)
+            if (normalized == null) {
+                _notice.value = "That doesn't look like an invite code — check the 6-letter code or QR."
+                _busy.value = null
+                return@launch
+            }
             val me = container.authRepository.user.value
-            when (val result = container.syncService.requestToJoin(code, uid, me?.email, me?.displayName)) {
+            when (val result = container.syncService.requestToJoin(normalized, uid, me?.email, me?.displayName)) {
                 is Outcome.Ok -> {
+                    // F1: joining IS opting into sync — enable it so the new
+                    // festival actually arrives without hunting for the toggle.
+                    container.sessionPrefs.cloudSyncEnabled = true
+                    SyncWorker.schedulePeriodic(container.appContext)
+                    SyncWorker.syncNow(container.appContext, result.value)
+                    // F1: silently drop empty local dummies (zero rows, never
+                    // synced) left over from the old create-first-to-join flow.
+                    val cleaned = cleanupEmptyDummies(keepId = result.value)
                     _notice.value = if (container.sessionPrefs.myStatus(result.value) == SessionPrefs.STATUS_ACTIVE
                         && container.sessionPrefs.myRole(result.value) == SessionPrefs.ROLE_GLOBAL_HEAD
                     ) {
                         "Welcome back, Head — the team directory is unlocked."
+                    } else if (cleaned > 0) {
+                        "Joined! Request sent — the organizer approves you as collector."
                     } else {
                         "Request sent — the organizer approves you as collector."
                     }
@@ -275,6 +325,26 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
             _busy.value = null
         }
     }
+
+    /**
+     * F1 one-way cleanup: deletes local-only, zero-record events (the dummies
+     * the old flow forced collectors to create). Never touches cloud events,
+     * events with rows, or the just-joined festival. Best-effort, never throws.
+     * Returns the number removed (for the join notice).
+     */
+    private suspend fun cleanupEmptyDummies(keepId: String): Int = runCatching {
+        var removed = 0
+        val events = container.eventRepository.observeEvents().first()
+        for (event in events) {
+            if (event.id == keepId) continue
+            if (container.sessionPrefs.isCloudEvent(event.id)) continue
+            val counts = container.deleteLocalEvent.getCounts(event.id)
+            if (counts.first == 0 && counts.second == 0) {
+                if (container.deleteLocalEvent(event.id) is Outcome.Ok) removed++
+            }
+        }
+        removed
+    }.getOrDefault(0)
 
     fun refreshPending(eventId: String) {
         viewModelScope.launch {
@@ -527,11 +597,17 @@ fun CloudSyncScreen(
             if (event == null) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("No event yet", fontWeight = FontWeight.Bold)
                         Text(
-                            "Create your festival event on the dashboard first — " +
-                                "invites and multi-counter sync unlock after that. " +
-                                "Everything still works 100% offline meanwhile.",
+                            if (user != null) "No festival on this device yet" else "No event yet",
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            if (user != null)
+                                "Join your organizer's festival below with their invite code — you don't need to create anything first."
+                            else
+                                "Create your festival event on the dashboard first — " +
+                                    "invites and multi-counter sync unlock after that. " +
+                                    "Everything still works 100% offline meanwhile.",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -547,42 +623,8 @@ fun CloudSyncScreen(
                     }
                 }
             }
-            if (event != null && user != null) {
-                var selectedTab by remember(event.id) { mutableStateOf(0) }
-                val isHead = viewModel.isHeadNow(event.id)
-                // Verdict Q3: active collectors get a read-only team view.
-                val canView = viewModel.canViewRoster(event.id)
-
-                if (canView) {
-                    TabRow(
-                        selectedTabIndex = selectedTab,
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        contentColor = TempleSaffron,
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                    ) {
-                        Tab(
-                            selected = selectedTab == 0,
-                            onClick = { selectedTab = 0 },
-                            text = { Text("Sync & Invites", fontWeight = FontWeight.SemiBold) }
-                        )
-                        Tab(
-                            selected = selectedTab == 1,
-                            onClick = { selectedTab = 1 },
-                            text = { Text("Team & Counters (${team.size})", fontWeight = FontWeight.SemiBold) }
-                        )
-                    }
-                }
-
-                if (selectedTab == 0 || !canView) {
-                    InviteCard(
-                        eventName = event.name,
-                        code = state.myCode,
-                        busy = busy == "code",
-                        onPublish = { viewModel.publishCode(event, user.uid) },
-                        canClose = isHead,
-                        closing = busy == "closecode",
-                        onClose = { state.myCode?.let { viewModel.closeCode(event.id, it) } }
-                    )
+            if (user != null) {
+                if (event == null) {
                     JoinCard(
                         code = joinCode,
                         onCode = { joinCode = it.uppercase().filter(Char::isLetterOrDigit) },
@@ -590,27 +632,71 @@ fun CloudSyncScreen(
                         busy = busy == "join",
                         onJoin = { viewModel.join(joinCode, user.uid) {} }
                     )
-                    if (AccessPolicy.canApproveMembers(roleOf(state.myRole))) {
-                        ApprovalsCard(
-                            pending = pending,
+                } else {
+                    var selectedTab by remember(event.id) { mutableStateOf(0) }
+                    val isHead = viewModel.isHeadNow(event.id)
+                    // Verdict Q3: active collectors get a read-only team view.
+                    val canView = viewModel.canViewRoster(event.id)
+
+                    if (canView) {
+                        TabRow(
+                            selectedTabIndex = selectedTab,
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            contentColor = TempleSaffron,
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        ) {
+                            Tab(
+                                selected = selectedTab == 0,
+                                onClick = { selectedTab = 0 },
+                                text = { Text("Sync & Invites", fontWeight = FontWeight.SemiBold) }
+                            )
+                            Tab(
+                                selected = selectedTab == 1,
+                                onClick = { selectedTab = 1 },
+                                text = { Text("Team & Counters (${team.size})", fontWeight = FontWeight.SemiBold) }
+                            )
+                        }
+                    }
+
+                    if (selectedTab == 0 || !canView) {
+                        InviteCard(
+                            eventName = event.name,
+                            code = state.myCode,
+                            busy = busy == "code",
+                            onPublish = { viewModel.publishCode(event, user.uid) },
+                            canClose = isHead,
+                            closing = busy == "closecode",
+                            onClose = { state.myCode?.let { viewModel.closeCode(event.id, it) } }
+                        )
+                        JoinCard(
+                            code = joinCode,
+                            onCode = { joinCode = it.uppercase().filter(Char::isLetterOrDigit) },
+                            valid = isValidShareCode(joinCode),
+                            busy = busy == "join",
+                            onJoin = { viewModel.join(joinCode, user.uid) {} }
+                        )
+                        if (AccessPolicy.canApproveMembers(roleOf(state.myRole))) {
+                            ApprovalsCard(
+                                pending = pending,
+                                busyKey = busy,
+                                onRefresh = { viewModel.refreshPending(event.id) },
+                                onApprove = { member, role ->
+                                    viewModel.approve(event.id, member, role, user.uid)
+                                }
+                            )
+                        }
+                    } else {
+                        ConnectedCountersCard(
+                            team = team,
+                            selfUid = user.uid,
                             busyKey = busy,
-                            onRefresh = { viewModel.refreshPending(event.id) },
-                            onApprove = { member, role ->
-                                viewModel.approve(event.id, member, role, user.uid)
+                            manageEnabled = isHead,
+                            onRefresh = { viewModel.refreshMembers(event.id) },
+                            onSetRole = { member, role, status ->
+                                viewModel.setMemberRole(event.id, member, role, status)
                             }
                         )
                     }
-                } else {
-                    ConnectedCountersCard(
-                        team = team,
-                        selfUid = user.uid,
-                        busyKey = busy,
-                        manageEnabled = isHead,
-                        onRefresh = { viewModel.refreshMembers(event.id) },
-                        onSetRole = { member, role, status ->
-                            viewModel.setMemberRole(event.id, member, role, status)
-                        }
-                    )
                 }
             }
             OutlinedButton(onClick = onOpenAdmin, modifier = Modifier.fillMaxWidth()) {
@@ -628,15 +714,19 @@ fun CloudSyncScreen(
 }
 
 @Composable
-private fun InviteCard(
+internal fun InviteCard(
     eventName: String,
     code: String?,
     busy: Boolean,
     onPublish: () -> Unit,
     canClose: Boolean,
     closing: Boolean,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    /** F2: when true, a WhatsApp-capable Share button renders under the QR. */
+    shareEnabled: Boolean = false
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             Modifier.padding(14.dp),
@@ -649,15 +739,46 @@ private fun InviteCard(
                     Text(if (busy) "Publishing…" else "Create invite code")
                 }
             } else {
-                val bitmap = remember(code) { qrBitmap("shankaravam://join/$code") }
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "Invite QR for code $code",
-                    modifier = Modifier.size(180.dp)
-                )
+                // F2: QR renders off the main thread (was a 262k-setPixel
+                // remember block janking composition); spinner meanwhile.
+                var bitmap by remember(code) { mutableStateOf<Bitmap?>(null) }
+                androidx.compose.runtime.LaunchedEffect(code) {
+                    bitmap = runCatching { renderInviteQr(joinQrPayload(code)) }.getOrNull()
+                }
+                val ready = bitmap
+                if (ready == null) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Text("Preparing QR…", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    Image(
+                        bitmap = ready.asImageBitmap(),
+                        contentDescription = "Invite QR for code $code",
+                        modifier = Modifier.size(180.dp)
+                    )
+                }
                 Text(code, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Text("Collectors type this code — or scan — in Cloud sync.", style = MaterialTheme.typography.bodySmall)
                 Text("Codes expire 10 days after publishing.", style = MaterialTheme.typography.bodySmall)
+                if (shareEnabled) {
+                    var sharing by remember(code) { mutableStateOf(false) }
+                    Button(
+                        onClick = {
+                            val bmp = bitmap
+                            if (bmp != null && !sharing) {
+                                sharing = true
+                                scope.launch {
+                                    shareInviteQr(context, code, bmp)
+                                    sharing = false
+                                }
+                            }
+                        },
+                        enabled = bitmap != null && !sharing
+                    ) {
+                        Text(if (sharing) "Preparing…" else "Share invite (WhatsApp)")
+                    }
+                }
                 // Head-only 1-tap close (feature #2): hidden from everyone
                 // else — closing is a head power, like the team directory.
                 if (canClose) {
@@ -671,10 +792,31 @@ private fun InviteCard(
 }
 
 @Composable
-private fun JoinCard(code: String, onCode: (String) -> Unit, valid: Boolean, busy: Boolean, onJoin: () -> Unit) {
+internal fun JoinCard(
+    code: String,
+    onCode: (String) -> Unit,
+    valid: Boolean,
+    busy: Boolean,
+    onJoin: () -> Unit,
+    /** F1: when non-null, an inline counter-name field renders above the code (gear Join). */
+    counter: String? = null,
+    onCounter: ((String) -> Unit)? = null,
+    /** F2: when non-null, a gallery-QR pick button renders (no camera permission). */
+    onPickQr: (() -> Unit)? = null,
+    pickingQr: Boolean = false
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Join with a code", fontWeight = FontWeight.SemiBold)
+            if (onCounter != null) {
+                OutlinedTextField(
+                    value = counter ?: "",
+                    onValueChange = onCounter,
+                    label = { Text("Your counter name (shows in Team)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
             OutlinedTextField(
                 value = code,
                 onValueChange = onCode,
@@ -686,12 +828,21 @@ private fun JoinCard(code: String, onCode: (String) -> Unit, valid: Boolean, bus
             Button(onClick = onJoin, enabled = valid && !busy, modifier = Modifier.fillMaxWidth()) {
                 Text(if (busy) "Sending…" else "Request to join")
             }
+            if (onPickQr != null) {
+                OutlinedButton(
+                    onClick = onPickQr,
+                    enabled = !busy && !pickingQr,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (pickingQr) "Reading QR…" else "Pick QR image from gallery")
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun ApprovalsCard(
+internal fun ApprovalsCard(
     pending: List<CloudMember>,
     busyKey: String?,
     onRefresh: () -> Unit,
@@ -746,7 +897,7 @@ private fun ApprovalsCard(
  * derivedStateOf — no per-frame time math in composition.
  */
 @Composable
-private fun ConnectedCountersCard(
+internal fun ConnectedCountersCard(
     team: List<CloudMember>,
     selfUid: String,
     busyKey: String?,
@@ -946,15 +1097,4 @@ private fun RoleBadge(role: String, status: String) {
             maxLines = 1
         )
     }
-}
-
-private fun qrBitmap(content: String, sizePx: Int = 512): Bitmap {
-    val matrix = QRCodeWriter().encode(content, BarcodeFormat.QR_CODE, sizePx, sizePx)
-    val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.RGB_565)
-    for (x in 0 until sizePx) {
-        for (y in 0 until sizePx) {
-            bitmap.setPixel(x, y, if (matrix.get(x, y)) 0xFF000000.toInt() else 0xFFFFFFFF.toInt())
-        }
-    }
-    return bitmap
 }

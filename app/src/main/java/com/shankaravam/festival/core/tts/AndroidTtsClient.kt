@@ -4,6 +4,8 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import com.shankaravam.festival.domain.model.NativeVoiceInfo
+import com.shankaravam.festival.domain.model.pickBestTeluguVoice
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,7 +36,14 @@ class AndroidTtsClient(
     /** Locale that init settled on — resetVoice() returns here. */
     @Volatile private var defaultLocale: Locale? = null
 
-    private data class Pending(val onDone: () -> Unit, val onError: () -> Unit)
+    @Volatile private var activeVoiceIsNetwork = false
+
+    private data class Pending(
+        val onDone: () -> Unit,
+        val onError: () -> Unit,
+        val text: String = "",
+        val isRetry: Boolean = false
+    )
     private val pending = ConcurrentHashMap<String, Pending>()
 
     init {
@@ -75,9 +84,16 @@ class AndroidTtsClient(
 
             // Re-apply the user's saved voice + speed (Admin choices persist here).
             runCatching {
-                savedSettings?.invoke()?.let { (voiceName, rate) ->
-                    setSpeechRate(rate)
-                    if (!voiceName.isNullOrBlank()) setVoiceByName(voiceName)
+                val (savedVoice, rate) = savedSettings?.invoke() ?: (null to 1.0f)
+                setSpeechRate(rate)
+                if (!savedVoice.isNullOrBlank()) {
+                    setVoiceByName(savedVoice)
+                } else {
+                    // F6: pick best Telugu voice (network first, then embedded) if user never picked
+                    val best = pickBestTeluguVoice(getAvailableTeluguVoiceInfos())
+                    if (best != null) {
+                        setVoiceByName(best.name)
+                    }
                 }
             }
 
@@ -89,14 +105,34 @@ class AndroidTtsClient(
 
                 @Deprecated("Legacy callback")
                 override fun onError(utteranceId: String?) {
-                    utteranceId?.let { pending.remove(it)?.onError?.invoke() }
+                    handleSpeakError(utteranceId)
                 }
 
                 override fun onError(utteranceId: String?, errorCode: Int) {
-                    onError(utteranceId)
+                    handleSpeakError(utteranceId)
                 }
             })
         }
+    }
+
+    private fun handleSpeakError(utteranceId: String?) {
+        val p = utteranceId?.let { pending.remove(it) } ?: return
+        if (activeVoiceIsNetwork && !p.isRetry && p.text.isNotBlank()) {
+            val engine = tts
+            if (engine != null) {
+                // Fall back to embedded voice for this utterance
+                val fallback = getAvailableTeluguVoiceInfos().firstOrNull { !it.isNetwork }
+                if (fallback != null) setVoiceByName(fallback.name) else resetVoice()
+                val retryId = UUID.randomUUID().toString()
+                pending[retryId] = Pending(p.onDone, p.onError, p.text, isRetry = true)
+                val retryResult = runCatching {
+                    engine.speak(p.text, TextToSpeech.QUEUE_FLUSH, null, retryId)
+                }.getOrDefault(TextToSpeech.ERROR)
+                if (retryResult == TextToSpeech.SUCCESS) return
+                pending.remove(retryId)
+            }
+        }
+        p.onError()
     }
 
     /** Fire-and-forget speak. Returns false when offline TTS is unavailable. Never throws. */
@@ -120,13 +156,24 @@ class AndroidTtsClient(
             }
         }
         val utteranceId = UUID.randomUUID().toString()
-        pending[utteranceId] = Pending(onDone, onError)
+        pending[utteranceId] = Pending(onDone, onError, text, isRetry = false)
         val result = runCatching {
             engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
         }.getOrDefault(TextToSpeech.ERROR)
 
         if (result != TextToSpeech.SUCCESS) {
             pending.remove(utteranceId)
+            if (activeVoiceIsNetwork) {
+                val fallback = getAvailableTeluguVoiceInfos().firstOrNull { !it.isNetwork }
+                if (fallback != null) setVoiceByName(fallback.name) else resetVoice()
+                val retryId = UUID.randomUUID().toString()
+                pending[retryId] = Pending(onDone, onError, text, isRetry = true)
+                val retryResult = runCatching {
+                    engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, retryId)
+                }.getOrDefault(TextToSpeech.ERROR)
+                if (retryResult == TextToSpeech.SUCCESS) return true
+                pending.remove(retryId)
+            }
             onError()
             return false
         }
@@ -138,16 +185,26 @@ class AndroidTtsClient(
         pending.clear()
     }
 
-    /** Returns all available Telugu voices installed on the device (e.g. Google/Samsung TTS). */
-    fun getAvailableTeluguVoices(): List<String> {
+    /** F6: Returns structured voice info (network vs embedded, quality) for badges and smart selection. */
+    fun getAvailableTeluguVoiceInfos(): List<NativeVoiceInfo> {
         val engine = tts ?: return emptyList()
         return runCatching {
             engine.voices
                 ?.filter { it.locale.language == "te" || it.name.contains("te-in", ignoreCase = true) }
-                ?.map { it.name }
+                ?.map { v ->
+                    NativeVoiceInfo(
+                        name = v.name,
+                        isNetwork = v.isNetworkConnectionRequired,
+                        quality = v.quality
+                    )
+                }
                 ?: emptyList()
         }.getOrDefault(emptyList())
     }
+
+    /** Returns all available Telugu voices installed on the device (e.g. Google/Samsung TTS). */
+    fun getAvailableTeluguVoices(): List<String> =
+        getAvailableTeluguVoiceInfos().map { it.name }
 
     /** Sets the active native voice by name. Blank names reset to default. */
     fun setVoiceByName(voiceName: String): Boolean {
@@ -156,6 +213,7 @@ class AndroidTtsClient(
         return runCatching {
             val voice = engine.voices?.firstOrNull { it.name == voiceName } ?: return false
             engine.voice = voice
+            activeVoiceIsNetwork = voice.isNetworkConnectionRequired
             true
         }.getOrDefault(false)
     }
@@ -166,6 +224,7 @@ class AndroidTtsClient(
      * "System Default" takes effect without an app restart. Never throws.
      */
     fun resetVoice(): Boolean {
+        activeVoiceIsNetwork = false
         val engine = tts ?: return false
         return runCatching {
             val result = engine.setLanguage(

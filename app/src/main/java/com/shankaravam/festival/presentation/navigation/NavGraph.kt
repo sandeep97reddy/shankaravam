@@ -13,7 +13,6 @@ import com.shankaravam.festival.presentation.expense.ExpenseListScreen
 import com.shankaravam.festival.presentation.history.ActivityFeedScreen
 import com.shankaravam.festival.presentation.reports.ExportScreen
 import com.shankaravam.festival.presentation.settings.AdminSettingsScreen
-import com.shankaravam.festival.presentation.settings.CloudSyncScreen
 import com.shankaravam.festival.presentation.splash.SplashScreen
 
 object ShankaRavamRoutes {
@@ -84,9 +83,12 @@ fun ShankaRavamNavGraph() {
             ExportScreen(onBack = { navController.popBackStack() })
         }
         composable(ShankaRavamRoutes.CLOUD_SYNC) {
-            CloudSyncScreen(
+            // F1: Cloud Sync now lives in the gear as the Team & Cloud Sync
+            // accordion — the old route redirects there, expanded. No dead
+            // links from the dashboard Sync tile.
+            AdminSettingsScreen(
                 onBack = { navController.popBackStack() },
-                onOpenAdmin = { navController.navigate(ShankaRavamRoutes.ADMIN) }
+                expandTeam = true
             )
         }
         composable(ShankaRavamRoutes.ADMIN) {

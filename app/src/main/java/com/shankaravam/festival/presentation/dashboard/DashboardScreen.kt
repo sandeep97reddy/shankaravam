@@ -40,6 +40,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -54,6 +55,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shankaravam.festival.core.i18n.appStrings
@@ -143,7 +145,10 @@ fun DashboardScreen(
 
             if (state.event == null) {
                 item {
-                    NoEventPlaceholderCard(strings)
+                    NoEventPlaceholderCard(
+                        strings = strings,
+                        onJoinClick = onSync
+                    )
                 }
             } else {
                 // 2. High-Impact Financial Balance Hero Card
@@ -221,37 +226,74 @@ fun DashboardScreen(
 }
 
 /**
- * Empty state when no festival event is active.
+ * Roomy, inviting state when no festival event is active, offering quick access to join via committee code.
  */
 @Composable
-private fun NoEventPlaceholderCard(strings: com.shankaravam.festival.core.i18n.AppStrings) {
+private fun NoEventPlaceholderCard(
+    strings: com.shankaravam.festival.core.i18n.AppStrings,
+    onJoinClick: () -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = CardDefaults.outlinedCardBorder()
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
+            modifier = Modifier.padding(22.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Icon(
-                imageVector = Icons.Filled.VolunteerActivism,
-                contentDescription = null,
-                tint = TempleSaffron,
-                modifier = Modifier.size(48.dp)
-            )
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = TempleGold.copy(alpha = 0.15f),
+                modifier = Modifier.size(52.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.VolunteerActivism,
+                        contentDescription = null,
+                        tint = TempleSaffron,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
             Text(
-                text = strings.createFirstEventPrompt,
+                text = if (strings.languageCode == "te") "ఇతర కమిటీ ఉత్సవంలో చేరాలా?" else "Joining an Existing Festival?",
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
             )
             Text(
-                text = strings.createFirstEventHint,
+                text = if (strings.languageCode == "te")
+                    "మీ కమిటీ నిర్వాహకుడు అందించిన 6-అక్షరాల కోడ్‌తో నేరుగా చేరండి మరియు విరాళాలు సమకాలీకరించండి."
+                else
+                    "Enter the 6-character committee invite code to sync donations with your team members in real-time.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                lineHeight = 20.sp
             )
+            Spacer(Modifier.height(4.dp))
+            OutlinedButton(
+                onClick = onJoinClick,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.CloudSync,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    text = if (strings.languageCode == "te") "కోడ్‌తో చేరండి (క్లౌడ్ సింక్)" else "Join with Invite Code (Cloud Sync)",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+            }
         }
     }
 }

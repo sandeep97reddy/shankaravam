@@ -98,6 +98,11 @@ AnnouncementQueueViewModel builds queue from current filter/sort
     Explicit VoiceEngineMode (SessionPrefs flow): OFFLINE_NATIVE skips Sarvam
     files + prefetch (zero quota); human imports still play. Voice pickers in
     Settings and the queue read/write one VoiceConfig — no secrets in queue.
+→ F6 Single-Voice Queue: DualTtsEngine.playPhraseBest caches Sarvam intro/outro phrases
+    (cacheDir/audio/phrase_{safeKey}_{speaker}.mp3) so roster mode speaks in a single cohesive voice.
+→ F6 Android Voice Pick & Fallback: pickBestTeluguVoice automatically selects the best network
+    Telugu voice on first init; if network playback fails offline, runtime fallback seamlessly
+    switches to an embedded voice so speech never aborts. UI badges display 🌐 Network vs 💾 Offline.
 → AudioFocusManager (transient-may-duck) + optional temple-bell chime → STREAM_MUSIC → BT amp or speaker
 ```
 
@@ -124,7 +129,17 @@ Settings → Google Sign-In → enable sync → SyncWorker (or Sync-now)
 → presence touch (best-effort merge of lastActiveAt/counterName/deviceTag-last4, never fails sync)
 ```
 
-Fresh install = offline Organizer, zero login. Firebase getters are guarded so the APK builds/runs without `google-services.json`. Invite = 6-char code + QR (`ShareCodes.kt`, 10-day expiry, head-closeable). Join → `member/pending` → head/collector approves → `organizer/active` or `member/active`.
+Foreground (F3): while the app is visible, `ForegroundSyncManager`
+(ProcessLifecycle-driven) holds watermark-filtered listeners on
+donations/expenses/corrections + the own member seat — deltas land in Room in
+~seconds, approve/revoke reflects instantly. Saves trigger an immediate direct
+`syncEvent` (the upload leg); the worker stays as the background backstop.
+Uploads are push-stamped (`max(local, now)`, mirrored via `markSynced`) so
+offline batches are never skipped; reads use a 120 s fudge for clock skew.
+Results are `SyncOutcome` Done/Blocked (pending/revoked/sign-out: show, never
+retry) / Failed (network: retry).
+
+Fresh install = offline Organizer, zero login. Firebase getters are guarded so the APK builds/runs without `google-services.json`. Invite = 6-char code + QR (`ShareCodes.kt`, 10-day expiry, head-closeable, `parseJoinCode` accepts raw/QR/URL). Join → `member/pending` → head/collector approves → `organizer/active` or `member/active`. Team UI is canonical in gear Settings (`TeamSyncSection`, sign-in gated, Join needs no local event); `CLOUD_SYNC` route redirects there. Join auto-enables sync + sweeps empty local dummies. Uploads use event-scoped `pendingSyncForEvent` (unscoped query is badge display-only).
 
 ## 5. Room Schema (v1, frozen — first change ships a migration)
 
@@ -149,8 +164,11 @@ Status is orthogonal: `active` / `pending` / `revoked`. Never store `role="revok
 users/{userId}
 codes/{code}                        # invite code → eventId, createdBy owner, 10-day expiry (client-enforced)
 config/tts_settings                 # { sarvamApiKey, defaultSpeaker } — head-write, member-read
+  # F5: collectors auto-pull it after every sync + on Settings entry/sign-in
+  # (15-min throttle; blank/same → no-op; explicit offline lock survives).
 events/{eventId}                    # header { name, temple, location, dates, status, globalHeadId }
   members/{userId}                  # { role, status, approvedBy, joinedAt, email?, displayName?, counterName?, deviceTag?, lastActiveAt }
+  # F4: counterName = entered counter → Google name → omitted (never Counter-XXXX); deviceTag = last-4 only; ledger maps carry deviceTag, never the full UUID.
   donations/{id} | expenses/{id}    # ledger (no audio fields)
   corrections/{id}                  # append-only (create-only, no update/delete)
   activity/{id}                     # append-only feed
@@ -160,7 +178,7 @@ events/{eventId}                    # header { name, temple, location, dates, st
 
 1. Room = UI source of truth; no network on the entry hot path; all IO on `Dispatchers.IO` / WorkManager.
 2. `firestore.rules` denies all deletes on ledger/members/codes; corrections/activity are create-only.
-3. Audio cache: Sarvam `cacheDir/audio/donation_{id}_{speaker}[_roster].mp3` (per-speaker, never collides); human imports in `donation_{id}[_roster].mp3` (speaker-agnostic override). Zero audio in Firebase Storage.
+3. Audio cache: Sarvam `cacheDir/audio/donation_{id}_{speaker}[_roster].mp3` (per-speaker, never collides), intro/outro `cacheDir/audio/phrase_{safeKey}_{speaker}.mp3`; human imports in `donation_{id}[_roster].mp3` (speaker-agnostic override). Zero audio in Firebase Storage. Pruning preserves chime and phrase clips.
 4. TTS key lives in `SecureKeyStore` (encrypted) ↔ `/config/tts_settings`; never in logs, never in maps for audio rows.
 5. Compose perf: keyed `LazyColumn (key = { it.id })` + `animateItem()`, `derivedStateOf` for totals, single `uiState: StateFlow`, no business logic in composables, `@Immutable` list items.
 6. Splash ≤1.5s, entry <10ms, 60/120fps lists.

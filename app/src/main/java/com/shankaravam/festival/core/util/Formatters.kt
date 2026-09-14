@@ -49,15 +49,21 @@ fun buildWhatsAppReceipt(
     } else {
         "💰 *మొత్తం / Amount:* ${formatInr(donation.amount)} (${donation.paymentMethod})"
     }
+    val counter = counterName.trim().ifBlank { "ప్రధాన కౌంటర్" }
+    val event = eventName.trim().ifBlank { "ఉత్సవ సమితి" }
     return buildString {
-        appendLine("🚩 *${eventName.trim().ifBlank { "ఉత్సవ సమితి" }}* 🚩")
-        appendLine("--------------------------------")
-        appendLine("🧾 *రసీదు / Receipt:* #$ref")
-        appendLine("👤 *దాత / Donor:* $donorLine")
+        appendLine("🚩 *శ్రీ శుభమస్తు* 🚩")
+        appendLine("🛕 *$event*")
+        appendLine("━━━━━━━━━━━━━━━━━━━━")
+        appendLine("🧾 *డిజిటల్ రసీదు / OFFICIAL RECEIPT*")
+        appendLine("━━━━━━━━━━━━━━━━━━━━")
+        appendLine("🔢 *రసీదు సంఖ్య / Ref No:* #$ref")
+        appendLine("👤 *దాత పేరు / Donor:* $donorLine")
         appendLine(giftLine)
-        appendLine("📅 *తేదీ / Date:* ${formatReceiptDateTime(donation.addedTime)}")
-        appendLine("📍 *కౌంటర్ / Counter:* ${counterName.trim().ifBlank { "—" }}")
-        appendLine("--------------------------------")
-        append("🙏 *మీ కుటుంబానికి ఆయురారోగ్యాలు కలగాలని కోరుకుంటున్నాము!*")
+        appendLine("📅 *తేదీ & సమయం / Date:* ${formatReceiptDateTime(donation.addedTime)}")
+        appendLine("📍 *కౌంటర్ / Counter:* $counter")
+        appendLine("━━━━━━━━━━━━━━━━━━━━")
+        appendLine("🙏 *మీ కుటుంబానికి ఆయురారోగ్య ఐశ్వర్యాలు, సుఖశాంతులు కలగాలని స్వామివారిని ప్రార్థిస్తున్నాము!*")
+        append("⚡ _ShankaRavam Digital Ledger_")
     }
 }

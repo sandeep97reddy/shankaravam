@@ -16,7 +16,7 @@ object FirestoreMappers {
 
     // ---- donations ----
 
-    fun donationToMap(e: DonationEntity, deviceId: String = ""): Map<String, Any?> = mapOf(
+    fun donationToMap(e: DonationEntity, deviceTag: String = ""): Map<String, Any?> = mapOf(
         "donorName" to e.donorName,
         "pronunciationText" to e.pronunciationText,
         "honorific" to e.honorific,
@@ -31,7 +31,9 @@ object FirestoreMappers {
         "status" to e.status,
         "announcementEnabled" to e.announcementEnabled,
         "addedBy" to e.addedBy,
-        "deviceId" to deviceId,
+        // F4 privacy: last-4 install tag only. The full UUID never leaves Room
+        // (legacy rows may still carry a full "deviceId" — readers ignore it).
+        "deviceTag" to deviceTag,
         "createdAt" to e.createdAt,
         "updatedAt" to e.updatedAt,
         "version" to e.version
@@ -68,7 +70,7 @@ object FirestoreMappers {
 
     // ---- expenses ----
 
-    fun expenseToMap(e: ExpenseEntity, deviceId: String = ""): Map<String, Any?> = mapOf(
+    fun expenseToMap(e: ExpenseEntity, deviceTag: String = ""): Map<String, Any?> = mapOf(
         "amount" to e.amount,
         "description" to e.description,
         "category" to e.category,
@@ -77,7 +79,8 @@ object FirestoreMappers {
         "paymentMethod" to e.paymentMethod,
         "vendor" to e.vendor,
         "addedBy" to e.addedBy,
-        "deviceId" to deviceId,
+        // F4 privacy: last-4 install tag only (see donationToMap).
+        "deviceTag" to deviceTag,
         "createdAt" to e.createdAt,
         "updatedAt" to e.updatedAt,
         "status" to e.status,
@@ -119,6 +122,27 @@ object FirestoreMappers {
         "correctedBy" to e.correctedBy,
         "createdAt" to e.createdAt
     )
+
+    /**
+     * F3 peer download (corrections were upload-only; peers never received
+     * them). Append-only + set-by-id = idempotent. Null when the doc is not a
+     * correction. Local syncStatus resets to SYNCED — the row came from cloud.
+     */
+    fun correctionFromMap(id: String, eventId: String, map: Map<String, Any?>): CorrectionEntity? {
+        val targetId = map["targetRecordId"] as? String ?: return null
+        return CorrectionEntity(
+            id = id,
+            eventId = eventId,
+            targetRecordId = targetId,
+            targetType = map["targetType"] as? String ?: "DONATION",
+            originalAmount = (map["originalAmount"] as? Number)?.toDouble() ?: 0.0,
+            deltaAmount = (map["deltaAmount"] as? Number)?.toDouble() ?: 0.0,
+            reason = map["reason"] as? String ?: "",
+            correctedBy = map["correctedBy"] as? String ?: "",
+            createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
+            syncStatus = "SYNCED"
+        )
+    }
 
     // ---- events (header only; members/codes are subcollections) ----
 
