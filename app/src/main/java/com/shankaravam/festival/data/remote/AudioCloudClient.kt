@@ -20,11 +20,17 @@ class AudioCloudClient(
     private val prefs: SessionPrefs,
     private val client: OkHttpClient = defaultClient()
 ) {
-    /** Resolve outcome: bytes, explicit server-quota (distinct pill), or fallback. */
+    /** Resolve outcome: bytes, explicit server-quota (distinct pill), or fallback with reason. */
     sealed interface AudioResolve {
         data class Ready(val hash: String, val bytes: ByteArray, val cached: Boolean) : AudioResolve
         data object ServerQuota : AudioResolve
-        data object Unavailable : AudioResolve
+        /**
+         * Gateway fell back to native. [reason] is a short human-readable
+         * diagnostic (surfaced in the queue voice card, never PII):
+         * "no-gateway", "no-sign-in", "timeout", "http-401 bad token",
+         * "http-403 no seat", "http-400 ...", "http-404 wrong URL", ...
+         */
+        data class Unavailable(val reason: String = "unavailable") : AudioResolve
     }
 
     /** Receipt PUT outcome: path to store, retry (429/5xx/timeout), or give up. */
@@ -39,9 +45,12 @@ class AudioCloudClient(
         const val MAX_AUDIO_BYTES = 5L * 1024L * 1024L
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(1500, TimeUnit.MILLISECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
-            .writeTimeout(10, TimeUnit.SECONDS)
+            // 1.5s connect was too tight for first-TLS to workers.dev on
+            // pandal cellular (persistent native fallback). 8s/30s keeps the
+            // background prefetch patient; playback never blocks on this.
+            .connectTimeout(8000, TimeUnit.MILLISECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build()
     }
@@ -69,8 +78,8 @@ class AudioCloudClient(
         roster: Boolean,
         hash: String
     ): AudioResolve {
-        val base = baseUrl() ?: return AudioResolve.Unavailable
-        if (idToken.isNullOrBlank()) return AudioResolve.Unavailable
+        val base = baseUrl() ?: return AudioResolve.Unavailable("no-gateway")
+        if (idToken.isNullOrBlank()) return AudioResolve.Unavailable("no-sign-in")
         return runCatching {
             val body = JSONObject()
                 .put("eventId", eventId)
@@ -99,23 +108,66 @@ class AudioCloudClient(
                         )
                     }
                     429 -> return AudioResolve.ServerQuota
-                    else -> return AudioResolve.Unavailable
+                    400 -> return AudioResolve.Unavailable("http-400 ${resp.body?.string()?.take(80) ?: "bad request"}")
+                    401 -> return AudioResolve.Unavailable("http-401 bad token — sign in again")
+                    403 -> return AudioResolve.Unavailable("http-403 no seat — join/approve this festival")
+                    404 -> return AudioResolve.Unavailable("http-404 wrong gateway URL")
+                    502 -> return AudioResolve.Unavailable("http-502 Sarvam busy — native meanwhile")
+                    503 -> return AudioResolve.Unavailable("http-503 seat check down — native meanwhile")
+                    else -> return AudioResolve.Unavailable("http-${resp.code} gateway busy")
                 }
             }
             val (retHash, url, cached) = resolved
-            if (retHash != hash || url.isBlank()) return AudioResolve.Unavailable
+            if (retHash != hash || url.isBlank()) return AudioResolve.Unavailable("hash-mismatch")
             val getReq = Request.Builder()
                 .url("$base$url?eventId=$eventId")
                 .header("Authorization", "Bearer $idToken")
                 .get()
                 .build()
             val bytes = client.newCall(getReq).execute().use { resp ->
-                if (resp.code != 200) return AudioResolve.Unavailable
-                resp.body?.bytes() ?: return AudioResolve.Unavailable
+                if (resp.code == 401) return AudioResolve.Unavailable("http-401 bad token — sign in again")
+                if (resp.code == 403) return AudioResolve.Unavailable("http-403 no seat — join/approve this festival")
+                if (resp.code == 404) return AudioResolve.Unavailable("http-404 audio gone — will re-make")
+                if (resp.code != 200) return AudioResolve.Unavailable("http-${resp.code} download busy")
+                resp.body?.bytes() ?: return AudioResolve.Unavailable("empty-download")
             }
-            if (bytes.isEmpty() || bytes.size > MAX_AUDIO_BYTES) return AudioResolve.Unavailable
+            if (bytes.isEmpty() || bytes.size > MAX_AUDIO_BYTES) return AudioResolve.Unavailable("bad-bytes")
             AudioResolve.Ready(retHash, bytes, cached)
-        }.getOrDefault(AudioResolve.Unavailable)
+        }.getOrElse { e ->
+            val msg = (e.message ?: "network").lowercase()
+            when {
+                "timeout" in msg || "timed out" in msg -> AudioResolve.Unavailable("timeout — slow network")
+                "unable to resolve host" in msg || "unknownhost" in msg ->
+                    AudioResolve.Unavailable("no-network or wrong gateway URL")
+                "failed to connect" in msg || "connection" in msg ->
+                    AudioResolve.Unavailable("cannot reach gateway — check URL/net")
+                "ssl" in msg || "certificate" in msg ->
+                    AudioResolve.Unavailable("TLS blocked — check date/VPN")
+                else -> AudioResolve.Unavailable("network: ${(e.message ?: "error").take(60)}")
+            }
+        }
+    }
+
+    /**
+     * No-auth gateway reachability probe (GET /v1/health). Never throws.
+     * Returns (reachable, detail) for the Gateway card — distinguishes
+     * "wrong URL / no net" from "URL ok but sign-in/seat blocked".
+     */
+    suspend fun checkHealth(): Pair<Boolean, String> = runCatching {
+        val base = baseUrl() ?: return Pair(false, "Gateway URL empty")
+        val req = Request.Builder().url("$base/v1/health").get().build()
+        client.newCall(req).execute().use { resp ->
+            if (resp.code == 200) Pair(true, "Gateway reachable")
+            else Pair(false, "Gateway answered http-${resp.code}")
+        }
+    }.getOrElse { e ->
+        val msg = (e.message ?: "network").lowercase()
+        when {
+            "timeout" in msg -> Pair(false, "Gateway timeout — slow network")
+            "unable to resolve host" in msg || "unknownhost" in msg ->
+                Pair(false, "Cannot resolve host — wrong URL or offline")
+            else -> Pair(false, "Unreachable: ${(e.message ?: "error").take(60)}")
+        }
     }
 
     /**

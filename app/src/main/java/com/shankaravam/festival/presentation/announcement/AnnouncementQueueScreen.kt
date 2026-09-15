@@ -103,6 +103,7 @@ fun AnnouncementQueueScreen(
     val state by viewModel.uiState.collectAsState()
     val importReport by viewModel.importReport.collectAsState()
     val playbackError by viewModel.playbackError.collectAsState()
+    val gatewayError by viewModel.gatewayError.collectAsState()
     val rosterPicker = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents()
     ) { uris -> viewModel.importRosterClips(uris) }
@@ -135,7 +136,9 @@ fun AnnouncementQueueScreen(
                 VoiceSettingsCard(
                     route = state.route,
                     testingAudio = state.testingAudio,
-                    onTestAudio = { viewModel.testAudio() }
+                    onTestAudio = { viewModel.testAudio() },
+                    gatewayError = gatewayError,
+                    onClearGatewayError = { viewModel.clearGatewayError() }
                 )
             }
             item {
@@ -254,7 +257,9 @@ private fun AudioRouteBadge(
 private fun VoiceSettingsCard(
     route: com.shankaravam.festival.core.audio.AudioRoute,
     testingAudio: Boolean,
-    onTestAudio: () -> Unit
+    onTestAudio: () -> Unit,
+    gatewayError: String = "",
+    onClearGatewayError: () -> Unit = {}
 ) {
     val container = rememberContainer()
     val prefs = remember { container.sessionPrefs }
@@ -296,7 +301,8 @@ private fun VoiceSettingsCard(
         sarvamSpeaker = speaker,
         nativeVoice = nativeVoice,
         hasSarvamKey = hasKey,
-        hasGateway = hasGateway
+        hasGateway = hasGateway,
+        hasSignIn = currentUser != null
     )
 
     // Every pick writes prefs (the single source of truth) AND takes effect
@@ -567,9 +573,39 @@ private fun VoiceSettingsCard(
                 text = config.statusLine(),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
+            // Gateway diagnostics: last fallback reason (401/403/timeout/...).
+            // This is what turns "still local voice" from a mystery into an action.
+            if (gatewayError.isNotBlank()) {
+                Surface(
+                    color = Color(0xFFFFF3E0),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "⚠️ $gatewayError — speaking offline meanwhile. Tap Test again after fixing.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFE65100),
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(
+                            onClick = onClearGatewayError,
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                            modifier = Modifier.height(26.dp)
+                        ) {
+                            Text("Hide", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
         }
     }
 

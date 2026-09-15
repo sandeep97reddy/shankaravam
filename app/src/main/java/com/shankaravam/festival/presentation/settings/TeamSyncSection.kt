@@ -15,6 +15,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -153,7 +154,19 @@ fun TeamSyncSection(
                         Switch(
                             checked = state.syncEnabled,
                             enabled = state.configured && event != null,
-                            onCheckedChange = { viewModel.setSyncEnabled(it, event?.id) }
+                            onCheckedChange = { viewModel.setSyncEnabled(it, event?.id) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = TempleSaffron,
+                                checkedBorderColor = TempleSaffron,
+                                // OFF but enabled must not look disabled: solid
+                                // outline-gray track + white thumb reads clearly
+                                // in light AND dark mode; truly-disabled keeps
+                                // the washed-out default alpha.
+                                uncheckedThumbColor = Color.White,
+                                uncheckedTrackColor = MaterialTheme.colorScheme.outline,
+                                uncheckedBorderColor = MaterialTheme.colorScheme.outline
+                            )
                         )
                     }
                     Text(

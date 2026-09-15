@@ -182,7 +182,13 @@ class DualTtsEngine(
         /** M1: fires when [takeSlot] denies (caller pills + breaks). */
         onDeviceQuota: () -> Unit = {},
         /** M2: false skips the gateway branch (server-capped pass). */
-        attemptGateway: Boolean = true
+        attemptGateway: Boolean = true,
+        /**
+         * Gateway diagnostics: fires with the human-readable reason whenever
+         * the gateway branch falls back (401/403/timeout/wrong-URL/...).
+         * The caller surfaces it instead of silently speaking native.
+         */
+        onGatewayError: (String) -> Unit = {}
     ): File? {
         val normSpeaker = normalizeSarvamSpeaker(speaker)
         val text = if (roster) {
@@ -206,6 +212,12 @@ class DualTtsEngine(
             // before PREPARING so signed-out rows keep NOT_GENERATED instead
             // of flickering PREPARING→FAILED with zero network spent.
             val token = runCatching { idTokenProvider() }.getOrNull()
+            if (cloud != null && token.isNullOrBlank() && cloud.baseUrl() != null) {
+                // Signed-out with a saved gateway: report once per call so the
+                // voice card can say "sign in" instead of failing silently.
+                // Status deliberately untouched — rows stay NOT_GENERATED.
+                runCatching { onGatewayError("no-sign-in — sign in to use gateway voice") }
+            }
             if (cloud != null && !token.isNullOrBlank()) {
                 cloudAttempted = true
                 runCatching { onStatus(AudioStatus.PREPARING) }
@@ -223,7 +235,8 @@ class DualTtsEngine(
                     }
                     is AudioCloudClient.AudioResolve.ServerQuota ->
                         runCatching { onServerQuota() }
-                    is AudioCloudClient.AudioResolve.Unavailable -> Unit
+                    is AudioCloudClient.AudioResolve.Unavailable ->
+                        runCatching { onGatewayError(r.reason) }
                 }
             }
         }
@@ -337,7 +350,8 @@ class DualTtsEngine(
         /** M1: device-budget gate for the JIT leg (defaults: unmetered). */
         takeSlot: () -> Boolean = { true },
         onDeviceQuota: () -> Unit = {},
-        onServerQuota: () -> Unit = {}
+        onServerQuota: () -> Unit = {},
+        onGatewayError: (String) -> Unit = {}
     ) {
         withChime(onDone, onError) {
             runCatching {
@@ -349,6 +363,9 @@ class DualTtsEngine(
                 sarvam.importedFile(donation.id)?.let {
                     playFile(it, onDone, onError)
                     return@withChime
+                }
+                if (offlineOnly) {
+                    runCatching { onGatewayError("offline-mode — switch to Sarvam Cloud for studio voice") }
                 }
                 val active = normalizeSarvamSpeaker(speaker ?: runCatching { speakerProvider() }.getOrDefault("shubh"))
                 val text = buildDonationAnnouncement(donation, eventName, language, effectiveAmount)
@@ -382,7 +399,8 @@ class DualTtsEngine(
                             effectiveAmount = effectiveAmount,
                             onServerQuota = { runCatching { onServerQuota() } },
                             takeSlot = takeSlot,
-                            onDeviceQuota = { runCatching { onDeviceQuota() } }
+                            onDeviceQuota = { runCatching { onDeviceQuota() } },
+                            onGatewayError = { r -> runCatching { onGatewayError(r) } }
                         )
                         ensureActive()
                         if (file != null) {
@@ -420,7 +438,8 @@ class DualTtsEngine(
         /** M1: device-budget gate for the JIT leg (defaults: unmetered). */
         takeSlot: () -> Boolean = { true },
         onDeviceQuota: () -> Unit = {},
-        onServerQuota: () -> Unit = {}
+        onServerQuota: () -> Unit = {},
+        onGatewayError: (String) -> Unit = {}
     ) {
         withChime(onDone, onError, chime = false) {
             runCatching {
@@ -431,6 +450,9 @@ class DualTtsEngine(
                 sarvam.importedFile(donation.id, roster = true)?.let {
                     playFile(it, onDone, onError)
                     return@withChime
+                }
+                if (offlineOnly) {
+                    runCatching { onGatewayError("offline-mode — switch to Sarvam Cloud for studio voice") }
                 }
                 val active = normalizeSarvamSpeaker(speaker ?: runCatching { speakerProvider() }.getOrDefault("shubh"))
                 val text = buildRosterItemAnnouncement(donation, language, effectiveAmount)
@@ -477,7 +499,8 @@ class DualTtsEngine(
                             effectiveAmount = effectiveAmount,
                             onServerQuota = { runCatching { onServerQuota() } },
                             takeSlot = takeSlot,
-                            onDeviceQuota = { runCatching { onDeviceQuota() } }
+                            onDeviceQuota = { runCatching { onDeviceQuota() } },
+                            onGatewayError = { r -> runCatching { onGatewayError(r) } }
                         )
                         ensureActive()
                         if (file != null) {
@@ -683,7 +706,12 @@ class DualTtsEngine(
      * the legacy dummy id (gateway 403s → native fallback, same as before). The CAS hash
      * covers only (language, speaker, roster, text), so varying this never poisons the cache.
      */
-    fun playTestLine(onDone: () -> Unit, onError: () -> Unit, eventId: String? = null) {
+    fun playTestLine(
+        onDone: () -> Unit,
+        onError: () -> Unit,
+        eventId: String? = null,
+        onGatewayError: (String) -> Unit = {}
+    ) {
         val offlineOnly = runCatching { engineModeProvider() }
             .getOrDefault(com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD) ==
             com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE
@@ -702,7 +730,9 @@ class DualTtsEngine(
                 val cloud = runCatching { cloudClientProvider() }.getOrNull()
                 if (cloud?.baseUrl() != null) {
                     val token = runCatching { idTokenProvider() }.getOrNull()
-                    if (!token.isNullOrBlank()) {
+                    if (token.isNullOrBlank()) {
+                        runCatching { onGatewayError("no-sign-in — sign in to use gateway voice") }
+                    } else {
                         // Real event id lets the worker seat check pass; dummy
                         // id 403s (gateway-only Test Voice would never verify).
                         val resolveEventId = if (!eventId.isNullOrBlank()) eventId else "test_event"
@@ -715,8 +745,12 @@ class DualTtsEngine(
                                 playFile(file, onDone, onError)
                                 return@launch
                             }
+                        } else if (r is AudioCloudClient.AudioResolve.Unavailable) {
+                            runCatching { onGatewayError(r.reason) }
                         }
                     }
+                } else {
+                    runCatching { onGatewayError("no-gateway — save gateway URL first") }
                 }
                 // Direct Sarvam key fallback (no gateway / gateway miss).
                 val directKey = runCatching { keyProvider() }.getOrNull()?.trim().orEmpty()

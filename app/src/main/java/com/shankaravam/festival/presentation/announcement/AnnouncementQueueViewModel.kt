@@ -117,6 +117,15 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
      */
     private val quotaPill = MutableStateFlow("")
 
+    /**
+     * Gateway diagnostics: last human-readable gateway fallback reason
+     * (401/403/timeout/wrong-URL/offline-mode/...). Shown in the voice card
+     * so "Sarvam not playing" is never a mystery. Blank = no error seen yet.
+     */
+    private val _gatewayError = MutableStateFlow("")
+    val gatewayError: StateFlow<String> = _gatewayError.asStateFlow()
+    fun clearGatewayError() { _gatewayError.value = "" }
+
     private val _importReport = MutableStateFlow<String?>(null)
     val importReport: StateFlow<String?> = _importReport.asStateFlow()
     fun consumeImportReport() { _importReport.value = null }
@@ -452,6 +461,9 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
     fun testAudio() {
         if (uiState.value.isPlaying || uiState.value.testingAudio) return
         clearPlaybackError()
+        // Fresh attempt, fresh diagnosis — a stale orange box must not linger
+        // while the new Test is still in flight (failure re-sets it below).
+        clearGatewayError()
         refreshQuotaPill()
         // Quota pre-check: direct-key synthesis burns a client slot; gateway
         // has its own server-side cap. Only gate the uncached direct-key path
@@ -493,7 +505,8 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                 onError = { testingAudio.value = false },
                 // Real event id so the gateway seat check passes; null keeps
                 // the legacy dummy id (gateway 403s → native fallback).
-                eventId = prefs.currentEventId.value
+                eventId = prefs.currentEventId.value,
+                onGatewayError = { reason -> _gatewayError.value = "Gateway: $reason" }
             )
         }.onFailure {
             testingAudio.value = false
@@ -610,6 +623,9 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                 prefs.setGatewayQuotaAt()
                 quotaPill.value = com.shankaravam.festival.domain.model.gatewayQuotaPillText()
             }
+            val jitOnGatewayError: (String) -> Unit = { reason ->
+                _gatewayError.value = "Gateway: $reason"
+            }
             kotlinx.coroutines.suspendCancellableCoroutine { cont ->
                 if (state.rosterMode) {
                     engine.playRosterItem(
@@ -621,7 +637,8 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                         effectiveAmount = effective,
                         takeSlot = jitTakeSlot,
                         onDeviceQuota = jitOnDeviceQuota,
-                        onServerQuota = jitOnServerQuota
+                        onServerQuota = jitOnServerQuota,
+                        onGatewayError = jitOnGatewayError
                     )
                 } else {
                     engine.playBest(
@@ -634,7 +651,8 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                         effectiveAmount = effective,
                         takeSlot = jitTakeSlot,
                         onDeviceQuota = jitOnDeviceQuota,
-                        onServerQuota = jitOnServerQuota
+                        onServerQuota = jitOnServerQuota,
+                        onGatewayError = jitOnGatewayError
                     )
                 }
                 cont.invokeOnCancellation { engine.stopAll() }
@@ -953,19 +971,25 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                                     resetAt = prefs.sarvamQuotaResetAt()
                                 )
                             },
-                            attemptGateway = !serverCapped
+                            attemptGateway = !serverCapped,
+                            onGatewayError = { reason ->
+                                _gatewayError.value = "Gateway: $reason"
+                            }
                         )
-                        // Simple circuit-breaker: any Sarvam/network failure stops
-                        // this pass instead of burning the remaining rows. Native
-                        // TTS covers playback; the next queue change retries.
+                        // One row failing (timeout/401/403) must not abort the
+                        // whole pass anymore — the old break hid the first
+                        // error and left the rest native forever. Keep going;
+                        // JIT at play time retries the missed rows.
                         if (file == null) {
-                            prefetchRemaining.value = 0
-                            break
+                            prefetchRemaining.value = (prefetchRemaining.value - 1).coerceAtLeast(0)
+                            continue
                         }
                         // A row succeeded, so device budget exists — clear the
                         // device pill. M5: the gateway pill survives (daily
-                        // server cap, not per-slot device budget).
+                        // server cap, not per-slot device budget). A success
+                        // also heals a stale gateway error box.
                         if (quotaPill.value.isNotBlank() && !isGatewayPill()) quotaPill.value = ""
+                        if (_gatewayError.value.isNotBlank()) _gatewayError.value = ""
                         prefetchRemaining.value = (prefetchRemaining.value - 1).coerceAtLeast(0)
                     }
                 }

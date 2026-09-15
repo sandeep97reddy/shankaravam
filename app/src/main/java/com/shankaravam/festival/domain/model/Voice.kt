@@ -52,9 +52,16 @@ data class VoiceConfig(
     val sarvamSpeaker: String = "shubh",
     val nativeVoice: String? = null,
     val hasSarvamKey: Boolean = false,
-    val hasGateway: Boolean = false
+    val hasGateway: Boolean = false,
+    /**
+     * Gateway voice needs a signed-in Google seat (Worker Bearer gate).
+     * Default true keeps old unit tests green; the announcement screen
+     * passes the live auth state so the label never promises cloud
+     * while signed out.
+     */
+    val hasSignIn: Boolean = true
 ) {
-    val hasCloudActive: Boolean get() = hasSarvamKey || hasGateway
+    val hasCloudActive: Boolean get() = hasSarvamKey || (hasGateway && hasSignIn)
 
     /**
      * The one shared active-voice label. Branches on [engineMode] FIRST —
@@ -66,7 +73,10 @@ data class VoiceConfig(
             if (nativeVoice != null) "📱 Android Voice (${nativeVoice.substringAfterLast("-", "Offline")})"
             else "📱 Android System Voice (Offline)"
         VoiceEngineMode.SARVAM_CLOUD ->
-            if (!hasCloudActive) "⚠️ Cloud voice selected — no Gateway or key configured"
+            if (!hasCloudActive) {
+                if (hasGateway && !hasSignIn) "⚠️ Gateway saved — sign in to use Sarvam Cloud"
+                else "⚠️ Cloud voice selected — no Gateway or key configured"
+            }
             else when (com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(sarvamSpeaker)) {
                 "priya" -> "🌸 Priya (Sarvam Cloud HD)"
                 "shubh" -> "🎙️ Shubh (Sarvam Cloud HD)"
@@ -81,6 +91,8 @@ data class VoiceConfig(
     fun statusLine(): String = when {
         engineMode == VoiceEngineMode.OFFLINE_NATIVE ->
             "Offline Android voice active. Switch to Sarvam Cloud for studio clarity."
+        hasGateway && !hasSignIn ->
+            "Gateway URL saved — sign in with Google (Settings ⚙️ → Cloud Sync) to unlock Sarvam voice."
         hasGateway -> "✓ Temple media gateway active (Cloudflare R2)."
         hasSarvamKey -> "✓ Direct Sarvam cloud key active."
         else -> "Offline Android voice active. Configure Gateway URL in Settings ⚙️ for cloud voice."

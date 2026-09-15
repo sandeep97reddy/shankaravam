@@ -55,8 +55,28 @@ fun GatewayCard(
     val container = rememberContainer()
     val prefs = container.sessionPrefs
     val activeGatewayUrl by prefs.gatewayBaseUrlFlow.collectAsState()
+    val currentUser by container.authRepository.user.collectAsState()
     var urlDraft by remember(activeGatewayUrl) { mutableStateOf(activeGatewayUrl) }
     var saveMessage by remember { mutableStateOf<String?>(null) }
+    // Real reachability (GET /v1/health, no auth): distinguishes "URL saved"
+    // from "worker actually reachable". Null = unchecked yet.
+    var healthOk by remember { mutableStateOf<Boolean?>(null) }
+    var healthDetail by remember { mutableStateOf("") }
+    var checkingHealth by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(activeGatewayUrl) {
+        if (activeGatewayUrl.isBlank()) {
+            healthOk = null
+            healthDetail = ""
+        } else {
+            checkingHealth = true
+            val (ok, detail) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { container.audioCloud.checkHealth() }.getOrDefault(Pair(false, "Check failed"))
+            }
+            healthOk = ok
+            healthDetail = detail
+            checkingHealth = false
+        }
+    }
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -92,27 +112,47 @@ fun GatewayCard(
                     )
                 }
 
-                if (activeGatewayUrl.isNotBlank()) {
-                    Surface(
-                        color = Color(0xFFE8F5E9),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                Icons.Filled.CheckCircle,
-                                contentDescription = null,
-                                tint = Color(0xFF2E7D32),
-                                modifier = Modifier.size(14.dp)
-                            )
+                when {
+                    activeGatewayUrl.isBlank() -> Unit
+                    checkingHealth || healthOk == null -> {
+                        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(8.dp)) {
                             Text(
-                                "Connected",
-                                color = Color(0xFF2E7D32),
+                                "Checking…",
                                 style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                    healthOk == true -> {
+                        Surface(color = Color(0xFFE8F5E9), shape = RoundedCornerShape(8.dp)) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.CheckCircle,
+                                    contentDescription = null,
+                                    tint = Color(0xFF2E7D32),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    "Reachable",
+                                    color = Color(0xFF2E7D32),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                    else -> {
+                        Surface(color = Color(0xFFFFEBEE), shape = RoundedCornerShape(8.dp)) {
+                            Text(
+                                "Unreachable",
+                                color = Color(0xFFC62828),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
                     }
@@ -124,6 +164,23 @@ fun GatewayCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (activeGatewayUrl.isNotBlank() && healthDetail.isNotBlank()) {
+                Text(
+                    text = if (healthOk == true) "✓ $healthDetail — voice still needs Google sign-in."
+                    else "⚠️ $healthDetail — fix URL/net, then Test voice in Announcements.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (healthOk == true) Color(0xFF2E7D32) else Color(0xFFC62828),
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            if (activeGatewayUrl.isNotBlank() && currentUser == null) {
+                Text(
+                    text = "Saved, but signed out — sign in (Settings ⚙️ → Cloud Sync) to unlock Sarvam voice.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TempleSaffron,
+                    fontWeight = FontWeight.Medium
+                )
+            }
 
             OutlinedTextField(
                 value = urlDraft,

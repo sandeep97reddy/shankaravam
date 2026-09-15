@@ -149,6 +149,23 @@ class VoiceConfigTest {
     }
 
     @Test
+    fun gateway_without_sign_in_warns_instead_of_promising_hd() {
+        // Signed-out gateway must never promise HD — the engine needs a token.
+        val label = VoiceConfig(
+            VoiceEngineMode.SARVAM_CLOUD, "shubh", null,
+            hasSarvamKey = false, hasGateway = true, hasSignIn = false
+        ).displayLabel()
+        assertTrue(label.startsWith("⚠️"))
+        assertTrue(label.contains("sign in"))
+        assertTrue(
+            VoiceConfig(
+                VoiceEngineMode.SARVAM_CLOUD, "shubh", null,
+                hasSarvamKey = false, hasGateway = true, hasSignIn = false
+            ).statusLine().contains("sign in")
+        )
+    }
+
+    @Test
     fun speaker_names_are_case_and_whitespace_tolerant() {
         assertEquals(
             "🌸 Priya (Sarvam Cloud HD)",
