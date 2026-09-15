@@ -85,6 +85,31 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.GroupAdd
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.ui.graphics.graphicsLayer
+import com.shankaravam.festival.core.theme.CrimsonRose
+import com.shankaravam.festival.core.theme.CrimsonWash
+import com.shankaravam.festival.core.theme.MaroonWash
+import com.shankaravam.festival.core.theme.SaffronWash
+import com.shankaravam.festival.core.ui.haptics.LocalAppHaptics
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
@@ -105,7 +130,10 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
         val myRole: String = "organizer",
         val myCode: String? = null,
         /** Last successful ledger sync for the current event (0 = never). F1 diagnostics. */
-        val lastSync: Long = 0L
+        val lastSync: Long = 0L,
+        val hasSarvamKey: Boolean = false,
+        val voiceSyncedAt: Long = 0L,
+        val sarvamSpeaker: String = "shubh"
     )
 
     /**
@@ -130,7 +158,10 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
                         syncEnabled = syncEnabled,
                         myRole = "organizer",
                         myCode = null,
-                        lastSync = 0L
+                        lastSync = 0L,
+                        hasSarvamKey = container.secureKeys.getSarvamKey().isNotBlank(),
+                        voiceSyncedAt = container.sessionPrefs.lastVoiceSyncAt(),
+                        sarvamSpeaker = container.sessionPrefs.sarvamSpeaker
                     )
                 }
             } else {
@@ -147,7 +178,10 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
                         syncEnabled = syncEnabled,
                         myRole = container.sessionPrefs.myRole(eventId),
                         myCode = container.sessionPrefs.shareCodeFor(eventId),
-                        lastSync = container.sessionPrefs.lastSyncMillis(eventId)
+                        lastSync = container.sessionPrefs.lastSyncMillis(eventId),
+                        hasSarvamKey = container.secureKeys.getSarvamKey().isNotBlank(),
+                        voiceSyncedAt = container.sessionPrefs.lastVoiceSyncAt(),
+                        sarvamSpeaker = container.sessionPrefs.sarvamSpeaker
                     )
                 }
             }
@@ -505,6 +539,152 @@ class CloudSyncViewModel(private val container: AppContainer) : ViewModel() {
             _busy.value = null
         }
     }
+
+    // ---- Committee Shared Voice & Sarvam AI ----
+
+    fun getSavedSarvamKey(): String = container.secureKeys.getSarvamKey()
+    fun getSavedSarvamSpeaker(): String = container.sessionPrefs.sarvamSpeaker
+
+    fun setSarvamSpeaker(speaker: String) {
+        container.sessionPrefs.sarvamSpeaker = speaker
+        codeTick.value += 1
+    }
+
+    fun saveKeyLocally(key: String, speaker: String) {
+        val clean = key.trim().removeSurrounding("\"").removeSurrounding("'").trim()
+        container.secureKeys.setSarvamKey(clean)
+        container.sessionPrefs.sarvamSpeaker = speaker
+        // Configuring a cloud key means cloud mode — blank clears to offline.
+        container.sessionPrefs.voiceEngineMode = if (clean.isBlank()) {
+            com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE
+        } else {
+            com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD
+        }
+        container.sessionPrefs.voiceOfflineLocked = clean.isBlank()
+        codeTick.value += 1
+        _notice.value = if (clean.isBlank()) {
+            "Cloud key removed — offline voice active."
+        } else if (container.secureKeys.isEncrypted) {
+            "✓ Key stored encrypted & cloud voice activated."
+        } else {
+            "✓ Key stored locally & cloud voice activated."
+        }
+    }
+
+    fun clearKeyLocally() {
+        container.secureKeys.setSarvamKey("")
+        container.sessionPrefs.voiceEngineMode =
+            com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE
+        // Explicit offline choice — auto-pull must not flip the mode back.
+        container.sessionPrefs.voiceOfflineLocked = true
+        codeTick.value += 1
+        _notice.value = "Cloud key removed — offline device voice active."
+    }
+
+    fun pushKey(key: String, speaker: String) {
+        val uid = container.authRepository.user.value?.uid
+        if (uid == null) {
+            _notice.value = "Sign in first using Google Account above."
+            return
+        }
+        viewModelScope.launch {
+            _busy.value = "pushvoice"
+            saveKeyLocally(key, speaker)
+            when (container.syncService.writeTtsKey(key.trim(), speaker, uid)) {
+                is Outcome.Ok -> {
+                    codeTick.value += 1
+                    _notice.value = "Shared key published for collectors."
+                }
+                is Outcome.Err -> _notice.value = "Publish failed — saved on this device only."
+            }
+            _busy.value = null
+        }
+    }
+
+    fun pullKey() {
+        viewModelScope.launch {
+            _busy.value = "pullvoice"
+            val pulled = container.syncService.maybeAutoPullVoice(force = true, respectLock = false)
+            if (pulled.applied) {
+                codeTick.value += 1
+                _notice.value = "Shared voice settings applied."
+            } else if (!pulled.remotePresent) {
+                _notice.value = "No shared key published yet — the head publishes it from this card."
+            } else {
+                codeTick.value += 1
+                _notice.value = "Already up to date with the shared voice."
+            }
+            _busy.value = null
+        }
+    }
+
+    fun autoPullVoice() {
+        viewModelScope.launch {
+            if (container.syncService.maybeAutoPullVoice().applied) {
+                codeTick.value += 1
+            }
+        }
+    }
+
+    private val _sarvamTestStatus = MutableStateFlow<String?>(null)
+    val sarvamTestStatus: StateFlow<String?> = _sarvamTestStatus.asStateFlow()
+
+    private val _testingSarvam = MutableStateFlow(false)
+    val testingSarvam: StateFlow<Boolean> = _testingSarvam.asStateFlow()
+
+    fun testSarvamVoice(key: String, speaker: String) {
+        val trimmed = key.trim()
+        if (trimmed.isBlank()) {
+            _sarvamTestStatus.value = "Please enter an API key first."
+            return
+        }
+        if (_testingSarvam.value) return
+        if (!container.sessionPrefs.takeSarvamSlot()) {
+            _sarvamTestStatus.value = "✗ Free-tier limit reached (20 Sarvam calls per 30 min). Try later — offline voice still works."
+            return
+        }
+        viewModelScope.launch {
+            _testingSarvam.value = true
+            _sarvamTestStatus.value = "Testing Sarvam AI connection… (uses 1 of 20 cloud calls)"
+            val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    val api = com.shankaravam.festival.data.remote.SarvamApiService.create()
+                    val normSpeaker = com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(speaker)
+                    val payload = org.json.JSONObject()
+                        .put("text", "ఓం నమో వేంకటేశాయ. శర్వం క్లౌడ్ గొంతు పరీక్ష విజయవంతమైంది.")
+                        .put("language_code", "te-IN")
+                        .put("speaker", normSpeaker)
+                        .put("model", "bulbul:v3")
+                        .put("output_audio_codec", "mp3")
+                        .toString()
+                        .toRequestBody("application/json; charset=utf-8".toMediaType())
+                    val response = api.synthesize(trimmed, payload).string()
+                    val json = org.json.JSONObject(response)
+                    val audioBase64 = if (json.has("audios")) {
+                        json.getJSONArray("audios").getString(0)
+                    } else if (json.has("audio")) {
+                        json.getString("audio")
+                    } else throw java.io.IOException("Missing audio in Sarvam response")
+                    val bytes = android.util.Base64.decode(audioBase64, android.util.Base64.DEFAULT)
+                    val testFile = java.io.File(container.appContext.cacheDir, "audio_test_sample.mp3")
+                    testFile.writeBytes(bytes)
+                    testFile
+                }
+            }
+            result.fold(
+                onSuccess = { file ->
+                    saveKeyLocally(trimmed, speaker)
+                    _sarvamTestStatus.value = "✓ Key Verified & Saved! Playing audio…"
+                    container.ttsEngine.playFile(file, onDone = {}, onError = {})
+                },
+                onFailure = { e ->
+                    val errorMsg = com.shankaravam.festival.data.remote.SarvamErrorParser.parse(e)
+                    _sarvamTestStatus.value = "✗ Test failed: $errorMsg"
+                }
+            )
+            _testingSarvam.value = false
+        }
+    }
 }
 
 
@@ -524,14 +704,50 @@ fun CloudSyncScreen(
     val signInIntent by viewModel.signInIntent.collectAsState()
     var joinCode by remember { mutableStateOf("") }
 
+    val testStatus by viewModel.sarvamTestStatus.collectAsState()
+    val testing by viewModel.testingSarvam.collectAsState()
+    val savedSarvamKey = remember(state.hasSarvamKey) { viewModel.getSavedSarvamKey() }
+    val savedSarvamSpeaker = remember(state.sarvamSpeaker) { viewModel.getSavedSarvamSpeaker() }
+    var sarvamKeyDraft by remember(savedSarvamKey) { mutableStateOf(savedSarvamKey) }
+    var sarvamSpeakerDraft by remember(savedSarvamSpeaker) { mutableStateOf(savedSarvamSpeaker) }
+    val container = rememberContainer()
+    val activeGatewayUrl by container.sessionPrefs.gatewayBaseUrlFlow.collectAsState()
+
+    var voiceAccordionExpanded by remember { mutableStateOf(false) }
+    var gatewayExpanded by remember { mutableStateOf(false) }
+
     val signInLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { result -> viewModel.completeSignIn(result.data) }
+
+    var qrBusy by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val qrPickLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri == null || qrBusy) return@rememberLauncherForActivityResult
+        qrBusy = true
+        scope.launch {
+            val code = decodeJoinCodeFromUri(context.contentResolver, uri)
+            if (code != null) {
+                joinCode = code
+                viewModel.info("QR read: $code — tap Request to join.")
+            } else {
+                viewModel.info("No invite QR found in that image — try a clearer screenshot.")
+            }
+            qrBusy = false
+        }
+    }
+
     androidx.compose.runtime.LaunchedEffect(signInIntent) {
         signInIntent?.let {
             signInLauncher.launch(it)
             viewModel.consumeSignInIntent()
         }
+    }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        viewModel.autoPullVoice()
     }
     // Roster auto-load (S4.2 + verdict Q3): keys on gate + event, so no fetch
     // loop and zero reads for signed-out/pending/revoked (Rule #1).
@@ -641,26 +857,55 @@ fun CloudSyncScreen(
                     }
                 }
             }
-            GatewayCard()
             val event = state.event
             val user = state.user
             if (event == null) {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            if (user != null) "No festival on this device yet" else "No event yet",
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            if (user != null)
-                                "Join your organizer's festival below with their invite code — you don't need to create anything first."
-                            else
-                                "Create your festival event on the dashboard first — " +
-                                    "invites and multi-counter sync unlock after that. " +
-                                    "Everything still works 100% offline meanwhile.",
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                if (user == null) {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.GroupAdd,
+                                    contentDescription = null,
+                                    tint = TempleSaffron,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Text(
+                                    "Join a Festival Committee",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = DeepMaroon
+                                )
+                            }
+                            Text(
+                                "To join an existing festival using an invite code or QR screenshot, sign in with Google so your counter identity is recognized by the organizer.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Button(
+                                onClick = { viewModel.signIn() },
+                                enabled = state.configured && busy == null,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = TempleSaffron),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(if (busy == "signin") "Signing in…" else "Sign in with Google to Join")
+                            }
+                        }
                     }
+                } else {
+                    JoinCard(
+                        code = joinCode,
+                        onCode = { joinCode = it.uppercase().filter(Char::isLetterOrDigit) },
+                        valid = isValidShareCode(joinCode),
+                        busy = busy == "join",
+                        onJoin = { viewModel.join(joinCode, user.uid) { joinCode = "" } },
+                        onPickQr = { qrPickLauncher.launch("image/*") },
+                        pickingQr = qrBusy
+                    )
                 }
             } else if (user == null) {
                 Card(modifier = Modifier.fillMaxWidth()) {
@@ -672,61 +917,53 @@ fun CloudSyncScreen(
                         )
                     }
                 }
-            }
-            if (user != null) {
-                if (event == null) {
+            } else {
+                var selectedTab by remember(event.id) { mutableStateOf(0) }
+                // Creator-or-admin proxy: non-creator heads see the team
+                // read-only and no close button (rules would deny them).
+                val canManage = viewModel.canManageTeam(event.id)
+                // Verdict Q3: active collectors get a read-only team view.
+                val canView = viewModel.canViewRoster(event.id)
+
+                if (canView) {
+                    TabRow(
+                        selectedTabIndex = selectedTab,
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        contentColor = TempleSaffron,
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    ) {
+                        Tab(
+                            selected = selectedTab == 0,
+                            onClick = { selectedTab = 0 },
+                            text = { Text("Sync & Invites", fontWeight = FontWeight.SemiBold) }
+                        )
+                        Tab(
+                            selected = selectedTab == 1,
+                            onClick = { selectedTab = 1 },
+                            text = { Text("Team & Counters (${team.size})", fontWeight = FontWeight.SemiBold) }
+                        )
+                    }
+                }
+
+                if (selectedTab == 0 || !canView) {
+                    InviteCard(
+                        eventName = event.name,
+                        code = state.myCode,
+                        busy = busy == "code",
+                        onPublish = { viewModel.publishCode(event, user.uid) },
+                        canClose = canManage,
+                        closing = busy == "closecode",
+                        onClose = { state.myCode?.let { viewModel.closeCode(event.id, it) } }
+                    )
                     JoinCard(
                         code = joinCode,
                         onCode = { joinCode = it.uppercase().filter(Char::isLetterOrDigit) },
                         valid = isValidShareCode(joinCode),
                         busy = busy == "join",
-                        onJoin = { viewModel.join(joinCode, user.uid) {} }
+                        onJoin = { viewModel.join(joinCode, user.uid) { joinCode = "" } },
+                        onPickQr = { qrPickLauncher.launch("image/*") },
+                        pickingQr = qrBusy
                     )
-                } else {
-                    var selectedTab by remember(event.id) { mutableStateOf(0) }
-                    // Creator-or-admin proxy: non-creator heads see the team
-                    // read-only and no close button (rules would deny them).
-                    val canManage = viewModel.canManageTeam(event.id)
-                    // Verdict Q3: active collectors get a read-only team view.
-                    val canView = viewModel.canViewRoster(event.id)
-
-                    if (canView) {
-                        TabRow(
-                            selectedTabIndex = selectedTab,
-                            containerColor = MaterialTheme.colorScheme.surface,
-                            contentColor = TempleSaffron,
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                        ) {
-                            Tab(
-                                selected = selectedTab == 0,
-                                onClick = { selectedTab = 0 },
-                                text = { Text("Sync & Invites", fontWeight = FontWeight.SemiBold) }
-                            )
-                            Tab(
-                                selected = selectedTab == 1,
-                                onClick = { selectedTab = 1 },
-                                text = { Text("Team & Counters (${team.size})", fontWeight = FontWeight.SemiBold) }
-                            )
-                        }
-                    }
-
-                    if (selectedTab == 0 || !canView) {
-                        InviteCard(
-                            eventName = event.name,
-                            code = state.myCode,
-                            busy = busy == "code",
-                            onPublish = { viewModel.publishCode(event, user.uid) },
-                            canClose = canManage,
-                            closing = busy == "closecode",
-                            onClose = { state.myCode?.let { viewModel.closeCode(event.id, it) } }
-                        )
-                        JoinCard(
-                            code = joinCode,
-                            onCode = { joinCode = it.uppercase().filter(Char::isLetterOrDigit) },
-                            valid = isValidShareCode(joinCode),
-                            busy = busy == "join",
-                            onJoin = { viewModel.join(joinCode, user.uid) {} }
-                        )
                         if (viewModel.canApproveNow(event.id)) {
                             ApprovalsCard(
                                 pending = pending,
@@ -735,6 +972,65 @@ fun CloudSyncScreen(
                                 onApprove = { member, role ->
                                     viewModel.approve(event.id, member, role, user.uid)
                                 }
+                            )
+                        }
+
+                        // Committee Shared Voice Card (Global Head pushes, Collectors pull)
+                        val voiceSource = when {
+                            !state.hasSarvamKey -> null
+                            state.voiceSyncedAt > 0L -> {
+                                val dateStr = java.text.SimpleDateFormat("dd MMM, hh:mm a", java.util.Locale.getDefault())
+                                    .format(java.util.Date(state.voiceSyncedAt))
+                                "Shared by head (synced $dateStr)"
+                            }
+                            else -> "Local key on this device"
+                        }
+                        val voiceShared = state.voiceSyncedAt > 0L
+                        val voiceSummary = when {
+                            activeGatewayUrl.isNotBlank() -> "Gateway Active • Cloud Voice Enabled"
+                            state.hasSarvamKey -> "Sarvam Key Active • ${state.sarvamSpeaker.replaceFirstChar { it.uppercase() }}"
+                            else -> "Not configured • Free offline Android voice active"
+                        }
+
+                        SettingsAccordionCard(
+                            title = "Committee Shared Voice",
+                            teluguTitle = "ఉమ్మడి క్లౌడ్ గొంతు (శర్వం AI)",
+                            summary = voiceSummary,
+                            icon = Icons.Filled.Cloud,
+                            iconTint = TempleSaffron,
+                            iconBackground = SaffronWash,
+                            isExpanded = voiceAccordionExpanded,
+                            onToggle = { voiceAccordionExpanded = !voiceAccordionExpanded }
+                        ) {
+                            VoiceKeyContent(
+                                key = sarvamKeyDraft,
+                                onKeyChange = { sarvamKeyDraft = it },
+                                speaker = sarvamSpeakerDraft,
+                                onSpeakerChange = {
+                                    sarvamSpeakerDraft = it
+                                    viewModel.setSarvamSpeaker(it)
+                                },
+                                savedKey = savedSarvamKey,
+                                busy = busy == "pushvoice" || busy == "pullvoice",
+                                testStatus = testStatus,
+                                testing = testing,
+                                hasKey = state.hasSarvamKey,
+                                hasGateway = activeGatewayUrl.isNotBlank(),
+                                canPublish = viewModel.canManageTeam(event.id),
+                                onSaveLocal = { k, s -> viewModel.saveKeyLocally(k, s) },
+                                onClearKey = {
+                                    sarvamKeyDraft = ""
+                                    viewModel.clearKeyLocally()
+                                },
+                                onPush = { k, s -> viewModel.pushKey(k, s) },
+                                onPull = {
+                                    viewModel.pullKey()
+                                    sarvamKeyDraft = viewModel.getSavedSarvamKey()
+                                    sarvamSpeakerDraft = viewModel.getSavedSarvamSpeaker()
+                                },
+                                onTestSarvam = { k, s -> viewModel.testSarvamVoice(k, s) },
+                                voiceSource = voiceSource,
+                                voiceShared = voiceShared
                             )
                         }
                     } else {
@@ -750,7 +1046,22 @@ fun CloudSyncScreen(
                         )
                     }
                 }
+
+            // Temple Media Gateway (Single-sourced in collapsed accordion at bottom)
+            val gatewaySummary = if (activeGatewayUrl.isNotBlank()) "Connected • Cloudflare Worker & R2" else "Optional Worker & R2 endpoint"
+            SettingsAccordionCard(
+                title = "Temple Media Gateway",
+                teluguTitle = "మీడియా గేట్‌వే (Cloudflare R2)",
+                summary = gatewaySummary,
+                icon = Icons.Filled.Cloud,
+                iconTint = DeepMaroon,
+                iconBackground = MaroonWash,
+                isExpanded = gatewayExpanded,
+                onToggle = { gatewayExpanded = !gatewayExpanded }
+            ) {
+                GatewayCard()
             }
+
             OutlinedButton(onClick = onOpenAdmin, modifier = Modifier.fillMaxWidth()) {
                 Text("Voice & admin settings")
             }
@@ -900,41 +1211,242 @@ internal fun ApprovalsCard(
     onRefresh: () -> Unit,
     onApprove: (CloudMember, String) -> Unit
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        border = CardDefaults.outlinedCardBorder()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Access requests (${pending.size})", fontWeight = FontWeight.SemiBold)
-                OutlinedButton(onClick = onRefresh) { Text("Refresh") }
-            }
-            pending.forEach { member ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Column {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            "Access Requests",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = DeepMaroon
+                        )
+                        if (pending.isNotEmpty()) {
+                            Surface(
+                                color = TempleSaffron,
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text(
+                                    "${pending.size}",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
                     Text(
-                        resolveMemberName(member.counterName, member.displayName, member.email, member.userId),
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        "Approve volunteer counters to join",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    OutlinedButton(
-                        onClick = { onApprove(member, "organizer") },
-                        enabled = busyKey != "approve:${member.userId}"
-                    ) { Text("Collector") }
-                    OutlinedButton(
-                        onClick = { onApprove(member, "member") },
-                        enabled = busyKey != "approve:${member.userId}"
-                    ) { Text("Viewer") }
+                }
+                RefreshPill(
+                    refreshing = busyKey == "pending",
+                    onClick = onRefresh
+                )
+            }
+
+            if (pending.isEmpty()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Check,
+                            contentDescription = null,
+                            tint = Color(0xFF2E7D32),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            "All caught up! No pending join requests.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            } else {
+                pending.forEach { member ->
+                    key(member.userId) {
+                        val displayName = resolveMemberName(
+                            member.counterName,
+                            member.displayName,
+                            member.email,
+                            member.userId
+                        )
+                        val initial = displayName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "C"
+                        val isApproving = busyKey == "approve:${member.userId}"
+
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .clip(CircleShape)
+                                            .background(SaffronWash)
+                                    ) {
+                                        Text(
+                                            text = initial,
+                                            fontWeight = FontWeight.Bold,
+                                            color = TempleSaffron,
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                    }
+
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = displayName,
+                                            fontWeight = FontWeight.Bold,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 1,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                        )
+                                        val sub = member.email ?: "ID: …${member.userId.takeLast(6)}"
+                                        Text(
+                                            text = sub,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Button(
+                                        onClick = { onApprove(member, SessionPrefs.ROLE_ORGANIZER) },
+                                        enabled = !isApproving,
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                            containerColor = TempleSaffron
+                                        ),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            if (isApproving) "…" else "Approve Collector",
+                                            maxLines = 1,
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    }
+                                    OutlinedButton(
+                                        onClick = { onApprove(member, SessionPrefs.ROLE_MEMBER) },
+                                        enabled = !isApproving,
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            "Approve Viewer",
+                                            maxLines = 1,
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            if (pending.isEmpty()) {
-                Text("No pending requests.", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+/**
+ * Modern tonal Refresh Pill with infinite rotation animation, loading state, and haptics.
+ */
+@Composable
+private fun RefreshPill(
+    refreshing: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    label: String = "Refresh"
+) {
+    val haptics = LocalAppHaptics.current
+    val infiniteTransition = rememberInfiniteTransition(label = "refresh_rotation")
+    val rotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 800, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "rotation"
+    )
+
+    Surface(
+        onClick = {
+            if (!refreshing) {
+                haptics.tick()
+                onClick()
             }
+        },
+        enabled = !refreshing,
+        shape = RoundedCornerShape(20.dp),
+        color = SaffronWash,
+        border = BorderStroke(1.dp, TempleSaffron.copy(alpha = 0.35f)),
+        modifier = modifier
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Refresh,
+                contentDescription = label,
+                tint = TempleSaffron,
+                modifier = Modifier
+                    .size(16.dp)
+                    .graphicsLayer {
+                        if (refreshing) rotationZ = rotation
+                    }
+            )
+            Text(
+                text = if (refreshing) "Syncing…" else label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = DeepMaroon
+            )
         }
     }
 }
@@ -976,23 +1488,33 @@ internal fun ConnectedCountersCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text("Connected Counters (${team.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "Connected Counters (${team.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = DeepMaroon
+                )
                 Text(
                     "Manage collector devices & live presence",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            OutlinedButton(onClick = onRefresh, enabled = busyKey != "team") {
-                Text(if (busyKey == "team") "…" else "Refresh")
-            }
+            RefreshPill(
+                refreshing = busyKey == "team",
+                onClick = onRefresh
+            )
         }
         if (rows.isEmpty()) {
-            Card(modifier = Modifier.fillMaxWidth()) {
+            OutlinedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp)
+            ) {
                 Text(
                     "No counters connected yet. Share the invite code in the Sync & Invites tab.",
                     style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(16.dp)
+                    modifier = Modifier.padding(16.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -1029,7 +1551,9 @@ internal fun ConnectedCountersCard(
                 TextButton(onClick = {
                     onSetRole(target, target.role, SessionPrefs.STATUS_REVOKED)
                     revokeTarget = null
-                }) { Text("Revoke") }
+                }) {
+                    Text("Revoke", color = CrimsonRose, fontWeight = FontWeight.Bold)
+                }
             },
             dismissButton = { TextButton(onClick = { revokeTarget = null }) { Text("Keep") } }
         )
@@ -1052,6 +1576,8 @@ private fun TeamRow(
             ?: member.displayName?.takeIf { it.isNotBlank() }
             ?: "Unknown counter") +
             (member.deviceTag?.takeIf { it.isNotBlank() }?.let { " (#$it)" } ?: "")
+    val initial = title.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "C"
+
     val presenceLabel = when (presence) {
         MemberPresence.ACTIVE_NOW -> "Active now"
         MemberPresence.IDLE -> "Idle"
@@ -1059,7 +1585,11 @@ private fun TeamRow(
     }
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp)
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        border = CardDefaults.outlinedCardBorder()
     ) {
         Column(
             modifier = Modifier.padding(14.dp),
@@ -1067,15 +1597,45 @@ private fun TeamRow(
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                PresenceDot(presence)
-                Spacer(Modifier.size(10.dp))
+                // 44dp circular avatar with saffron wash tint + presence dot
+                Box {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(SaffronWash)
+                    ) {
+                        Text(
+                            text = initial,
+                            fontWeight = FontWeight.Bold,
+                            color = TempleSaffron,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 1.dp, bottom = 1.dp)
+                    ) {
+                        PresenceDot(presence)
+                    }
+                }
+
                 Column(Modifier.weight(1f)) {
-                    Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                    Text(
+                        text = title,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
                     val accountLabel = member.email ?: member.displayName?.takeIf { it.isNotBlank() } ?: "ID: …${member.userId.takeLast(6)}"
                     Text(
-                        "$accountLabel • $presenceLabel",
+                        text = "$accountLabel • $presenceLabel",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1
@@ -1083,32 +1643,92 @@ private fun TeamRow(
                 }
                 RoleBadge(role = member.role, status = member.status)
             }
-            // Verdict Q3: role buttons are head-only; collectors get the
-            // directory above in read-only form.
+
+            // Segmented role switcher chips + Revoke button (head-only)
             if (manageEnabled) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = onCollector,
-                    enabled = actionsEnabled,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Collector", maxLines = 1) }
-                OutlinedButton(
-                    onClick = onViewer,
-                    enabled = actionsEnabled,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Viewer", maxLines = 1) }
-                if (isSelf) {
-                    OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) {
-                        Text("You", maxLines = 1)
-                    }
-                } else {
-                    OutlinedButton(
-                        onClick = onRevoke,
-                        enabled = actionsEnabled,
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val isCollector = member.role == SessionPrefs.ROLE_ORGANIZER
+                    val isViewer = member.role == SessionPrefs.ROLE_MEMBER
+
+                    FilterChip(
+                        selected = isCollector,
+                        onClick = onCollector,
+                        enabled = actionsEnabled && member.role != SessionPrefs.ROLE_GLOBAL_HEAD,
+                        label = { Text("Collector", maxLines = 1) },
+                        leadingIcon = if (isCollector) {
+                            {
+                                Icon(
+                                    imageVector = Icons.Filled.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        } else null,
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = SaffronWash,
+                            selectedLabelColor = DeepMaroon,
+                            selectedLeadingIconColor = TempleSaffron
+                        ),
+                        shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.weight(1f)
-                    ) { Text("Revoke", maxLines = 1) }
+                    )
+
+                    FilterChip(
+                        selected = isViewer,
+                        onClick = onViewer,
+                        enabled = actionsEnabled && member.role != SessionPrefs.ROLE_GLOBAL_HEAD,
+                        label = { Text("Viewer", maxLines = 1) },
+                        leadingIcon = if (isViewer) {
+                            {
+                                Icon(
+                                    imageVector = Icons.Filled.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        } else null,
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            selectedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            selectedLeadingIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    if (isSelf) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(0.9f)
+                        ) {
+                            Text(
+                                text = "This device",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 10.dp),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = onRevoke,
+                            enabled = actionsEnabled && member.role != SessionPrefs.ROLE_GLOBAL_HEAD,
+                            shape = RoundedCornerShape(10.dp),
+                            colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                                contentColor = CrimsonRose
+                            ),
+                            border = BorderStroke(1.dp, CrimsonRose.copy(alpha = 0.4f)),
+                            modifier = Modifier.weight(0.9f)
+                        ) {
+                            Text("Revoke", maxLines = 1, color = CrimsonRose)
+                        }
+                    }
                 }
-            }
             }
         }
     }
@@ -1118,34 +1738,46 @@ private fun TeamRow(
 private fun PresenceDot(presence: MemberPresence) {
     val color = when (presence) {
         MemberPresence.ACTIVE_NOW -> Color(0xFF2E7D32)
-        MemberPresence.IDLE -> Color(0xFFF9A825)
+        MemberPresence.IDLE -> Color(0xFFF57C00)
         MemberPresence.OFFLINE -> Color(0xFF9E9E9E)
     }
-    Box(modifier = Modifier.size(8.dp).background(color, CircleShape))
+    Box(
+        modifier = Modifier
+            .size(12.dp)
+            .background(MaterialTheme.colorScheme.surface, CircleShape)
+            .padding(2.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(color, CircleShape)
+        )
+    }
 }
 
 @Composable
 private fun RoleBadge(role: String, status: String) {
     val (label, bg, fg) = when {
         status == SessionPrefs.STATUS_REVOKED ->
-            Triple("Revoked", Color(0xFFB71C1C), Color.White)
+            Triple("Revoked", CrimsonWash, CrimsonRose)
         status == SessionPrefs.STATUS_PENDING ->
-            Triple("Pending approval", TempleGold, DeepMaroon)
+            Triple("Pending", MaroonWash, DeepMaroon)
         role == SessionPrefs.ROLE_GLOBAL_HEAD ->
-            Triple("Global Head", TempleGold, DeepMaroon)
+            Triple("👑 Global Head", TempleGold, DeepMaroon)
         role == SessionPrefs.ROLE_ORGANIZER ->
-            Triple("Collector", Color(0xFF2E7D32), Color.White)
+            Triple("🏷️ Collector", Color(0xFFE8F5E9), Color(0xFF2E7D32))
         else -> Triple(
-            "Viewer",
+            "👁️ Viewer",
             MaterialTheme.colorScheme.surfaceVariant,
             MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
-    Surface(color = bg, contentColor = fg, shape = RoundedCornerShape(10.dp)) {
+    Surface(color = bg, contentColor = fg, shape = RoundedCornerShape(8.dp)) {
         Text(
-            label,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            text = label,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
             style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
             maxLines = 1
         )
     }

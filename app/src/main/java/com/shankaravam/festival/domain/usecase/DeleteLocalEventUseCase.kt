@@ -52,10 +52,13 @@ class DeleteLocalEventUseCase(
             // Step 2: atomic — orphans can never reach global pendingSync().
             database.deleteEventCascade(eventId)
 
-            // Step 3: best-effort files. Phase 1: deletes EVERY clip for the row
-            // (all speaker variants, legacy slots, human imports, roster) via
-            // prefix scan — only donation_*.mp3 names, so temple_chime.wav and
-            // cacheDir-root audio_test_sample.mp3 survive.
+            // Step 3: best-effort files. Deletes EVERY donation-keyed clip for
+            // the row (all speaker variants, legacy slots, human imports,
+            // roster) via prefix scan — only donation_*.mp3 names, so
+            // temple_chime.wav and audio_test_sample.mp3 survive. L7 note:
+            // Phase-3 CAS clips (audio_{hash}.mp3) are content-addressed and
+            // intentionally NOT scrubbed here (no hash→row map); they age out
+            // via the prune ceiling instead of leaking per-event.
             val audioDir = File(appContext.cacheDir, "audio")
             donationIds.forEach { id ->
                 runCatching { SarvamTtsClient.deleteDonationFiles(audioDir, id) }

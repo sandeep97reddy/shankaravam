@@ -293,6 +293,22 @@ class SessionPrefs(context: Context) {
     }
 
     /**
+     * M5: last gateway-429 timestamp. The server cap is DAILY (UTC, matching
+     * the worker's `dayKey`), so the temple-budget pill must NOT be cleared
+     * by the 30-min device window rolling — only by the UTC day turning over.
+     * Epoch-day comparison aligns with UTC midnight, same as the worker.
+     */
+    fun setGatewayQuotaAt(now: Long = System.currentTimeMillis()) {
+        prefs.edit().putLong(KEY_GATEWAY_QUOTA_AT, now).apply()
+    }
+
+    fun gatewayQuotaActive(now: Long = System.currentTimeMillis()): Boolean {
+        val at = prefs.getLong(KEY_GATEWAY_QUOTA_AT, 0L)
+        if (at <= 0L) return false
+        return at / MILLIS_PER_DAY == now / MILLIS_PER_DAY
+    }
+
+    /**
      * F5 shared-voice bookkeeping: last successful shared-key apply (pill),
      * last pull attempt (15-min throttle), and the explicit offline lock (the
      * user's Offline chip tap wins over auto-pull mode flips).
@@ -476,10 +492,11 @@ class SessionPrefs(context: Context) {
         /** P4 budget: 20 Sarvam calls per 30 minutes per device. */
         const val SARVAM_MAX_CALLS = 20
         const val SARVAM_WINDOW_MILLIS = 30L * 60L * 1000L
+        private const val MILLIS_PER_DAY = 24L * 60L * 60L * 1000L
 
-        /** P4 cache ceiling: 300 clips / 20 days, whichever trims first. */
-        const val AUDIO_CACHE_MAX_FILES = 300
-        const val AUDIO_CACHE_MAX_AGE_DAYS = 20
+        /** Cache ceiling: 2000 clips / 80 days, covering entire festival and audit period. */
+        const val AUDIO_CACHE_MAX_FILES = 2000
+        const val AUDIO_CACHE_MAX_AGE_DAYS = 80
 
         /** P4 re-fetch guard: a peer's generation counts as fresh for 30 min. */
         const val AUDIO_META_FRESH_MILLIS = 30L * 60L * 1000L
@@ -501,6 +518,7 @@ class SessionPrefs(context: Context) {
         private const val KEY_VOICE_SYNCED_AT = "voice_key_synced_at"
         private const val KEY_VOICE_PULL_AT = "voice_key_pull_at"
         private const val KEY_VOICE_OFFLINE_LOCK = "voice_offline_locked"
+        private const val KEY_GATEWAY_QUOTA_AT = "gateway_quota_at"
         private const val KEY_ROLE = "my_role_"
         private const val KEY_STATUS = "member_status_"
         private const val KEY_CLOUD = "cloud_event_"

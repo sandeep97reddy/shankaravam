@@ -345,14 +345,25 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
      * Phase 3: clears a stale quota pill once the 30-min window has rolled.
      * Main-safe (plain prefs reads, no IO). Called on user action; the
      * prefetch pass also refreshes it on every queue change.
+     * M5: the gateway (temple-budget) pill is DAILY-guarded — it clears only
+     * when the UTC day turns over ([SessionPrefs.gatewayQuotaActive]), never
+     * on a device-window roll or a single successful device slot.
      */
     private fun refreshQuotaPill() {
-        if (quotaPill.value.isNotBlank() &&
-            prefs.sarvamQuotaUsed() < SessionPrefs.SARVAM_MAX_CALLS
-        ) {
+        if (quotaPill.value.isBlank()) return
+        if (isGatewayPill()) {
+            if (!prefs.gatewayQuotaActive()) quotaPill.value = ""
+            return
+        }
+        if (prefs.sarvamQuotaUsed() < SessionPrefs.SARVAM_MAX_CALLS) {
             quotaPill.value = ""
         }
     }
+
+    /** M5: true while the temple-budget (gateway 429) pill is showing. */
+    private fun isGatewayPill(): Boolean =
+        quotaPill.value.isNotBlank() &&
+            quotaPill.value == com.shankaravam.festival.domain.model.gatewayQuotaPillText()
 
     fun pause() {
         runCatching {
@@ -430,11 +441,48 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
     fun testAudio() {
         if (uiState.value.isPlaying || uiState.value.testingAudio) return
         clearPlaybackError()
+        refreshQuotaPill()
+        // Quota pre-check: direct-key synthesis burns a client slot; gateway
+        // has its own server-side cap. Only gate the uncached direct-key path
+        // so gateway users are never blocked by the device budget.
+        if (prefs.voiceEngineMode == com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD) {
+            val speaker = com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(prefs.sarvamSpeaker)
+            // L6: same sentence playTestLine synthesizes — shared constant.
+            val hash = com.shankaravam.festival.core.tts.audioHashFor(
+                com.shankaravam.festival.core.tts.AUDIO_TEST_SYNTH_LINE, "TELUGU", speaker, false
+            )
+            val cached = engine.cachedCas(hash) != null
+            val hasGateway = prefs.gatewayBaseUrl.isNotBlank()
+            val hasDirectKey = secureKeys.getSarvamKey().isNotBlank()
+            if (!cached && !hasGateway && hasDirectKey && !prefs.takeSarvamSlot()) {
+                quotaPill.value = com.shankaravam.festival.domain.model.quotaPillText(
+                    used = prefs.sarvamQuotaUsed(),
+                    max = SessionPrefs.SARVAM_MAX_CALLS,
+                    resetAt = prefs.sarvamQuotaResetAt()
+                )
+                // Fall back to native immediately — no network spent.
+                testingAudio.value = true
+                runCatching {
+                    engine.speakNative(
+                        com.shankaravam.festival.core.tts.AUDIO_TEST_LINE,
+                        onDone = { testingAudio.value = false },
+                        onError = { testingAudio.value = false }
+                    )
+                }.onFailure {
+                    testingAudio.value = false
+                    failPlayback(it)
+                }
+                return
+            }
+        }
         testingAudio.value = true
         runCatching {
             engine.playTestLine(
                 onDone = { testingAudio.value = false },
-                onError = { testingAudio.value = false }
+                onError = { testingAudio.value = false },
+                // Real event id so the gateway seat check passes; null keeps
+                // the legacy dummy id (gateway 403s → native fallback).
+                eventId = prefs.currentEventId.value
             )
         }.onFailure {
             testingAudio.value = false
@@ -511,7 +559,10 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                     preset = presetObj,
                     language = languageOf()
                 )
-                val introKey = "intro_${presetObj.name.lowercase()}_${prefs.currentEventId.value?.takeLast(6) ?: "loc"}"
+                // M3: key covers preset + event + language + location.
+                val introKey = com.shankaravam.festival.core.tts.introPhraseKey(
+                    presetObj, prefs.currentEventId.value, languageOf(), state.eventLocation
+                )
                 val activeSpeaker = prefs.sarvamSpeaker
                 kotlinx.coroutines.suspendCancellableCoroutine { cont ->
                     engine.playPhraseBest(
@@ -685,14 +736,15 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                     // pass — otherwise Shubh's rows would never generate after
                     // switching from Priya (or after entering a key) without
                     // an unrelated donation edit or restart.
+                    // M4: roster mode + queue language are triggers too — the
+                    // pass reads both live, so toggling either must re-run it
+                    // (otherwise the new mode's rows stay native-silently).
                     combine(
-                        eventRepo.observeEvent(eventId),
-                        donationRepo.observeForEvent(eventId),
-                        prefs.sarvamSpeakerFlow,
-                        prefs.voiceEngineModeFlow,
-                        secureKeys.keyVersion
-                    ) { event, donations, speaker, mode, _ ->
-                        PrefetchInputs(event, donations, speaker = speaker, mode = mode)
+                        combine(eventRepo.observeEvent(eventId), donationRepo.observeForEvent(eventId)) { e, d -> e to d },
+                        combine(prefs.sarvamSpeakerFlow, prefs.voiceEngineModeFlow, secureKeys.keyVersion) { s, m, _ -> s to m },
+                        combine(rosterMode, language) { _, _ -> Unit }
+                    ) { ed, sm, _ ->
+                        PrefetchInputs(ed.first, ed.second, speaker = sm.first, mode = sm.second)
                     }.combine(correctionRepo.observeForEvent(eventId)) { inputs, corrections ->
                         inputs.copy(corrections = corrections)
                     }
@@ -701,11 +753,14 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                 runCatching {
                     val event = inputs?.event
                     val donations = inputs?.donations.orEmpty()
-                    val key = secureKeys.getSarvamKey()
-                    if (key.isBlank() || event == null) {
+                    if (event == null) {
                         prefetchRemaining.value = 0
                         return@runCatching
                     }
+                    // C1: no direct-key gate — gateway-only installs prefetch
+                    // through the gateway branch (blank apiKey = gateway-only
+                    // inside ensureCached). The key only gates phrase gen.
+                    val key = secureKeys.getSarvamKey()
                     val eventName = event.name
                     val roster = prefs.queueRosterMode
                     val speaker = inputs?.speaker ?: prefs.sarvamSpeaker
@@ -715,6 +770,32 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                         groupCorrectionsByTarget(inputs?.corrections.orEmpty())
                     fun prefetchEffective(d: Donation): Double =
                         effectiveDonationAmount(d, correctionsByTarget[d.id].orEmpty())
+                    // Phase 1 one-time migration: attribute pre-speaker legacy
+                    // files to the active voice so they stop shadowing other
+                    // speakers. Idempotent, guarded, never throws. Runs for
+                    // keyless installs too (their playback reads these files).
+                    if (!prefs.audioCacheV2Migrated) {
+                        runCatching { engine.migrateLegacy(speaker) }
+                        prefs.audioCacheV2Migrated = true
+                    }
+                    val eligible = donations.filter { it.announcementEnabled }
+                    val lang = languageOf()
+                    // H2: prune runs for every install (keyless/offline too) —
+                    // it is pure disk hygiene, no network, no quota.
+                    runCatching {
+                        engine.pruneCache(
+                            excludeIds = eligible.map { it.id }.toSet(),
+                            maxFiles = SessionPrefs.AUDIO_CACHE_MAX_FILES,
+                            maxAgeDays = SessionPrefs.AUDIO_CACHE_MAX_AGE_DAYS,
+                            // H1: live-queue CAS hashes survive count pressure.
+                            excludeHashes = eligible.map { d ->
+                                engine.casHashFor(
+                                    d, eventName, lang, speaker, roster,
+                                    prefetchEffective(d)
+                                )
+                            }.toSet()
+                        )
+                    }
                     // Phase 2: explicit offline mode burns zero cloud quota —
                     // playback serves device voice (+ human imports) only.
                     // Fix-B3: leaving cloud also dismisses a stale quota pill.
@@ -723,47 +804,34 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                         if (quotaPill.value.isNotBlank()) quotaPill.value = ""
                         return@runCatching
                     }
-                    // Phase 1 one-time migration: attribute pre-speaker legacy
-                    // files to the active voice so they stop shadowing other
-                    // speakers. Idempotent, guarded, never throws.
-                    if (!prefs.audioCacheV2Migrated) {
-                        runCatching { engine.migrateLegacy(speaker) }
-                        prefs.audioCacheV2Migrated = true
-                    }
 
-                    // F6: Pre-generate intro and outro phrases in Roster Mode so full queue speaks in active Sarvam voice
-                    if (roster) {
+                    // F6: Pre-generate intro and outro phrases in Roster Mode so full queue speaks in active Sarvam voice.
+                    // Direct-key only (no gateway phrase route) — skipped keyless.
+                    if (roster && key.isNotBlank()) {
                         val presetObj = runCatching { FestivalPreset.valueOf(prefs.queueFestivalPreset) }
                             .getOrDefault(FestivalPreset.VINAYAKA_CHAVITHI)
-                        val introKey = "intro_${presetObj.name.lowercase()}_${event.id.takeLast(6)}"
+                        val introKey = com.shankaravam.festival.core.tts.introPhraseKey(
+                            presetObj, event.id, lang, event.location
+                        )
                         if (engine.cachedPhrase(introKey, speaker) == null) {
                             val introText = buildOpeningAnnouncement(
                                 location = event.location,
                                 eventName = event.name,
                                 preset = presetObj,
-                                language = languageOf()
+                                language = lang
                             )
                             if (prefs.takeSarvamSlot()) {
                                 engine.ensurePhraseCached(introKey, introText, key, speaker)
                             }
                         }
 
-                        val outroKey = "outro_${languageOf().name.lowercase()}"
+                        val outroKey = "outro_${lang.name.lowercase()}"
                         if (engine.cachedPhrase(outroKey, speaker) == null) {
-                            val outroText = buildClosingAnnouncement(languageOf())
+                            val outroText = buildClosingAnnouncement(lang)
                             if (prefs.takeSarvamSlot()) {
                                 engine.ensurePhraseCached(outroKey, outroText, key, speaker)
                             }
                         }
-                    }
-
-                    val eligible = donations.filter { it.announcementEnabled }
-                    runCatching {
-                        engine.pruneCache(
-                            excludeIds = eligible.map { it.id }.toSet(),
-                            maxFiles = SessionPrefs.AUDIO_CACHE_MAX_FILES,
-                            maxAgeDays = SessionPrefs.AUDIO_CACHE_MAX_AGE_DAYS
-                        )
                     }
                     // Phase-3 CAS prefetch: rows missing disk CAS (and without a
                     // human override) resolve per missing hash via the engine's
@@ -771,7 +839,7 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                     // its T0.4 stopgap are deleted — the bucket HEAD inside
                     // `resolve` is the freshness signal; stamps have no
                     // readers left. Bounded concurrency: ≤50 rows/pass.
-                    val lang = languageOf()
+                    // (lang is defined once above, next to the prune call.)
                     val missing = eligible
                         .filter { d ->
                             val eff = prefetchEffective(d)
@@ -796,20 +864,11 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                     // pass spends (or is denied) slots.
                     refreshQuotaPill()
                     prefetchRemaining.value = missing.size
+                    // M2: after the first gateway 429 this pass stops calling
+                    // the gateway (temple budget spent) — remaining rows go
+                    // direct-key or native instead of hammering 429s.
+                    var serverCapped = false
                     for (donation in missing) {
-                        // P4 budget: 20 cloud calls per 30 min per device (see
-                        // SessionPrefs.SARVAM_MAX_CALLS). Phase 3: denial sets
-                        // the quota pill (with reset time) instead of silently
-                        // flipping voices — and prefetchRemaining KEEPS its
-                        // count so the waiting rows stay visible.
-                        if (!prefs.takeSarvamSlot()) {
-                            quotaPill.value = com.shankaravam.festival.domain.model.quotaPillText(
-                                used = prefs.sarvamQuotaUsed(),
-                                max = SessionPrefs.SARVAM_MAX_CALLS,
-                                resetAt = prefs.sarvamQuotaResetAt()
-                            )
-                            break
-                        }
                         val file = engine.ensureCached(
                             donation = donation,
                             eventName = eventName,
@@ -824,8 +883,25 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                             // Gateway 429 gets its own pill line (temple
                             // budget spent vs this phone throttled).
                             onServerQuota = {
+                                serverCapped = true
+                                prefs.setGatewayQuotaAt()
                                 quotaPill.value = com.shankaravam.festival.domain.model.gatewayQuotaPillText()
-                            }
+                            },
+                            // M1: the device slot is spent only when direct
+                            // synthesis actually happens (inside ensureCached);
+                            // gateway hits never touch the device budget.
+                            // Denial pills (with reset time) instead of
+                            // silently flipping voices — prefetchRemaining
+                            // KEEPS its count so waiting rows stay visible.
+                            takeSlot = { prefs.takeSarvamSlot() },
+                            onDeviceQuota = {
+                                quotaPill.value = com.shankaravam.festival.domain.model.quotaPillText(
+                                    used = prefs.sarvamQuotaUsed(),
+                                    max = SessionPrefs.SARVAM_MAX_CALLS,
+                                    resetAt = prefs.sarvamQuotaResetAt()
+                                )
+                            },
+                            attemptGateway = !serverCapped
                         )
                         // Simple circuit-breaker: any Sarvam/network failure stops
                         // this pass instead of burning the remaining rows. Native
@@ -834,8 +910,10 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                             prefetchRemaining.value = 0
                             break
                         }
-                        // A slot went through, so budget exists — clear any pill.
-                        if (quotaPill.value.isNotBlank()) quotaPill.value = ""
+                        // A row succeeded, so device budget exists — clear the
+                        // device pill. M5: the gateway pill survives (daily
+                        // server cap, not per-slot device budget).
+                        if (quotaPill.value.isNotBlank() && !isGatewayPill()) quotaPill.value = ""
                         prefetchRemaining.value = (prefetchRemaining.value - 1).coerceAtLeast(0)
                     }
                 }

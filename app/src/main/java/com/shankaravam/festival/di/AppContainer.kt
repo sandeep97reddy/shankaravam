@@ -97,7 +97,8 @@ class AppContainer(context: Context) {
             // Phase-3 cloud-first branch (lambdas evaluated per call; both
             // lazies below are safe to capture — no init-time access).
             cloudClientProvider = { audioCloud },
-            idTokenProvider = { authRepository.idToken() }
+            idTokenProvider = { authRepository.idToken() },
+            keyProvider = { secureKeys.getSarvamKey() }
         )
     }
 

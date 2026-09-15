@@ -1,13 +1,13 @@
 {
   "Rules": [
     {
-      "ID": "expire-shared-audio-30d",
+      "ID": "expire-shared-audio-60d",
       "Status": "Enabled",
       "Filter": {
         "Prefix": "audio/"
       },
       "Expiration": {
-        "Days": 30
+        "Days": 60
       }
     }
   ]

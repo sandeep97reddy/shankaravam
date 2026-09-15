@@ -293,21 +293,36 @@ class SarvamTtsClient(
 
     /**
      * P4 cache ceiling: drops clips older than [maxAgeDays], then the oldest
-     * beyond [maxFiles]. Covers Sarvam `donation_*.mp3` AND F6 `phrase_*.mp3`
-     * files (T0.4 — phrases used to grow unbounded across presets/events);
+     * beyond [maxFiles]. Covers Sarvam `donation_*.mp3`, F6 `phrase_*.mp3`
+     * AND Phase-3 CAS `audio_{hash}.mp3` files (H1 — CAS used to be exempt
+     * forever, leaking one file per correction/voice/language change);
      * quarantined `.bak-<timestamp>` backups are always exempt (recoverable
      * human audio), as are chime/test files. Never throws.
      * Returns the deleted count.
+     *
+     * @param excludeHashes live-queue CAS hashes (bare hex, no prefix) that
+     * must survive even under count pressure — a pruned live clip simply
+     * regenerates on next prefetch, but excluding avoids the churn.
      */
-    fun pruneCache(excludeIds: Set<String>, maxFiles: Int, maxAgeDays: Int): Int = runCatching {
+    fun pruneCache(
+        excludeIds: Set<String>,
+        maxFiles: Int,
+        maxAgeDays: Int,
+        excludeHashes: Set<String> = emptySet()
+    ): Int = runCatching {
         val cutoff = System.currentTimeMillis() - maxAgeDays * 24L * 60L * 60L * 1000L
         val ours = audioDir().listFiles()
             ?.filter { it.isFile && isPrunableCacheFile(it.name) }
             .orEmpty()
         // Prefix exclusion: every speaker variant, legacy slot and human import
         // for a live queue id survives; only truly stray clips are victims.
+        // CAS exclusion: exact-name match on live hashes (prefix scan can't
+        // map a hash back to a donation id).
         val excluded = ours
-            .filter { f -> excludeIds.any { id -> f.name.startsWith("donation_${id}") } }
+            .filter { f ->
+                excludeIds.any { id -> f.name.startsWith("donation_${id}") } ||
+                    (f.name.startsWith("audio_") && excludeHashes.any { h -> f.name == casFileName(h) })
+            }
             .map { it.name }
             .toSet()
         var deleted = 0
@@ -395,17 +410,21 @@ class SarvamTtsClient(
 
         /**
          * T0.4 pure ceiling filter — unit-tested (no Android needed). Evictable:
-         * Sarvam `donation_*.mp3` clips and F6 `phrase_*.mp3` clips. Never
-         * evictable: quarantined `.bak-` human backups, the baked
-         * `temple_chime.wav`, the `audio_test_sample.mp3` levels check, or any
-         * other name. Phrase clips are shared across rows (not per-donation),
-         * so the caller's `excludeIds` never cover them — same age/count
-         * ceiling applies.
+         * Sarvam `donation_*.mp3` clips, F6 `phrase_*.mp3` clips, and Phase-3
+         * CAS `audio_{hash}.mp3` clips (H1). Never evictable: quarantined
+         * `.bak-` human backups, the baked `temple_chime.wav`, the
+         * `audio_test_sample.mp3` levels check, or any other name. Phrase
+         * clips are shared across rows (not per-donation), so the caller's
+         * `excludeIds` never cover them — same age/count ceiling applies.
+         * CAS clips for live rows are covered by `excludeHashes` instead.
          */
         fun isPrunableCacheFile(name: String): Boolean {
             if (isBackupFile(name)) return false
             if (!name.endsWith(".mp3")) return false
-            return name.startsWith("donation_") || name.startsWith("phrase_")
+            if (name.startsWith("donation_") || name.startsWith("phrase_")) return true
+            // CAS slot: exactly `audio_<64 hex>.mp3`, nothing else.
+            return name.startsWith("audio_") && name.length == "audio_".length + 64 + ".mp3".length &&
+                isCasHash(name.removePrefix("audio_").removeSuffix(".mp3"))
         }
 
         /**

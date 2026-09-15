@@ -6,8 +6,12 @@ import com.shankaravam.festival.core.audio.AudioFocusManager
 import com.shankaravam.festival.data.remote.AudioCloudClient
 import com.shankaravam.festival.domain.model.AudioStatus
 import com.shankaravam.festival.domain.model.Donation
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import android.os.Handler
 import android.os.Looper
 import java.io.File
@@ -49,10 +53,16 @@ class DualTtsEngine(
      * Phase-3 Firebase ID token for gateway calls. Null/blank = signed out →
      * cloud branch skipped (native fallback). Never throws out of here.
      */
-    private val idTokenProvider: suspend () -> String? = { null }
+    private val idTokenProvider: suspend () -> String? = { null },
+    /**
+     * Optional direct Sarvam API key for testing and fallback synthesis.
+     */
+    private val keyProvider: () -> String? = { null }
 ) {
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
+    /** Managed scope for test-line synthesis; cancelled in [release]. */
+    private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var player: MediaPlayer? = null
     /** True while the 800 ms chime owns the player — pause() won't grab it. */
     @Volatile private var inChime = false
@@ -93,9 +103,18 @@ class DualTtsEngine(
         return audioHashFor(text, language.name, norm, roster)
     }
 
-    /** P4 ceiling enforcement; runs on the caller's (IO) thread. Never throws. */
-    fun pruneCache(excludeIds: Set<String>, maxFiles: Int, maxAgeDays: Int): Int =
-        runCatching { sarvam.pruneCache(excludeIds, maxFiles, maxAgeDays) }.getOrDefault(0)
+    /**
+     * P4 ceiling enforcement; runs on the caller's (IO) thread. Never throws.
+     * [excludeHashes] are live-queue CAS hashes (bare hex) that survive count
+     * pressure (H1 — a pruned live clip would just regenerate, so skip it).
+     */
+    fun pruneCache(
+        excludeIds: Set<String>,
+        maxFiles: Int,
+        maxAgeDays: Int,
+        excludeHashes: Set<String> = emptySet()
+    ): Int =
+        runCatching { sarvam.pruneCache(excludeIds, maxFiles, maxAgeDays, excludeHashes) }.getOrDefault(0)
 
     /**
      * T0.1 grace-edit invalidation (best-effort, never throws): deletes
@@ -129,6 +148,13 @@ class DualTtsEngine(
      * Phase-3 order: disk CAS → cloud resolve (gateway JIT-once, shared)
      * → legacy direct Sarvam (local key, CAS slot) → null (caller speaks
      * native). [onServerQuota] fires on gateway 429 so the caller can pill.
+     *
+     * Quota discipline (M1/M2): the device slot ([takeSlot]) is consumed ONLY
+     * immediately before direct-key synthesis — gateway hits/misses never
+     * touch the device budget. [onDeviceQuota] fires on slot denial (caller
+     * pills, no status change — mirrors the old pre-take break). [attemptGateway]
+     * lets a pass skip gateway calls after the first 429 (temple budget spent;
+     * remaining rows go direct-key or native instead of hammering 429s).
      */
     suspend fun ensureCached(
         donation: Donation,
@@ -141,7 +167,13 @@ class DualTtsEngine(
         onError: (Throwable) -> Unit = {},
         /** T0.2: post-correction spoken figure; null keeps the raw row. */
         effectiveAmount: Double? = null,
-        onServerQuota: () -> Unit = {}
+        onServerQuota: () -> Unit = {},
+        /** M1: device-budget gate, invoked only before direct synthesis. */
+        takeSlot: () -> Boolean = { true },
+        /** M1: fires when [takeSlot] denies (caller pills + breaks). */
+        onDeviceQuota: () -> Unit = {},
+        /** M2: false skips the gateway branch (server-capped pass). */
+        attemptGateway: Boolean = true
     ): File? {
         val normSpeaker = normalizeSarvamSpeaker(speaker)
         val text = if (roster) {
@@ -159,12 +191,15 @@ class DualTtsEngine(
         // nothing was ever tried for stays NOT_GENERATED (no spurious FAILED
         // on keyless offline installs).
         var cloudAttempted = false
-        if (!offlineOnly) {
+        if (!offlineOnly && attemptGateway) {
             val cloud = runCatching { cloudClientProvider() }.getOrNull()
-            if (cloud != null) {
+            // Signed-out (blank token) is "not attempted", not failed — skip
+            // before PREPARING so signed-out rows keep NOT_GENERATED instead
+            // of flickering PREPARING→FAILED with zero network spent.
+            val token = runCatching { idTokenProvider() }.getOrNull()
+            if (cloud != null && !token.isNullOrBlank()) {
                 cloudAttempted = true
                 runCatching { onStatus(AudioStatus.PREPARING) }
-                val token = runCatching { idTokenProvider() }.getOrNull()
                 when (val r = cloud.resolveAudio(
                     token, donation.eventId, donation.id,
                     text, language.name, normSpeaker, roster, hash
@@ -184,6 +219,13 @@ class DualTtsEngine(
         }
         if (apiKey.isBlank()) {
             if (cloudAttempted) runCatching { onStatus(AudioStatus.FAILED) }
+            return null
+        }
+        // M1: the device slot gates direct synthesis only — gateway-served
+        // rows above never spent budget. Denial pills via onDeviceQuota and
+        // returns null (caller's circuit-breaker stops the pass, as before).
+        if (!runCatching { takeSlot() }.getOrDefault(false)) {
+            runCatching { onDeviceQuota() }
             return null
         }
         runCatching { onStatus(AudioStatus.PREPARING) }
@@ -542,6 +584,7 @@ class DualTtsEngine(
 
     fun release() {
         stopAll()
+        runCatching { engineScope.cancel() }
         native.shutdown()
     }
 
@@ -557,8 +600,62 @@ class DualTtsEngine(
         }
     }
 
-    /** Test-audio line for the pre-announcement levels check (plan §11). */
-    fun playTestLine(onDone: () -> Unit, onError: () -> Unit) {
+    /**
+     * Test-audio line for the pre-announcement levels check. Uses cloud voice if enabled.
+     * @param eventId real festival id so the gateway seat check passes; null/blank keeps
+     * the legacy dummy id (gateway 403s → native fallback, same as before). The CAS hash
+     * covers only (language, speaker, roster, text), so varying this never poisons the cache.
+     */
+    fun playTestLine(onDone: () -> Unit, onError: () -> Unit, eventId: String? = null) {
+        val offlineOnly = runCatching { engineModeProvider() }
+            .getOrDefault(com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD) ==
+            com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE
+        if (!offlineOnly) {
+            val speaker = normalizeSarvamSpeaker(runCatching { speakerProvider() }.getOrDefault("shubh"))
+            // L6: shared with testAudio's quota pre-check hash — same sentence.
+            val text = AUDIO_TEST_SYNTH_LINE
+            val hash = audioHashFor(text, "TELUGU", speaker, false)
+            sarvam.cachedCasFile(hash)?.let {
+                playFile(it, onDone, onError)
+                return
+            }
+            engineScope.launch {
+                // Gateway first (requires configured URL + signed-in token;
+                // auth failures fall through to direct key, never native yet).
+                val cloud = runCatching { cloudClientProvider() }.getOrNull()
+                if (cloud?.baseUrl() != null) {
+                    val token = runCatching { idTokenProvider() }.getOrNull()
+                    if (!token.isNullOrBlank()) {
+                        // Real event id lets the worker seat check pass; dummy
+                        // id 403s (gateway-only Test Voice would never verify).
+                        val resolveEventId = if (!eventId.isNullOrBlank()) eventId else "test_event"
+                        val r = cloud.resolveAudio(
+                            token, resolveEventId, "test_sample", text, "TELUGU", speaker, false, hash
+                        )
+                        if (r is AudioCloudClient.AudioResolve.Ready) {
+                            val file = sarvam.putCasFile(r.hash, r.bytes)
+                            if (file != null) {
+                                playFile(file, onDone, onError)
+                                return@launch
+                            }
+                        }
+                    }
+                }
+                // Direct Sarvam key fallback (no gateway / gateway miss).
+                val directKey = runCatching { keyProvider() }.getOrNull()?.trim().orEmpty()
+                if (directKey.isNotBlank()) {
+                    runCatching {
+                        val file = sarvam.getOrGenerateCasAudio(hash, text, directKey, speaker)
+                        playFile(file, onDone, onError)
+                    }.onFailure {
+                        speakNative(AUDIO_TEST_LINE, onDone, onError)
+                    }
+                    return@launch
+                }
+                speakNative(AUDIO_TEST_LINE, onDone, onError)
+            }
+            return
+        }
         speakNative(AUDIO_TEST_LINE, onDone, onError)
     }
 }

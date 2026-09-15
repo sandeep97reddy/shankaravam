@@ -9,10 +9,18 @@ import com.shankaravam.festival.domain.model.HONORIFIC_SRIMATI
 enum class AnnouncementLanguage { TELUGU, ENGLISH, BILINGUAL }
 
 /**
- * T0.2 spoken-template version. Template byte changes already alter the built
- * text (hence any content hash over it); this constant rides along as the
- * explicit generation marker for Phase-3 content-addressed audio. Bump on any
- * edit to the builders below.
+ * T0.2 spoken-template version. Any edit that changes the BUILT text below
+ * self-invalidates (the CAS hash covers the text bytes, so a new wording is
+ * a new hash automatically). This constant rides along as the explicit
+ * generation marker for Phase-3 content-addressed audio.
+ *
+ * L1 contract — bump ONLY for synthesis-pipeline changes that keep the text
+ * identical but must still invalidate (model swap, server-side voice update):
+ * a bump MUST be wired into the hash on both sides together
+ * ([audioHashFor] in AudioImport.kt + `canonicalHashInput` in
+ * tools/worker/src/lib.ts), because the version alone partitions nothing.
+ * Bumping without hash-wiring is a silent no-op; hash-wiring without a bump
+ * needlessly regenerates every clip (device quota + daily server cap).
  */
 const val TTS_TEMPLATE_VERSION = "v1"
 
@@ -187,6 +195,23 @@ fun buildRosterItemAnnouncement(
     }
 }
 
+/**
+ * M3: cache key for the roster intro phrase. Keyed on everything the intro
+ * TEXT varies with — preset, event, queue language, and location — so a
+ * language switch or location edit regenerates instead of replaying a stale
+ * clip in the wrong language. Pure — pin with unit tests.
+ */
+fun introPhraseKey(
+    preset: FestivalPreset,
+    eventId: String?,
+    language: AnnouncementLanguage,
+    location: String
+): String {
+    val tail = eventId?.takeLast(6)?.ifBlank { "loc" } ?: "loc"
+    val locHash = "%08x".format(location.trim().lowercase().hashCode())
+    return "intro_${preset.name.lowercase()}_${tail}_${language.name.lowercase()}_$locHash"
+}
+
 /** Opening header for continuous queue playback. */
 fun buildOpeningAnnouncement(
     location: String,
@@ -241,6 +266,14 @@ private fun englishSingleAnnouncement(donation: Donation, event: String, amount:
 
 /** Short line spoken before any public test so the organizer can check levels. */
 const val AUDIO_TEST_LINE = "పరీక్ష. ఆడియో సరిగ్గా పనిచేస్తోంది."
+
+/**
+ * L6: the sentence the CLOUD test path synthesizes (donation-shaped, so the
+ * levels check exercises a realistic clip). Shared with the quota pre-check's
+ * hash in AnnouncementQueueViewModel.testAudio — keep the two in sync via
+ * this constant. Native fallback speaks [AUDIO_TEST_LINE] instead.
+ */
+const val AUDIO_TEST_SYNTH_LINE = "శ్రీ మహేష్ బాబు గారు, వెయ్యి నూట పదహారు రూపాయలు."
 
 /** Crash-proof wrappers: formatters never throw now, this guards any future regression. */
 private fun safeWordsForAmount(amount: Double): String =

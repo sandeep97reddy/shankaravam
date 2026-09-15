@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,6 +24,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
@@ -47,6 +50,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.graphics.Color
@@ -118,8 +122,13 @@ fun AnnouncementQueueScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item { RouteCard(state.route.displayName(), state.testingAudio, state.nativeReady) { viewModel.testAudio() } }
-            item { VoiceSettingsCard() }
+            item {
+                VoiceSettingsCard(
+                    route = state.route,
+                    testingAudio = state.testingAudio,
+                    onTestAudio = { viewModel.testAudio() }
+                )
+            }
             item {
                 RosterImportCard(
                     report = importReport,
@@ -180,41 +189,63 @@ fun AnnouncementQueueScreen(
 }
 
 @Composable
-private fun RouteCard(
-    routeName: String,
-    testing: Boolean,
-    nativeReady: Boolean,
-    onTest: () -> Unit
+private fun AudioRouteBadge(
+    route: com.shankaravam.festival.core.audio.AudioRoute,
+    modifier: Modifier = Modifier
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(8.dp),
+        color = when (route) {
+            com.shankaravam.festival.core.audio.AudioRoute.BLUETOOTH -> TempleSaffron.copy(alpha = 0.15f)
+            com.shankaravam.festival.core.audio.AudioRoute.WIRED -> TempleGold.copy(alpha = 0.2f)
+            com.shankaravam.festival.core.audio.AudioRoute.SPEAKER -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+        }
+    ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Icon(
-                Icons.AutoMirrored.Filled.VolumeUp,
+                imageVector = when (route) {
+                    com.shankaravam.festival.core.audio.AudioRoute.BLUETOOTH -> Icons.Filled.Bluetooth
+                    com.shankaravam.festival.core.audio.AudioRoute.WIRED -> Icons.Filled.Headphones
+                    com.shankaravam.festival.core.audio.AudioRoute.SPEAKER -> Icons.AutoMirrored.Filled.VolumeUp
+                },
                 contentDescription = null,
-                tint = TempleSaffron
+                tint = when (route) {
+                    com.shankaravam.festival.core.audio.AudioRoute.BLUETOOTH -> TempleSaffron
+                    com.shankaravam.festival.core.audio.AudioRoute.WIRED -> DeepMaroon
+                    com.shankaravam.festival.core.audio.AudioRoute.SPEAKER -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.size(14.dp)
             )
-            Column(Modifier.weight(1f)) {
-                Text(routeName, fontWeight = FontWeight.SemiBold)
-                Text(
-                    if (nativeReady) "Voice engine ready • offline" else "Initializing voice…",
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-            if (testing) {
-                CircularProgressIndicator(modifier = Modifier.height(24.dp).width(24.dp), strokeWidth = 2.dp)
-            } else {
-                TextButton(onClick = onTest) { Text("Test audio") }
-            }
+            Text(
+                text = when (route) {
+                    com.shankaravam.festival.core.audio.AudioRoute.BLUETOOTH -> "యాంప్లిఫైయర్ / Bluetooth Horn"
+                    com.shankaravam.festival.core.audio.AudioRoute.WIRED -> "హెడ్‌సెట్ / Wired Headset"
+                    com.shankaravam.festival.core.audio.AudioRoute.SPEAKER -> "ఫోన్ స్పీకర్ / Phone Speaker"
+                },
+                maxLines = 1,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = when (route) {
+                    com.shankaravam.festival.core.audio.AudioRoute.BLUETOOTH -> TempleSaffron
+                    com.shankaravam.festival.core.audio.AudioRoute.WIRED -> DeepMaroon
+                    com.shankaravam.festival.core.audio.AudioRoute.SPEAKER -> MaterialTheme.colorScheme.onSurfaceVariant
+                }
+            )
         }
     }
 }
 
 @Composable
-private fun VoiceSettingsCard() {
+private fun VoiceSettingsCard(
+    route: com.shankaravam.festival.core.audio.AudioRoute,
+    testingAudio: Boolean,
+    onTestAudio: () -> Unit
+) {
     val container = rememberContainer()
     val prefs = remember { container.sessionPrefs }
     var showMenu by remember { mutableStateOf(false) }
@@ -304,36 +335,42 @@ private fun VoiceSettingsCard() {
                     Text("Temple Voice / గొంతు ఎంపిక", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 }
 
-                if (hasGateway) {
-                    Text(
-                        "Gateway ✓",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Color(0xFF2E7D32),
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                    )
-                } else if (hasKey) {
-                    Text(
-                        "Cloud key ✓",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Color(0xFF2E7D32),
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                    )
-                } else {
-                    TextButton(
-                        onClick = {
-                            pendingSpeaker = speaker
-                            showKeyDialog = true
-                        },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                    ) {
+                Row(
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    AudioRouteBadge(route = route)
+                    if (hasGateway) {
                         Text(
-                            "+ Connect Gateway",
+                            "Gateway ✓",
                             style = MaterialTheme.typography.labelMedium,
-                            color = com.shankaravam.festival.core.theme.TempleSaffron,
-                            fontWeight = FontWeight.Bold
+                            color = Color(0xFF2E7D32),
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                         )
+                    } else if (hasKey) {
+                        Text(
+                            "Cloud key ✓",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color(0xFF2E7D32),
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        )
+                    } else {
+                        TextButton(
+                            onClick = {
+                                pendingSpeaker = speaker
+                                showKeyDialog = true
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                "+ Connect",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = com.shankaravam.festival.core.theme.TempleSaffron,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -421,6 +458,30 @@ private fun VoiceSettingsCard() {
                             )
                         }
                     }
+                }
+            }
+
+            Button(
+                onClick = onTestAudio,
+                enabled = !testingAudio,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = TempleSaffron
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (testingAudio) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = Color.White
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Testing Voice… / పరీక్షిస్తోంది…", fontWeight = FontWeight.Bold)
+                } else {
+                    Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Test Voice / గొంతు పరీక్షించు", fontWeight = FontWeight.Bold)
                 }
             }
 

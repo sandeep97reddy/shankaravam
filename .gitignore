@@ -23,3 +23,7 @@ tools/worker/node_modules/
 tools/worker/node_modules/
 tools/worker/.wrangler/
 tools/worker/dist/
+# ---> Agent scratch files (never commit)
+ORIGINAL_REQUEST.md
+.agents/ORIGINAL_REQUEST.md
+.agents/sentinel/

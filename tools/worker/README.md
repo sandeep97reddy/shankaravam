@@ -46,20 +46,20 @@ node verify.mjs --live          REM spends ~1 Sarvam call (see script notes)
 
 Paste the run output into `SESSION_HANDOFF.md` per the maintenance contract.
 
-## R2 lifecycle (audio 30d, receipts retained)
+## R2 lifecycle (audio 60d, receipts retained)
 
 `audio/{hash}.mp3` objects are immutable derived artifacts — safe to expire.
-`receipts/*` are audit evidence — never expire them (no rule below touches
+`receipts/*` are audit evidence — never expire them (no rule touches
 that prefix, and ledger rows live in Firestore, never in this bucket).
 
-`r2-lifecycle.json` holds the single rule (`audio/` → expire after 30 days).
+`r2-lifecycle.json` holds the single rule (`audio/` → expire after 60 days).
 Apply once via the S3-compatible API (needs R2 S3 credentials from the
 Cloudflare dashboard → R2 → Manage R2 API Tokens):
 
 ```bat
 set R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
 aws s3api put-bucket-lifecycle-configuration --bucket shankaravam-media --endpoint-url %R2_ENDPOINT% --lifecycle-configuration file://r2-lifecycle.json
-aws s3api get-bucket-lifecycle-configuration --bucket shankaravam-media --endpoint-url %R2_ENDPOINT%   REM verify: 1 rule, audio/ → 30d
+aws s3api get-bucket-lifecycle-configuration --bucket shankaravam-media --endpoint-url %R2_ENDPOINT%   REM verify: 1 rule, audio/ → 60d
 ```
 
 Wrangler does not manage R2 lifecycle rules, so this stays a one-time

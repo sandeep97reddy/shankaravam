@@ -139,11 +139,19 @@ fun DonationDetailSheet(
 private fun CorrectEntryButton(donation: Donation) {
     // CANCELLED rows are terminal — no further edits.
     if (donation.status == com.shankaravam.festival.domain.model.DonationStatus.CANCELLED) return
+    val container = rememberContainer()
+    val role = com.shankaravam.festival.domain.model.roleOf(container.sessionPrefs.myRole(donation.eventId))
+    val status = com.shankaravam.festival.domain.model.memberStatusOf(container.sessionPrefs.myStatus(donation.eventId))
+    // Role alone is not enough — pending/revoked collectors must not see the
+    // Fix button either (VM re-gates via writeBlockedReason; hiding avoids
+    // dead buttons that only produce an error snackbar).
+    val canCorrect = com.shankaravam.festival.domain.model.AccessPolicy.canCorrect(role) &&
+        com.shankaravam.festival.domain.model.AccessPolicy.canWriteMoney(role, status)
+    if (!canCorrect) return
     var showDialog by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var graceNotice by remember(donation.id) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val container = rememberContainer()
     val viewModel: DonationDetailViewModel =
         containerViewModel { DonationDetailViewModel(it, donation.id) }
     // T0.2 writer fix: the dialog edits the current EFFECTIVE figure so new

@@ -115,7 +115,7 @@ fun ExpenseListScreen(
             )
         },
         floatingActionButton = {
-            if (state.hasEvent) {
+            if (state.hasEvent && state.canWriteMoney) {
                 ExtendedFloatingActionButton(
                     onClick = onAddExpense,
                     icon = { Icon(Icons.Filled.Add, contentDescription = null) },
@@ -176,6 +176,7 @@ fun ExpenseListScreen(
                             expense = expense,
                             modifier = Modifier.animateItem(),
                             expanded = expense.id == expandedId,
+                            canWriteMoney = state.canWriteMoney,
                             onToggle = { expandedId = if (expandedId == expense.id) null else expense.id },
                             onCorrect = { toCorrect = expense },
                             onCancel = { toCancel = expense }
@@ -240,6 +241,7 @@ private fun ExpenseCard(
     expense: Expense,
     modifier: Modifier = Modifier,
     expanded: Boolean = false,
+    canWriteMoney: Boolean = true,
     onToggle: () -> Unit = {},
     onCorrect: () -> Unit,
     onCancel: () -> Unit
@@ -294,7 +296,7 @@ private fun ExpenseCard(
                     )
                 }
                 androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
-                if (!cancelled) {
+                if (!cancelled && canWriteMoney) {
                     IconButton(onClick = onCorrect) {
                         Icon(Icons.Filled.Edit, contentDescription = "Fix amount")
                     }

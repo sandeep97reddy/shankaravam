@@ -17,10 +17,17 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+import com.shankaravam.festival.domain.model.AccessPolicy
+import com.shankaravam.festival.domain.model.MemberStatus
+import com.shankaravam.festival.domain.model.memberStatusOf
+import com.shankaravam.festival.domain.model.roleOf
+
 @Immutable
 data class DashboardUiState(
     val event: Event? = null,
-    val totals: BalanceSnapshot = BalanceSnapshot()
+    val totals: BalanceSnapshot = BalanceSnapshot(),
+    val canWriteMoney: Boolean = true,
+    val isRevoked: Boolean = false
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -36,8 +43,26 @@ class DashboardViewModel(container: AppContainer) : ViewModel() {
             } else {
                 combine(
                     container.eventRepository.observeEvent(eventId),
-                    container.observeEventTotals(eventId)
-                ) { event, snap -> DashboardUiState(event = event, totals = snap) }
+                    container.observeEventTotals(eventId),
+                    container.foregroundSync.seat
+                ) { event, snap, seat ->
+                    val role = when {
+                        seat != null && seat.eventId == eventId -> roleOf(seat.role)
+                        else -> roleOf(prefs.myRole(eventId))
+                    }
+                    val status = when {
+                        seat != null && seat.eventId == eventId -> memberStatusOf(seat.status)
+                        else -> memberStatusOf(prefs.myStatus(eventId))
+                    }
+                    val canWrite = AccessPolicy.canWriteMoney(role, status)
+                    val revoked = status == MemberStatus.REVOKED
+                    DashboardUiState(
+                        event = event,
+                        totals = snap,
+                        canWriteMoney = canWrite,
+                        isRevoked = revoked
+                    )
+                }
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardUiState())
 

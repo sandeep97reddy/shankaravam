@@ -38,7 +38,8 @@ data class ExpenseListUiState(
     val availableCategories: List<String> = emptyList(),
     val hasEvent: Boolean = false,
     val lastCorrection: Correction? = null,
-    val error: String? = null
+    val error: String? = null,
+    val canWriteMoney: Boolean = true
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -79,6 +80,16 @@ class ExpenseListViewModel(private val container: AppContainer) : ViewModel() {
                     state.copy(lastCorrection = correction)
                 }.combine(error) { state, err ->
                     state.copy(error = err)
+                }.combine(container.foregroundSync.seat) { state, seat ->
+                    val role = when {
+                        seat != null && seat.eventId == eventId -> roleOf(seat.role)
+                        else -> roleOf(container.sessionPrefs.myRole(eventId))
+                    }
+                    val status = when {
+                        seat != null && seat.eventId == eventId -> memberStatusOf(seat.status)
+                        else -> memberStatusOf(container.sessionPrefs.myStatus(eventId))
+                    }
+                    state.copy(canWriteMoney = AccessPolicy.canWriteMoney(role, status))
                 }
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ExpenseListUiState())

@@ -118,6 +118,48 @@ class AnnouncementTemplatesTest {
     }
 
     @Test
+    fun intro_phrase_key_varies_with_language_location_preset_and_event() {
+        // M3: the intro text varies with all four — the key must too, or a
+        // stale clip in the wrong language replays after a switch.
+        val base = introPhraseKey(
+            FestivalPreset.VINAYAKA_CHAVITHI, "event-id-123456",
+            AnnouncementLanguage.TELUGU, "కొట్లగడ్డ"
+        )
+        val otherLang = introPhraseKey(
+            FestivalPreset.VINAYAKA_CHAVITHI, "event-id-123456",
+            AnnouncementLanguage.ENGLISH, "కొట్లగడ్డ"
+        )
+        val otherLoc = introPhraseKey(
+            FestivalPreset.VINAYAKA_CHAVITHI, "event-id-123456",
+            AnnouncementLanguage.TELUGU, "హైదరాబాద్"
+        )
+        val otherPreset = introPhraseKey(
+            FestivalPreset.HANUMAN_JAYANTHI, "event-id-123456",
+            AnnouncementLanguage.TELUGU, "కొట్లగడ్డ"
+        )
+        val otherEvent = introPhraseKey(
+            FestivalPreset.VINAYAKA_CHAVITHI, "event-id-999999",
+            AnnouncementLanguage.TELUGU, "కొట్లగడ్డ"
+        )
+        assertTrue(otherLang != base)
+        assertTrue(otherLoc != base)
+        assertTrue(otherPreset != base)
+        assertTrue(otherEvent != base)
+        // Stable for identical inputs; null/blank event degrades to "loc".
+        assertEquals(
+            base,
+            introPhraseKey(
+                FestivalPreset.VINAYAKA_CHAVITHI, "event-id-123456",
+                AnnouncementLanguage.TELUGU, "కొట్లగడ్డ"
+            )
+        )
+        assertTrue(
+            introPhraseKey(FestivalPreset.VINAYAKA_CHAVITHI, null, AnnouncementLanguage.TELUGU, "x")
+                .contains("_loc_")
+        )
+    }
+
+    @Test
     fun preset_auto_links_from_event_name() {
         assertEquals(FestivalPreset.HANUMAN_JAYANTHI, presetForEventName("హనుమాన్ జయంతి 2026"))
         assertEquals(FestivalPreset.HANUMAN_JAYANTHI, presetForEventName("Sri Hanuman Jayanthi"))

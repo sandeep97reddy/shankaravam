@@ -298,9 +298,6 @@ fun TeamSyncSection(
             }
         }
 
-        // Temple Media Gateway (Cloudflare R2 + Workers for cloud voice & receipt photos)
-        GatewayCard()
-
         notice?.let {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Text(it, modifier = Modifier.padding(14.dp))

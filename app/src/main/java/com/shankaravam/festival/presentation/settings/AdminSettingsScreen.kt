@@ -35,12 +35,14 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Vibration
 import com.shankaravam.festival.core.i18n.appStrings
 import com.shankaravam.festival.core.ui.haptics.LocalAppHaptics
@@ -69,8 +71,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -90,6 +94,7 @@ import com.shankaravam.festival.core.theme.SaffronWash
 import com.shankaravam.festival.core.theme.TempleSaffron
 import com.shankaravam.festival.core.util.Outcome
 import com.shankaravam.festival.core.util.newRecordId
+import com.shankaravam.festival.core.util.parseJoinCode
 import com.shankaravam.festival.data.local.SessionPrefs
 import com.shankaravam.festival.di.AppContainer
 import com.shankaravam.festival.domain.model.AccessPolicy
@@ -103,8 +108,6 @@ import com.shankaravam.festival.domain.model.UserRole
 import com.shankaravam.festival.domain.model.roleOf
 import com.shankaravam.festival.presentation.common.TempleAppBar
 import com.shankaravam.festival.presentation.common.containerViewModel
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -112,7 +115,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -129,37 +131,26 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
         val user: com.shankaravam.festival.data.remote.CloudUser? = null,
         val cloudUser: String? = null,
         val cloudEmail: String? = null,
-        val isAuthConfigured: Boolean = false,
-        val hasSarvamKey: Boolean = false,
-        /** F5: last shared-key apply (0 = device-only key or none). */
-        val voiceSyncedAt: Long = 0L
+        val isAuthConfigured: Boolean = false
     )
-
-    private val keyTick = MutableStateFlow(0)
 
     val uiState: StateFlow<UiState> =
         container.sessionPrefs.currentEventId.flatMapLatest { eventId ->
             if (eventId == null) {
-                combine(
-                    container.authRepository.user,
-                    keyTick
-                ) { user, _ ->
+                container.authRepository.user.map { user ->
                     UiState(
                         encrypted = container.secureKeys.isEncrypted,
                         user = user,
                         cloudUser = user?.uid,
                         cloudEmail = user?.email,
-                        isAuthConfigured = container.authRepository.isConfigured,
-                        hasSarvamKey = container.secureKeys.getSarvamKey().isNotBlank(),
-                        voiceSyncedAt = container.sessionPrefs.lastVoiceSyncAt()
+                        isAuthConfigured = container.authRepository.isConfigured
                     )
                 }
             } else {
                 combine(
                     container.eventRepository.observeEvent(eventId),
-                    container.authRepository.user,
-                    keyTick
-                ) { event: Event?, user: com.shankaravam.festival.data.remote.CloudUser?, _ ->
+                    container.authRepository.user
+                ) { event: Event?, user: com.shankaravam.festival.data.remote.CloudUser? ->
                     UiState(
                         event = event,
                         role = roleOf(container.sessionPrefs.myRole(eventId)),
@@ -168,9 +159,7 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
                         user = user,
                         cloudUser = user?.uid,
                         cloudEmail = user?.email,
-                        isAuthConfigured = container.authRepository.isConfigured,
-                        hasSarvamKey = container.secureKeys.getSarvamKey().isNotBlank(),
-                        voiceSyncedAt = container.sessionPrefs.lastVoiceSyncAt()
+                        isAuthConfigured = container.authRepository.isConfigured
                     )
                 }
             }
@@ -198,7 +187,6 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
             _busy.value = true
             when (val result = container.authRepository.handleSignInResult(data)) {
                 is Outcome.Ok -> {
-                    keyTick.value += 1
                     _notice.value = "Signed in as ${result.value.displayName ?: result.value.email}."
                     // F5: fresh login picks up the shared voice immediately.
                     autoPullVoice()
@@ -211,12 +199,8 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
 
     fun signOut() {
         container.authRepository.signOut()
-        keyTick.value += 1
         _notice.value = "Signed out of Google account."
     }
-
-    fun getSavedSarvamKey(): String = container.secureKeys.getSarvamKey()
-    fun getSavedSarvamSpeaker(): String = container.sessionPrefs.sarvamSpeaker
 
     val appLanguage: StateFlow<String> = container.sessionPrefs.appLanguage
     fun setLanguage(lang: String) = container.sessionPrefs.setAppLanguage(lang)
@@ -226,8 +210,6 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
 
     val counterName: StateFlow<String> = container.sessionPrefs.counterName
     fun setCounterName(name: String) = container.sessionPrefs.setCounterName(name)
-
-    val gatewayBaseUrl: StateFlow<String> = container.sessionPrefs.gatewayBaseUrlFlow
 
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice.asStateFlow()
@@ -308,156 +290,14 @@ class AdminSettingsViewModel(private val container: AppContainer) : ViewModel() 
         container.ttsEngine.native.speak("శ్రీ మహేష్ బాబు గారు, వెయ్యి నూట పదహారు రూపాయలు.")
     }
 
-    fun setSarvamSpeaker(speaker: String) {
-        container.sessionPrefs.sarvamSpeaker = speaker
-    }
-
-    fun saveKeyLocally(key: String, speaker: String) {
-        val clean = key.trim().removeSurrounding("\"").removeSurrounding("'").trim()
-        container.secureKeys.setSarvamKey(clean)
-        container.sessionPrefs.sarvamSpeaker = speaker
-        // Phase 2: configuring a cloud key means cloud mode — unless the key
-        // is blank (clearing falls back to offline).
-        container.sessionPrefs.voiceEngineMode = if (clean.isBlank()) {
-            com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE
-        } else {
-            com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD
-        }
-        // F5 explicit lock follows the same intent.
-        container.sessionPrefs.voiceOfflineLocked = clean.isBlank()
-        keyTick.value += 1
-        _notice.value = if (clean.isBlank()) {
-            "Cloud key removed — offline voice active."
-        } else if (container.secureKeys.isEncrypted) {
-            "✓ Key stored encrypted & cloud voice activated."
-        } else {
-            "✓ Key stored locally & cloud voice activated."
-        }
-    }
-
-    /**
-     * Phase 2: key removal lives HERE (Settings), not in the Announcement
-     * queue — the queue is an operational console with no secrets handling
-     * (RC1: AccessPolicy.canManageKeys is head-scoped for publish; local
-     * clear + offline fallback is safe for any role).
-     */
-    fun clearKeyLocally() {
-        container.secureKeys.setSarvamKey("")
-        container.sessionPrefs.voiceEngineMode =
-            com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE
-        // F5: removing the key is an explicit offline choice — auto-pull must
-        // not flip the mode back (the key still updates silently underneath).
-        container.sessionPrefs.voiceOfflineLocked = true
-        keyTick.value += 1
-        _notice.value = "Cloud key removed — offline device voice active."
-    }
-
-    fun pushKey(key: String, speaker: String) {
-        val uid = container.authRepository.user.value?.uid
-        if (uid == null) {
-            _notice.value = "Sign in first using Google Account above."
-            return
-        }
-        viewModelScope.launch {
-            _busy.value = true
-            when (container.syncService.writeTtsKey(key, speaker, uid)) {
-                is Outcome.Ok -> {
-                    keyTick.value += 1
-                    _notice.value = "Shared key published for collectors."
-                }
-                is Outcome.Err -> _notice.value = "Publish failed — saved on this device only."
-            }
-            _busy.value = false
-        }
-    }
-
-    fun pullKey() {
-        viewModelScope.launch {
-            _busy.value = true
-            // F5 manual pull: explicit tap bypasses the offline lock.
-            val pulled = container.syncService.maybeAutoPullVoice(force = true, respectLock = false)
-            if (pulled.applied) {
-                // Drafts follow automatically: the speaker draft tracks the
-                // live speaker flow, the key field backfills when empty.
-                keyTick.value += 1
-                _notice.value = "Shared voice settings applied."
-            } else if (!pulled.remotePresent) {
-                _notice.value = "No shared key published yet — the head publishes it from this card."
-            } else {
-                keyTick.value += 1
-                _notice.value = "Already up to date with the shared voice."
-            }
-            _busy.value = false
-        }
-    }
+    // Shared-voice key management lives in CloudSyncViewModel (Committee
+    // Shared Voice card) — this screen keeps only the offline Temple Voice
+    // controls. Speaker/key flows stay live via speakerFlow/engineMode above.
 
     /** F5 quiet pull for Settings entry + sign-in: silent unless applied. */
     fun autoPullVoice() {
         viewModelScope.launch {
-            if (container.syncService.maybeAutoPullVoice().applied) {
-                keyTick.value += 1
-            }
-        }
-    }
-
-    private val _sarvamTestStatus = MutableStateFlow<String?>(null)
-    val sarvamTestStatus: StateFlow<String?> = _sarvamTestStatus.asStateFlow()
-
-    private val _testingSarvam = MutableStateFlow(false)
-    val testingSarvam: StateFlow<Boolean> = _testingSarvam.asStateFlow()
-
-    fun testSarvamVoice(key: String, speaker: String) {
-        val trimmed = key.trim()
-        if (trimmed.isBlank()) {
-            _sarvamTestStatus.value = "Please enter an API key first."
-            return
-        }
-        if (_testingSarvam.value) return // debounce: a test is already running
-        if (!container.sessionPrefs.takeSarvamSlot()) {
-            _sarvamTestStatus.value = "✗ Free-tier limit reached (20 Sarvam calls per 30 min). Try later — offline voice still works."
-            return
-        }
-        viewModelScope.launch {
-            _testingSarvam.value = true
-            // Phase 3 disclosure: a verification test spends real quota.
-            _sarvamTestStatus.value = "Testing Sarvam AI connection… (uses 1 of 20 cloud calls)"
-            val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching {
-                    val api = com.shankaravam.festival.data.remote.SarvamApiService.create()
-                    val normSpeaker = com.shankaravam.festival.core.tts.normalizeSarvamSpeaker(speaker)
-                    val payload = org.json.JSONObject()
-                        .put("text", "ఓం నమో వేంకటేశాయ. శర్వం క్లౌడ్ గొంతు పరీక్ష విజయవంతమైంది.")
-                        .put("language_code", "te-IN")
-                        .put("speaker", normSpeaker)
-                        .put("model", "bulbul:v3")
-                        .put("output_audio_codec", "mp3")
-                        .toString()
-                        .toRequestBody("application/json; charset=utf-8".toMediaType())
-                    val response = api.synthesize(trimmed, payload).string()
-                    val json = org.json.JSONObject(response)
-                    val audioBase64 = if (json.has("audios")) {
-                        json.getJSONArray("audios").getString(0)
-                    } else if (json.has("audio")) {
-                        json.getString("audio")
-                    } else throw java.io.IOException("Missing audio in Sarvam response")
-                    val bytes = android.util.Base64.decode(audioBase64, android.util.Base64.DEFAULT)
-                    val testFile = java.io.File(container.appContext.cacheDir, "audio_test_sample.mp3")
-                    testFile.writeBytes(bytes)
-                    testFile
-                }
-            }
-            result.fold(
-                onSuccess = { file ->
-                    saveKeyLocally(trimmed, speaker)
-                    _sarvamTestStatus.value = "✓ Key Verified & Saved! Playing audio…"
-                    container.ttsEngine.playFile(file, onDone = {}, onError = {})
-                },
-                onFailure = { e ->
-                    val errorMsg = com.shankaravam.festival.data.remote.SarvamErrorParser.parse(e)
-                    _sarvamTestStatus.value = "✗ Test failed: $errorMsg"
-                }
-            )
-            _testingSarvam.value = false
+            runCatching { container.syncService.maybeAutoPullVoice() }
         }
     }
 
@@ -506,6 +346,7 @@ fun AdminSettingsScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: AdminSettingsViewModel = containerViewModel { AdminSettingsViewModel(it) },
+    onOpenSync: () -> Unit = {},
     /** F1: open with the Team & Cloud Sync accordion expanded (Sync tile deep-link). */
     expandTeam: Boolean = false
 ) {
@@ -520,15 +361,11 @@ fun AdminSettingsScreen(
     val chime by viewModel.chimeEnabled.collectAsState()
     val teluguVoices by viewModel.nativeVoices.collectAsState()
     val teluguVoiceInfos by viewModel.nativeVoiceInfos.collectAsState()
-    val sarvamTestStatus by viewModel.sarvamTestStatus.collectAsState()
-    val testingSarvam by viewModel.testingSarvam.collectAsState()
     val signInIntent by viewModel.signInIntent.collectAsState()
     val deleting by viewModel.deleting.collectAsState()
     val engineMode by viewModel.engineMode.collectAsState()
-    val gatewayBaseUrl by viewModel.gatewayBaseUrl.collectAsState()
-    val hasGateway = gatewayBaseUrl.isNotBlank()
-    // Phase 2: live speaker flow — a pick in the queue card refreshes the
-    // cloud-card chips here without reopening Settings.
+    // Live speaker flow — a pick in the queue card refreshes the summary
+    // here without reopening Settings.
     val liveSpeaker by viewModel.speakerFlow.collectAsState()
 
     val signInLauncher = rememberLauncherForActivityResult(
@@ -558,36 +395,15 @@ fun AdminSettingsScreen(
 
     // Hoisted draft state for form fields so collapsing accordion does NOT discard input
     var counterDraft by remember(counterName) { mutableStateOf(counterName) }
-    var sarvamKeyDraft by remember { mutableStateOf(viewModel.getSavedSarvamKey()) }
-    var sarvamSpeakerDraft by remember { mutableStateOf(viewModel.getSavedSarvamSpeaker()) }
-
-    // When a key is saved/pulled — or the speaker is picked in the queue card —
-    // refresh drafts accordingly. The key field backfills only when empty so
-    // typing is never clobbered; chips always follow the live speaker.
-    LaunchedEffect(state.hasSarvamKey, liveSpeaker) {
-        val savedKey = viewModel.getSavedSarvamKey()
-        if (sarvamKeyDraft.isBlank() && sarvamKeyDraft != savedKey) {
-            sarvamKeyDraft = savedKey
-        }
-        sarvamSpeakerDraft = liveSpeaker
-    }
 
     // Collapsible accordion states - minimal & clean for easy navigation
+    var prefsExpanded by remember { mutableStateOf(false) }
+    var joinExpanded by remember { mutableStateOf(expandTeam) }
     var voiceExpanded by remember { mutableStateOf(false) }
     var counterExpanded by remember { mutableStateOf(false) }
-    var cloudExpanded by remember { mutableStateOf(false) }
     var adminExpanded by remember { mutableStateOf(false) }
-    // F1 canonical Team section (gear home for Invite/Join/sync).
-    var teamExpanded by remember { mutableStateOf(expandTeam) }
 
-    val performBack = {
-        val currentSaved = viewModel.getSavedSarvamKey().trim()
-        val draft = sarvamKeyDraft.trim()
-        if (draft.isNotBlank() && draft != currentSaved) {
-            viewModel.saveKeyLocally(draft, sarvamSpeakerDraft)
-        }
-        onBack()
-    }
+    val performBack = { onBack() }
 
     androidx.activity.compose.BackHandler(onBack = performBack)
 
@@ -608,29 +424,7 @@ fun AdminSettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // 1. Language Selection (Always visible, prominent at top for easy switching)
-            LanguageSelectionCard(
-                currentLang = currentLang,
-                onSelectLanguage = { viewModel.setLanguage(it) }
-            )
-
-            // 2. App Preferences (Subtle Tactile Haptics)
-            AppPreferencesCard(
-                hapticEnabled = hapticEnabled,
-                onToggleHaptic = { viewModel.setHapticFeedbackEnabled(it) }
-            )
-
-            // 3. Google Account (Direct authentication & committee identity)
-            GoogleAccountCard(
-                user = state.user,
-                isConfigured = state.isAuthConfigured,
-                currentLang = currentLang,
-                busy = busy,
-                onSignIn = { viewModel.signIn() },
-                onSignOut = { viewModel.signOut() }
-            )
-
-            // 3. Role & Storage Security Status Banner
+            // 1. Role & Storage Security Status Banner (Prominent at top)
             val isHeadAdmin = state.role == UserRole.GLOBAL_HEAD
                 && AdminConfig.isGlobalHeadEmail(state.cloudEmail)
             Surface(
@@ -697,29 +491,32 @@ fun AdminSettingsScreen(
                 viewModel.consumeNotice()
             }
 
+            // 2. App Preferences Accordion (Language, Haptics, Google Account)
+            AppPreferencesAccordion(
+                currentLang = currentLang,
+                onSelectLanguage = { viewModel.setLanguage(it) },
+                hapticEnabled = hapticEnabled,
+                onToggleHaptic = { viewModel.setHapticFeedbackEnabled(it) },
+                user = state.user,
+                isAuthConfigured = state.isAuthConfigured,
+                busy = busy,
+                onSignIn = { viewModel.signIn() },
+                onSignOut = { viewModel.signOut() },
+                isExpanded = prefsExpanded,
+                onToggle = { prefsExpanded = !prefsExpanded }
+            )
+
+            // 3. Join Festival with Code Accordion
+            JoinFestivalAccordion(
+                isExpanded = joinExpanded,
+                onToggle = { joinExpanded = !joinExpanded },
+                currentLang = currentLang,
+                counterName = counterName,
+                onSaveCounter = { viewModel.setCounterName(it) },
+                eventName = state.event?.name
+            )
+
             val event = state.event
-            // F1 canonical Team & Cloud Sync (lives ABOVE the event gate: Join
-            // works with zero local events, so collectors never fabricate a
-            // dummy duplicate to accept an invite).
-            SettingsAccordionCard(
-                title = "Team & Cloud Sync",
-                teluguTitle = "జట్టు & క్లౌడ్ సమకాలీకరణ",
-                summary = if (state.user != null) {
-                    if (event != null) "Festival: ${event.name}" else "Join a festival — nothing to create"
-                } else {
-                    if (currentLang == SessionPrefs.LANG_TELUGU) "జట్టులో చేరడానికి సైన్ ఇన్ చేయండి" else "Sign in to join a team"
-                },
-                icon = Icons.Filled.Group,
-                iconTint = DeepMaroon,
-                iconBackground = MaroonWash,
-                isExpanded = teamExpanded,
-                onToggle = { teamExpanded = !teamExpanded }
-            ) {
-                TeamSyncSection(
-                    counterName = counterName,
-                    onSaveCounter = { viewModel.setCounterName(it) }
-                )
-            }
             if (event == null) {
                 Text(
                     text = if (currentLang == SessionPrefs.LANG_TELUGU) "దయచేసి ముందుగా ఒక ఈవెంట్‌ను ఎంచుకోండి లేదా సృష్టించండి." else "Select or create an event first.",
@@ -729,9 +526,7 @@ fun AdminSettingsScreen(
                 return@Column
             }
 
-            // 3. Accordion Section 1: Temple Voice & Audio
-            // Fix-B5: in cloud mode the summary names the ACTIVE speaker
-            // (not the native fallback voice); in offline mode the fallback.
+            // 4. Temple Voice & Audio Accordion
             val voiceDisplayName = if (engineMode == com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE) {
                 selectedVoice?.substringAfterLast("-") ?: if (currentLang == SessionPrefs.LANG_TELUGU) "సిస్టమ్ డిఫాల్ట్" else "Default"
             } else {
@@ -770,7 +565,7 @@ fun AdminSettingsScreen(
                 )
             }
 
-            // 4. Accordion Section 2: Advanced: Counter Identity (Draft hoisted to screen)
+            // 5. Advanced: Counter Identity
             val counterSummary = if (counterName.isNotBlank()) {
                 if (currentLang == SessionPrefs.LANG_TELUGU) "కౌంటర్: $counterName" else "Active: $counterName"
             } else {
@@ -792,72 +587,6 @@ fun AdminSettingsScreen(
                     onDraftChange = { counterDraft = it },
                     savedCounterName = counterName,
                     onSaveCounter = { viewModel.setCounterName(it) }
-                )
-            }
-
-            // 5. Accordion Section 3: Advanced: Cloud Voice (Sarvam AI) (Draft hoisted to screen)
-            // Fix-B5: the summary follows the engine mode — a saved key while
-            // offline must not claim "Cloud Voice Configured" as active.
-            val cloudSummary = when {
-                engineMode == com.shankaravam.festival.domain.model.VoiceEngineMode.OFFLINE_NATIVE && (state.hasSarvamKey || hasGateway) ->
-                    if (currentLang == SessionPrefs.LANG_TELUGU) "ఆఫ్‌లైన్ మోడ్" else "Offline Mode Active"
-                hasGateway ->
-                    if (currentLang == SessionPrefs.LANG_TELUGU) "గేట్‌వే క్లౌడ్ గొంతు సిద్ధంగా ఉంది" else "Gateway Cloud Voice Active (Cloudflare R2)"
-                state.hasSarvamKey ->
-                    if (currentLang == SessionPrefs.LANG_TELUGU) "శర్వం క్లౌడ్ గొంతు సిద్ధంగా ఉంది" else "Sarvam Cloud Voice Configured"
-                else ->
-                    if (currentLang == SessionPrefs.LANG_TELUGU) "ఆఫ్‌లైన్ గొంతు మాత్రమే యాక్టివ్" else "Offline Voice Active (Android TTS)"
-            }
-
-            SettingsAccordionCard(
-                title = "Advanced: Cloud Voice (Sarvam AI)",
-                teluguTitle = "అధునాతన: క్లౌడ్ గొంతు",
-                summary = cloudSummary,
-                icon = Icons.Filled.Cloud,
-                iconTint = TempleSaffron,
-                iconBackground = SaffronWash,
-                isExpanded = cloudExpanded,
-                onToggle = { cloudExpanded = !cloudExpanded }
-            ) {
-                // Primary: Temple Media Gateway (Cloudflare Worker + R2)
-                GatewayCard()
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-                // F5 shared-vs-local pill: honest about where the key came from.
-                val voiceSource = when {
-                    state.hasSarvamKey && state.voiceSyncedAt > 0L -> {
-                        val t = java.text.SimpleDateFormat("d MMM h:mm a", java.util.Locale.getDefault())
-                            .format(java.util.Date(state.voiceSyncedAt))
-                        "☁️ Shared voice: ${liveSpeaker.replaceFirstChar { it.uppercase() }} (synced $t)" to true
-                    }
-                    state.hasSarvamKey ->
-                        "📱 Key on this device only — pull the shared key below" to false
-                    else -> null
-                }
-                VoiceKeyContent(
-                    key = sarvamKeyDraft,
-                    onKeyChange = { sarvamKeyDraft = it },
-                    speaker = sarvamSpeakerDraft,
-                    onSpeakerChange = {
-                        sarvamSpeakerDraft = it
-                        viewModel.setSarvamSpeaker(it)
-                    },
-                    savedKey = viewModel.getSavedSarvamKey(),
-                    busy = busy,
-                    testStatus = sarvamTestStatus,
-                    testing = testingSarvam,
-                    hasKey = state.hasSarvamKey,
-                    hasGateway = hasGateway,
-                    canPublish = AccessPolicy.canManageKeys(state.role)
-                        && AdminConfig.isGlobalHeadEmail(state.cloudEmail),
-                    onSaveLocal = { key, speaker -> viewModel.saveKeyLocally(key, speaker) },
-                    onClearKey = { sarvamKeyDraft = ""; viewModel.clearKeyLocally() },
-                    onPush = { key, speaker -> viewModel.pushKey(key, speaker) },
-                    onPull = { viewModel.pullKey() },
-                    onTestSarvam = { key, speaker -> viewModel.testSarvamVoice(key, speaker) },
-                    voiceSource = voiceSource?.first,
-                    voiceShared = voiceSource?.second == true
                 )
             }
 
@@ -979,7 +708,7 @@ fun AdminSettingsScreen(
 
 /** Reusable clean Accordion Card with unified temple aesthetics, WCAG AAA typography, and a11y role. */
 @Composable
-private fun SettingsAccordionCard(
+internal fun SettingsAccordionCard(
     title: String,
     teluguTitle: String,
     summary: String,
@@ -1080,55 +809,59 @@ private fun SettingsAccordionCard(
     }
 }
 
-/** Top Language Card — clean, responsive, directly accessible. */
+/** App Preferences Accordion — language selection, subtle haptic feedback, and Google account management in one clean place. */
 @Composable
-private fun LanguageSelectionCard(
+private fun AppPreferencesAccordion(
     currentLang: String,
-    onSelectLanguage: (String) -> Unit
+    onSelectLanguage: (String) -> Unit,
+    hapticEnabled: Boolean,
+    onToggleHaptic: (Boolean) -> Unit,
+    user: com.shankaravam.festival.data.remote.CloudUser?,
+    isAuthConfigured: Boolean,
+    busy: Boolean,
+    onSignIn: () -> Unit,
+    onSignOut: () -> Unit,
+    isExpanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    OutlinedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.outlinedCardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        border = CardDefaults.outlinedCardBorder()
+    val strings = appStrings()
+    val haptics = LocalAppHaptics.current
+    val langLabel = if (currentLang == SessionPrefs.LANG_TELUGU) "తెలుగు" else "English"
+    val hapticLabel = if (hapticEnabled) (if (currentLang == SessionPrefs.LANG_TELUGU) "వైబ్రేషన్ ఆన్" else "Haptics On")
+        else (if (currentLang == SessionPrefs.LANG_TELUGU) "వైబ్రేషన్ ఆఫ్" else "Haptics Off")
+    val accountLabel = user?.email ?: (if (currentLang == SessionPrefs.LANG_TELUGU) "ఆఫ్‌లైన్" else "Offline")
+    val summary = "$langLabel • $hapticLabel • $accountLabel"
+
+    SettingsAccordionCard(
+        title = if (currentLang == SessionPrefs.LANG_TELUGU) "యాప్ ప్రాధాన్యతలు" else "App Preferences",
+        teluguTitle = if (currentLang == SessionPrefs.LANG_TELUGU) "" else "యాప్ ప్రాధాన్యతలు",
+        summary = summary,
+        icon = Icons.Filled.Tune,
+        iconTint = TempleSaffron,
+        iconBackground = SaffronWash,
+        isExpanded = isExpanded,
+        onToggle = onToggle,
+        modifier = modifier
     ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // 1. App Language Section
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(SaffronWash)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Language,
-                        contentDescription = null,
-                        tint = TempleSaffron,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-                Column {
-                    Text(
-                        text = "App Language / యాప్ భాష",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = if (currentLang == SessionPrefs.LANG_TELUGU) "తెలుగు ఎంపిక చేయబడింది" else "English selected",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Filled.Language,
+                    contentDescription = null,
+                    tint = TempleSaffron,
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    text = "App Language / యాప్ భాష",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 FilterChip(
@@ -1142,68 +875,14 @@ private fun LanguageSelectionCard(
                     label = { Text("తెలుగు (Telugu)", fontWeight = FontWeight.SemiBold) }
                 )
             }
-        }
-    }
-}
 
-/** App Preferences Card — subtle tactile haptics control. */
-@Composable
-private fun AppPreferencesCard(
-    hapticEnabled: Boolean,
-    onToggleHaptic: (Boolean) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val strings = appStrings()
-    val haptics = LocalAppHaptics.current
-    OutlinedCard(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.outlinedCardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        border = CardDefaults.outlinedCardBorder()
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(SaffronWash)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Vibration,
-                        contentDescription = null,
-                        tint = TempleSaffron,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-                Column {
-                    Text(
-                        text = strings.preferencesSectionTitle,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = if (hapticEnabled) strings.hapticFeedbackTitle else "Vibration off / వైబ్రేషన్ ఆఫ్",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
+            // 2. Haptic Feedback Section
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(10.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                     .clickable {
                         val next = !hapticEnabled
@@ -1214,18 +893,30 @@ private fun AppPreferencesCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                    Text(
-                        text = strings.hapticFeedbackTitle,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Vibration,
+                        contentDescription = null,
+                        tint = TempleSaffron,
+                        modifier = Modifier.size(20.dp)
                     )
-                    Text(
-                        text = strings.hapticFeedbackSubtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Column {
+                        Text(
+                            text = strings.hapticFeedbackTitle,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = strings.hapticFeedbackSubtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
                 Switch(
                     checked = hapticEnabled,
@@ -1234,62 +925,34 @@ private fun AppPreferencesCard(
                         onToggleHaptic(it)
                     },
                     colors = SwitchDefaults.colors(
-                        checkedThumbColor = androidx.compose.ui.graphics.Color.White,
+                        checkedThumbColor = Color.White,
                         checkedTrackColor = TempleSaffron
                     )
                 )
             }
-        }
-    }
-}
 
-/** Prominent Google Account Authentication & Committee Identity Card. */
-@Composable
-private fun GoogleAccountCard(
-    user: com.shankaravam.festival.data.remote.CloudUser?,
-    isConfigured: Boolean,
-    currentLang: String,
-    busy: Boolean,
-    onSignIn: () -> Unit,
-    onSignOut: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var isExpanded by remember { mutableStateOf(false) }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
-    val summary = when {
-        !isConfigured -> {
-            if (currentLang == SessionPrefs.LANG_TELUGU) "క్లౌడ్ సర్వీసులు కాన్ఫిగర్ చేయబడలేదు"
-            else "Cloud services not configured"
-        }
-        user != null -> {
-            val name = user.displayName?.takeIf { it.isNotBlank() }
-            val email = user.email?.takeIf { it.isNotBlank() }
-            when {
-                name != null && email != null -> "$name • $email"
-                name != null -> name
-                email != null -> email
-                else -> if (currentLang == SessionPrefs.LANG_TELUGU) "ఖాతా అనుసంధానమైంది" else "Account Connected"
+            // 3. Google Account Section (Flattened directly, no nested accordion)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Person,
+                    contentDescription = null,
+                    tint = TempleSaffron,
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    text = if (currentLang == SessionPrefs.LANG_TELUGU) "గూగుల్ ఖాతా (Google Account)" else "Google Account",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
             }
-        }
-        else -> {
-            if (currentLang == SessionPrefs.LANG_TELUGU) "ఆఫ్‌లైన్ మోడ్ (లాగిన్ కాలేదు)"
-            else "Offline Mode (Not signed in)"
-        }
-    }
 
-    SettingsAccordionCard(
-        title = if (currentLang == SessionPrefs.LANG_TELUGU) "గూగుల్ ఖాతా" else "Google Account",
-        teluguTitle = if (currentLang == SessionPrefs.LANG_TELUGU) "" else "గూగుల్ ఖాతా",
-        summary = summary,
-        icon = Icons.Filled.Person,
-        iconTint = TempleSaffron,
-        iconBackground = SaffronWash,
-        isExpanded = isExpanded,
-        onToggle = { isExpanded = !isExpanded },
-        modifier = modifier
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (!isConfigured) {
+            if (!isAuthConfigured) {
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
@@ -1392,6 +1055,107 @@ private fun GoogleAccountCard(
     }
 }
 
+/** Join Festival with Code Accordion — allows collectors and members to join without creating duplicate events. */
+@Composable
+private fun JoinFestivalAccordion(
+    isExpanded: Boolean,
+    onToggle: () -> Unit,
+    currentLang: String,
+    counterName: String,
+    onSaveCounter: (String) -> Unit,
+    eventName: String?,
+    modifier: Modifier = Modifier,
+    syncViewModel: CloudSyncViewModel = containerViewModel { CloudSyncViewModel(it) }
+) {
+    val syncState by syncViewModel.uiState.collectAsState()
+    val busy by syncViewModel.busy.collectAsState()
+    val notice by syncViewModel.notice.collectAsState()
+    var joinCode by remember { mutableStateOf("") }
+    var counterDraft by remember(counterName) { mutableStateOf(counterName) }
+    var qrBusy by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val qrPickLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri == null || qrBusy) return@rememberLauncherForActivityResult
+        qrBusy = true
+        scope.launch {
+            val code = decodeJoinCodeFromUri(context.contentResolver, uri)
+            if (code != null) {
+                joinCode = code
+                syncViewModel.info("QR read: $code — tap Request to join.")
+            } else {
+                syncViewModel.info("No invite QR found in that image — try a clearer screenshot.")
+            }
+            qrBusy = false
+        }
+    }
+
+    val summary = if (eventName != null) {
+        if (currentLang == SessionPrefs.LANG_TELUGU) "పండుగ: $eventName" else "Festival: $eventName"
+    } else {
+        if (currentLang == SessionPrefs.LANG_TELUGU) "కోడ్‌తో పండుగలో చేరండి" else "Join a festival with invite code"
+    }
+
+    SettingsAccordionCard(
+        title = if (currentLang == SessionPrefs.LANG_TELUGU) "కోడ్‌తో పండుగలో చేరండి" else "Join Festival with Code",
+        teluguTitle = if (currentLang == SessionPrefs.LANG_TELUGU) "" else "కోడ్‌తో పండుగలో చేరండి",
+        summary = summary,
+        icon = Icons.Filled.GroupAdd,
+        iconTint = DeepMaroon,
+        iconBackground = MaroonWash,
+        isExpanded = isExpanded,
+        onToggle = onToggle,
+        modifier = modifier
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            val user = syncState.user
+            if (user == null) {
+                Text(
+                    text = if (currentLang == SessionPrefs.LANG_TELUGU)
+                        "పండుగలో చేరడానికి ముందుగా పైన ఉన్న యాప్ ప్రాధాన్యతలలో గూగుల్‌తో సైన్ ఇన్ చేయండి."
+                    else
+                        "Sign in with Google in App Preferences above to join a festival committee.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                JoinCard(
+                    code = joinCode,
+                    onCode = { joinCode = it },
+                    valid = parseJoinCode(joinCode) != null,
+                    busy = busy == "join",
+                    onJoin = {
+                        onSaveCounter(counterDraft.trim())
+                        syncViewModel.join(joinCode, user.uid) { joinCode = "" }
+                    },
+                    counter = counterDraft,
+                    onCounter = { counterDraft = it },
+                    onPickQr = { qrPickLauncher.launch("image/*") },
+                    pickingQr = qrBusy
+                )
+            }
+
+            notice?.let {
+                Surface(
+                    color = SaffronWash,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+                syncViewModel.consumeNotice()
+            }
+        }
+    }
+}
+
 /** Voice engine mode + inbuilt Android TTS voice list, speech speed, bell toggle, and audio preview. */
 @Composable
 private fun NativeVoiceContent(
@@ -1409,7 +1173,7 @@ private fun NativeVoiceContent(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // Phase 2 explicit engine selector (RC5): offline is free/unlimited,
-        // cloud needs a key (managed in the Cloud Voice card below).
+        // cloud needs a key (managed in Cloud Sync).
         Text(
             text = "Voice Engine / ఇంజిన్:",
             style = MaterialTheme.typography.labelSmall,
@@ -1430,7 +1194,7 @@ private fun NativeVoiceContent(
         }
         if (engineMode == com.shankaravam.festival.domain.model.VoiceEngineMode.SARVAM_CLOUD) {
             Text(
-                text = "Cloud voice active — speaker & API key are managed in the Cloud Voice card below. Device voice, speed and bell still apply as fallback.",
+                text = "Cloud voice active — speaker & API key are managed in Cloud Sync. Device voice, speed and bell still apply as fallback.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1607,7 +1371,7 @@ private fun CounterIdentityContent(
 
 /** Cloud Voice (Sarvam AI) configuration (hoisted key/speaker preserved across accordion collapse). */
 @Composable
-private fun VoiceKeyContent(
+internal fun VoiceKeyContent(
     key: String,
     onKeyChange: (String) -> Unit,
     speaker: String,

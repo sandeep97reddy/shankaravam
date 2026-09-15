@@ -30,8 +30,12 @@ import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.SyncProblem
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VolunteerActivism
 import androidx.compose.material.icons.filled.Wallet
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.material.icons.filled.GroupAdd
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -164,14 +168,18 @@ fun DashboardScreen(
                     )
                 }
 
-                // 3. Dual Top Prominent Primary Actions (Donate & Expense entry)
+                // 3. Dual Top Prominent Primary Actions (Donate & Expense entry) OR Auditor Mode Banner
                 item {
-                    DualActionHeader(
-                        onAddDonation = onAddDonation,
-                        onAddExpense = onAddExpense,
-                        addDonationText = strings.addDonation,
-                        addExpenseText = strings.addExpense
-                    )
+                    if (state.canWriteMoney) {
+                        DualActionHeader(
+                            onAddDonation = onAddDonation,
+                            onAddExpense = onAddExpense,
+                            addDonationText = strings.addDonation,
+                            addExpenseText = strings.addExpense
+                        )
+                    } else if (!state.isRevoked) {
+                        AuditorModeBanner(currentLang = strings.languageCode)
+                    }
                 }
 
                 // 4. Status Chips Row (Donors, Non-cash, Sync status)
@@ -276,23 +284,30 @@ private fun NoEventPlaceholderCard(
                 lineHeight = 20.sp
             )
             Spacer(Modifier.height(4.dp))
-            OutlinedButton(
+            Button(
                 onClick = onJoinClick,
                 shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = TempleSaffron,
+                    contentColor = Color.White
+                ),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp)
+                    .defaultMinSize(minHeight = 48.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Filled.CloudSync,
+                    imageVector = Icons.Filled.GroupAdd,
                     contentDescription = null,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(20.dp)
                 )
                 Spacer(Modifier.size(8.dp))
                 Text(
-                    text = if (strings.languageCode == "te") "కోడ్‌తో చేరండి (క్లౌడ్ సింక్)" else "Join with Invite Code (Cloud Sync)",
+                    text = if (strings.languageCode == "te") "కోడ్‌తో చేరండి" else "Join with Invite Code",
+                    style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -799,3 +814,51 @@ private fun SecondaryUtilitiesRow(
         }
     }
 }
+
+@Composable
+private fun AuditorModeBanner(
+    currentLang: String,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+        border = CardDefaults.outlinedCardBorder()
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(DeepMaroon.copy(alpha = 0.1f))
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Visibility,
+                    contentDescription = null,
+                    tint = DeepMaroon,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (currentLang == "te") "వీక్షకుల మోడ్ • రికార్డుల వీక్షణ మాత్రమే" else "Auditor / Viewer Mode • Read-Only",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = if (currentLang == "te") "కొత్త విరాళాలు మరియు ఖర్చులు నమోదు చేసే అధికారం కలెక్టర్లకు మాత్రమే ఉంది." else "Only assigned collectors can record donations and expenses. Real-time ledger is synced.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+

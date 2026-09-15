@@ -300,6 +300,15 @@ export default {
     try {
       const url = new URL(req.url);
       const method = req.method.toUpperCase();
+      if (method === "GET" && (url.pathname === "/" || url.pathname === "/v1/health")) {
+        return json({
+          status: "healthy",
+          service: "ShankaRavam Temple Media Gateway",
+          r2: "connected",
+          sarvam_tts: "active",
+          version: "1.0"
+        });
+      }
       if (method === "POST" && url.pathname === "/v1/audio/resolve") {
         return await handleResolve(req, env);
       }

@@ -93,6 +93,53 @@ class AudioCachePruneTest {
     }
 
     @Test
+    fun prunable_filter_covers_cas_slots_but_spares_test_sample_and_malformed() {
+        // H1: Phase-3 CAS clips join the ceiling; the levels-check file and
+        // malformed audio_* names stay exempt.
+        val good = "audio_" + "a".repeat(64) + ".mp3"
+        assertTrue(SarvamTtsClient.isPrunableCacheFile(good))
+        assertTrue(SarvamTtsClient.isPrunableCacheFile("audio_" + "0123456789abcdef".repeat(4) + ".mp3"))
+        assertFalse(SarvamTtsClient.isPrunableCacheFile("audio_test_sample.mp3"))
+        assertFalse(SarvamTtsClient.isPrunableCacheFile("audio_short.mp3"))
+        assertFalse(SarvamTtsClient.isPrunableCacheFile("audio_" + "z".repeat(64) + ".mp3"))
+        assertFalse(SarvamTtsClient.isPrunableCacheFile("audio_" + "a".repeat(64) + ".mp3.bak-1"))
+    }
+
+    @Test
+    fun aged_cas_clips_are_pruned_live_hashes_survive_via_exclusion() {
+        // H1/H2: stale CAS goes under age pressure; live-queue hashes passed
+        // as excludeHashes survive (exact-name match — prefix scan can't map
+        // a hash back to a donation id).
+        val liveHash = "b".repeat(64)
+        val staleHash = "c".repeat(64)
+        val liveName = SarvamTtsClient.casFileName(liveHash)
+        val staleName = SarvamTtsClient.casFileName(staleHash)
+        val dir = Files.createTempDirectory("audio-prune-cas").toFile()
+        try {
+            clip(dir, staleName, 30)
+            clip(dir, liveName, 30)
+            clip(dir, "donation_live_priya.mp3", 30)
+            val candidates = dir.listFiles()!!
+                .filter { SarvamTtsClient.isPrunableCacheFile(it.name) }
+            assertEquals(3, candidates.size)
+
+            val cutoff = System.currentTimeMillis() - 20L * 24L * 60L * 60L * 1000L
+            val victims = SarvamTtsClient.selectPruneVictims(
+                files = candidates,
+                maxFiles = 10,
+                cutoffMillis = cutoff,
+                excludeNames = setOf(liveName, "donation_live_priya.mp3")
+            ).map { it.name }.toSet()
+
+            assertTrue(staleName in victims)
+            assertTrue(liveName !in victims)
+            assertEquals(1, victims.size)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun per_donation_scrub_never_touches_shared_phrases() {
         val dir = Files.createTempDirectory("audio-scrub-phrase").toFile()
         try {

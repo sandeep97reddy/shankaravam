@@ -24,6 +24,7 @@ import com.shankaravam.festival.presentation.expense.ExpenseListScreen
 import com.shankaravam.festival.presentation.history.ActivityFeedScreen
 import com.shankaravam.festival.presentation.reports.ExportScreen
 import com.shankaravam.festival.presentation.settings.AdminSettingsScreen
+import com.shankaravam.festival.presentation.settings.CloudSyncScreen
 import com.shankaravam.festival.presentation.splash.SplashScreen
 
 object ShankaRavamRoutes {
@@ -156,16 +157,27 @@ fun ShankaRavamNavGraph() {
             ExportScreen(onBack = { navController.popBackStack() })
         }
         composable(ShankaRavamRoutes.CLOUD_SYNC) {
-            // F1: Cloud Sync now lives in the gear as the Team & Cloud Sync
-            // accordion — the old route redirects there, expanded. No dead
-            // links from the dashboard Sync tile.
-            AdminSettingsScreen(
+            // Dedicated Cloud Sync destination (screen separation): the
+            // dashboard Sync tile + NoEvent join land here directly. No
+            // redirect through Settings — single source, no dummy events.
+            CloudSyncScreen(
                 onBack = { navController.popBackStack() },
-                expandTeam = true
+                onOpenAdmin = {
+                    navController.navigate(ShankaRavamRoutes.ADMIN) {
+                        launchSingleTop = true
+                    }
+                }
             )
         }
         composable(ShankaRavamRoutes.ADMIN) {
-            AdminSettingsScreen(onBack = { navController.popBackStack() })
+            AdminSettingsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenSync = {
+                    navController.navigate(ShankaRavamRoutes.CLOUD_SYNC) {
+                        launchSingleTop = true
+                    }
+                }
+            )
         }
     }
 }
