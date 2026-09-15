@@ -45,12 +45,26 @@ fun buildWhatsAppReceipt(
     val ref = donation.id.take(8).uppercase().ifBlank { "—" }
     val donorLine = "${donation.honorific} ${donation.donorName.trim()} గారు"
     val giftLine = if (donation.isNonCash) {
-        val qty = donation.quantity?.let { q ->
-            if (!q.isFinite()) null
+        val desc = donation.itemDescription?.trim()?.ifBlank { null }
+        val qStr = donation.quantity?.let { q ->
+            if (!q.isFinite() || q <= 0) null
             else (if (q % 1.0 == 0.0) q.toLong().toString() else q.toString())
         }
-        val item = listOfNotNull(qty, donation.unit?.ifBlank { null }, donation.itemDescription?.ifBlank { null })
-            .joinToString(" ").ifEmpty { "వస్తు కానుక" }
+        val unit = donation.unit?.trim()?.ifBlank { null }
+
+        val hasQty = desc != null && qStr != null && Regex("""(?<!\d)${Regex.escape(qStr)}(?!\d)""").containsMatchIn(desc)
+        val hasUnit = desc != null && unit != null && (
+            desc.contains(unit, ignoreCase = true) ||
+            (unit.equals("kg", ignoreCase = true) && (desc.contains("కేజీ") || desc.contains("కిలో"))) ||
+            (unit.startsWith("కేజీ") && desc.contains("కేజీ"))
+        )
+
+        val itemParts = mutableListOf<String>()
+        if (!hasQty && qStr != null) itemParts.add(qStr)
+        if (!hasUnit && unit != null) itemParts.add(unit)
+        if (desc != null) itemParts.add(desc)
+
+        val item = itemParts.joinToString(" ").ifEmpty { "వస్తు కానుక" }
         "🎁 *కానుక / Offering:* $item"
     } else {
         "💰 *మొత్తం / Amount:* ${formatInr(effectiveAmount ?: donation.amount)} (${donation.paymentMethod})"

@@ -151,7 +151,24 @@ async function requireSeat(req: Request, env: Env, eventId: string, write: boole
   if (!m || !m[1]) throw new HttpError(401, "missing token");
   const idToken = m[1];
   const uid = await verifyIdToken(idToken, env.FIREBASE_PROJECT_ID);
-  const seat = await readSeat(env, idToken, eventId, uid);
+
+  // Test events and local drafts have no Firestore documents: allow for audio resolve/stream
+  if (eventId === "test_event" || eventId.startsWith("test_") || eventId.startsWith("local_")) {
+    if (write) throw new HttpError(403, "cannot write to test event");
+    return uid;
+  }
+
+  let seat: { role: string; status: string } | null = null;
+  try {
+    seat = await readSeat(env, idToken, eventId, uid);
+  } catch (e) {
+    if (e instanceof HttpError && e.code === "no seat" && !write) {
+      // 404 in Firestore (event is local-only or offline-first):
+      // Allow verified Firebase user to resolve/stream audio
+      return uid;
+    }
+    throw e;
+  }
   if (seat.status !== "active") throw new HttpError(403, "seat not active");
   if (write && seat.role !== "organizer" && seat.role !== "global_head") {
     throw new HttpError(403, "seat cannot write");
@@ -181,6 +198,24 @@ async function takeSynthesisSlot(env: Env): Promise<boolean> {
   const cur = memCounts.get(day) ?? 0;
   if (cur >= DAILY_NEW_SYNTHESIS_CAP) return false;
   memCounts.set(day, cur + 1);
+  return true;
+}
+
+/**
+ * Per-device daily synthesis cap (budget-burn guard). Anonymous installs
+ * share the temple's 1000/day budget, so one buggy or abusive client
+ * looping `resolve` must not 429 the whole pandal. KV-backed when bound;
+ * without KV the global cap above is the only guard (fail-open for reads,
+ * same as before — synthesis still gated by the shared budget).
+ */
+export const PER_UID_DAILY_SYNTHESIS_CAP = 100;
+
+async function takeUidSynthesisSlot(env: Env, uid: string): Promise<boolean> {
+  if (!env.RATE_KV) return true;
+  const k = `synth-uid:${dayKey()}:${uid}`;
+  const cur = parseInt((await env.RATE_KV.get(k)) ?? "0", 10) || 0;
+  if (cur >= PER_UID_DAILY_SYNTHESIS_CAP) return false;
+  await env.RATE_KV.put(k, String(cur + 1), { expirationTtl: 172800 });
   return true;
 }
 
@@ -234,7 +269,7 @@ async function handleResolve(req: Request, env: Env): Promise<Response> {
   const parsed = validateResolveBody(body);
   if (!parsed.ok) throw new HttpError(400, parsed.error);
   const v = parsed.v;
-  await requireSeat(req, env, v.eventId, false);
+  const uid = await requireSeat(req, env, v.eventId, false);
   // Hash-poisoning guard: the claimed hash must equal the recomputation over
   // the received fields (a forged hash would serve the wrong audio).
   const recomputed = await sha256Hex(canonicalHashInput(v.language, v.speaker, v.roster, v.text));
@@ -244,6 +279,7 @@ async function handleResolve(req: Request, env: Env): Promise<Response> {
     console.log(`resolve hit hash=${v.hash}`);
     return json({ hash: v.hash, url: `/v1/audio/${v.hash}.mp3`, cached: true });
   }
+  if (!(await takeUidSynthesisSlot(env, uid))) throw new HttpError(429, "daily synthesis budget reached");
   if (!(await takeSynthesisSlot(env))) throw new HttpError(429, "daily synthesis budget reached");
   const audio = await synthesizeSarvam(env, v.text, v.speaker);
   // Convergence re-check: a concurrent same-hash writer may have won while

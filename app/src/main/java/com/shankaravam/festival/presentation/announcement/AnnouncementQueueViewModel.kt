@@ -13,6 +13,7 @@ import com.shankaravam.festival.core.tts.matchRosterClips
 import com.shankaravam.festival.core.tts.presetForEventName
 import com.shankaravam.festival.data.local.SessionPrefs
 import com.shankaravam.festival.di.AppContainer
+import com.shankaravam.festival.domain.model.AudioStatus
 import com.shankaravam.festival.domain.model.Correction
 import com.shankaravam.festival.domain.model.Donation
 import com.shankaravam.festival.domain.model.DonationStatus
@@ -28,10 +29,20 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+/**
+ * Prefetch scope cap (worker-invocation guard): background prefetch warms
+ * only the newest N rows. Older rows resolve on demand at play time (JIT),
+ * so opening the announcement screen on a 200-row history costs ~N×2 hits
+ * instead of ~200×2 per phone per pass. JIT playback is unaffected.
+ */
+private const val PREFETCH_MAX_ROWS = 15
 
 /**
  * Announcement queue (plan §11): playlist honors the current sort/filter,
@@ -581,8 +592,24 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
             // resolves via its provider, but passing explicitly documents the
             // contract and survives any wiring lapse).
             // T0.2: speech uses the effective (post-correction) figure.
+            // JIT quota metering: the on-demand fetch inside playBest/
+            // playRosterItem spends the same device slot and raises the same
+            // pills as the prefetch pass (otherwise JIT taps burn quota
+            // silently).
             val activeSpeaker = prefs.sarvamSpeaker
             val effective = effectiveOf(item)
+            val jitTakeSlot: () -> Boolean = { prefs.takeSarvamSlot() }
+            val jitOnDeviceQuota: () -> Unit = {
+                quotaPill.value = com.shankaravam.festival.domain.model.quotaPillText(
+                    used = prefs.sarvamQuotaUsed(),
+                    max = SessionPrefs.SARVAM_MAX_CALLS,
+                    resetAt = prefs.sarvamQuotaResetAt()
+                )
+            }
+            val jitOnServerQuota: () -> Unit = {
+                prefs.setGatewayQuotaAt()
+                quotaPill.value = com.shankaravam.festival.domain.model.gatewayQuotaPillText()
+            }
             kotlinx.coroutines.suspendCancellableCoroutine { cont ->
                 if (state.rosterMode) {
                     engine.playRosterItem(
@@ -591,7 +618,10 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                         onDone = { if (cont.isActive) cont.resume(Unit) {} },
                         onError = { if (cont.isActive) cont.resume(Unit) {} },
                         speaker = activeSpeaker,
-                        effectiveAmount = effective
+                        effectiveAmount = effective,
+                        takeSlot = jitTakeSlot,
+                        onDeviceQuota = jitOnDeviceQuota,
+                        onServerQuota = jitOnServerQuota
                     )
                 } else {
                     engine.playBest(
@@ -601,7 +631,10 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                         onDone = { if (cont.isActive) cont.resume(Unit) {} },
                         onError = { if (cont.isActive) cont.resume(Unit) {} },
                         speaker = activeSpeaker,
-                        effectiveAmount = effective
+                        effectiveAmount = effective,
+                        takeSlot = jitTakeSlot,
+                        onDeviceQuota = jitOnDeviceQuota,
+                        onServerQuota = jitOnServerQuota
                     )
                 }
                 cont.invokeOnCancellation { engine.stopAll() }
@@ -739,8 +772,20 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                     // M4: roster mode + queue language are triggers too — the
                     // pass reads both live, so toggling either must re-run it
                     // (otherwise the new mode's rows stay native-silently).
+                    val stableDonations = donationRepo.observeForEvent(eventId).distinctUntilChanged { old, new ->
+                        old.size == new.size && old.indices.all { i ->
+                            val a = old[i]
+                            val b = new[i]
+                            a.id == b.id &&
+                                a.amount == b.amount &&
+                                a.donorName == b.donorName &&
+                                a.pronunciationText == b.pronunciationText &&
+                                a.announcementEnabled == b.announcementEnabled &&
+                                a.status == b.status
+                        }
+                    }
                     combine(
-                        combine(eventRepo.observeEvent(eventId), donationRepo.observeForEvent(eventId)) { e, d -> e to d },
+                        combine(eventRepo.observeEvent(eventId), stableDonations) { e, d -> e to d },
                         combine(prefs.sarvamSpeakerFlow, prefs.voiceEngineModeFlow, secureKeys.keyVersion) { s, m, _ -> s to m },
                         combine(rosterMode, language) { _, _ -> Unit }
                     ) { ed, sm, _ ->
@@ -749,7 +794,9 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                         inputs.copy(corrections = corrections)
                     }
                 }
-            }.collect { inputs ->
+                    // Invocation guard: first-sync ingest emits once per row —
+                    // conflate bursts into a single pass instead of N passes.
+                    }.conflate().collect { inputs ->
                 runCatching {
                     val event = inputs?.event
                     val donations = inputs?.donations.orEmpty()
@@ -838,7 +885,9 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                     // cloud-first branch. The P4.5 Firestore meta N+1 loop and
                     // its T0.4 stopgap are deleted — the bucket HEAD inside
                     // `resolve` is the freshness signal; stamps have no
-                    // readers left. Bounded concurrency: ≤50 rows/pass.
+                    // readers left. Bounded scope: newest PREFETCH_MAX_ROWS
+                    // only (older rows resolve on demand at play time, so a
+                    // deep history can't burn the worker quota on screen open).
                     // (lang is defined once above, next to the prune call.)
                     val missing = eligible
                         .filter { d ->
@@ -855,7 +904,8 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                                 engine.importedFile(d.id, roster) == null &&
                                 engine.importedFile(d.id) == null
                         }
-                        .take(50)
+                        .sortedByDescending { it.addedTime }
+                        .take(PREFETCH_MAX_ROWS)
                     if (missing.isEmpty()) {
                         prefetchRemaining.value = 0
                         return@runCatching
@@ -875,7 +925,9 @@ class AnnouncementQueueViewModel(private val container: AppContainer) : ViewMode
                             language = lang,
                             apiKey = key,
                             onStatus = { status ->
-                                donationRepo.updateAudioStatus(donation.id, status)
+                                if (status == AudioStatus.READY) {
+                                    donationRepo.updateAudioStatus(donation.id, status)
+                                }
                             },
                             roster = roster,
                             speaker = speaker,

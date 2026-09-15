@@ -128,7 +128,11 @@ class AuthRepository(
     suspend fun idToken(): String? = withContext(Dispatchers.IO) {
         val a = auth ?: return@withContext null
         runCatching {
-            a.currentUser?.getIdToken(false)?.await()?.token?.takeIf { it.isNotBlank() }
+            var user = a.currentUser
+            if (user == null) {
+                user = runCatching { a.signInAnonymously().await().user }.getOrNull()
+            }
+            user?.getIdToken(false)?.await()?.token?.takeIf { it.isNotBlank() }
         }.getOrNull()
     }
 

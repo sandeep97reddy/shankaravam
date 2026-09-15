@@ -43,6 +43,10 @@ class ReceiptUploadWorker(appContext: Context, params: WorkerParameters) : Corou
         val file = File(path)
         if (!file.isFile || file.length() == 0L) return Result.success()
         if (file.length() > RECEIPT_UPLOAD_MAX_BYTES) return Result.failure() // compressor caps; never retry
+        // Invocation guard: WorkManager backoff alone is unbounded — after N
+        // attempts the gateway is either down or rejecting us; stop spending
+        // PUTs. Re-attaching the receipt re-enqueues a fresh attempt.
+        if (runAttemptCount > MAX_UPLOAD_ATTEMPTS) return Result.success()
         val token = container.authRepository.idToken()
         if (token.isNullOrBlank()) return Result.retry() // sign-in may follow; backoff bounds the cost
         val bytes = runCatching { file.readBytes() }.getOrNull() ?: return Result.retry()
@@ -65,6 +69,9 @@ class ReceiptUploadWorker(appContext: Context, params: WorkerParameters) : Corou
 
         /** Matches the Worker-side 150 KB ceiling (compressor targets ~100 KB). */
         const val RECEIPT_UPLOAD_MAX_BYTES = 150L * 1024L
+
+        /** Hard stop on transient retries (each attempt = 1 worker PUT). */
+        const val MAX_UPLOAD_ATTEMPTS = 8
 
         private fun constraints(): Constraints =
             Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()

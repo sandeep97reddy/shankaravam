@@ -172,8 +172,9 @@ class ExpenseEntryViewModel(private val container: AppContainer) : ViewModel() {
             }
             // F3 immediate upload leg (see DonationEntryViewModel; Gap-1
             // isCloudEvent gate keeps unpublished events offline).
+            // Coalesced (45 s window): rapid entries share one sync run.
             if (result is Outcome.Ok && container.sessionPrefs.cloudSyncEnabled && container.sessionPrefs.isCloudEvent(eventId)) {
-                launch { runCatching { container.syncService.syncEvent(eventId) } }
+                launch { runCatching { container.syncService.syncEventSoon(eventId) } }
             }
             // Phase-3 receipts: background gateway PUT (CONNECTED + backoff).
             // The worker no-ops quietly when no gateway URL is configured.

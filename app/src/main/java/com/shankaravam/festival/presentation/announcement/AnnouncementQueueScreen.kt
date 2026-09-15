@@ -1,5 +1,12 @@
 package com.shankaravam.festival.presentation.announcement
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -17,6 +24,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.text.style.TextOverflow
+import com.shankaravam.festival.core.i18n.appStrings
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -167,7 +176,7 @@ fun AnnouncementQueueScreen(
                     )
                 }
             } else {
-                itemsIndexed(items = state.queue, key = { index, d -> "${d.id}_$index" }) { position, donation ->
+                itemsIndexed(items = state.queue, key = { _, d -> d.id }) { position, donation ->
                     val isCurrent = position == state.index && (state.isPlaying || state.isPaused)
                     DonationCard(
                         donation = donation,
@@ -193,17 +202,18 @@ private fun AudioRouteBadge(
     route: com.shankaravam.festival.core.audio.AudioRoute,
     modifier: Modifier = Modifier
 ) {
+    val isTelugu = appStrings().languageCode == "te"
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(6.dp),
         color = when (route) {
-            com.shankaravam.festival.core.audio.AudioRoute.BLUETOOTH -> TempleSaffron.copy(alpha = 0.15f)
-            com.shankaravam.festival.core.audio.AudioRoute.WIRED -> TempleGold.copy(alpha = 0.2f)
-            com.shankaravam.festival.core.audio.AudioRoute.SPEAKER -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+            com.shankaravam.festival.core.audio.AudioRoute.BLUETOOTH -> TempleSaffron.copy(alpha = 0.12f)
+            com.shankaravam.festival.core.audio.AudioRoute.WIRED -> TempleGold.copy(alpha = 0.18f)
+            com.shankaravam.festival.core.audio.AudioRoute.SPEAKER -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
         }
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
@@ -219,13 +229,13 @@ private fun AudioRouteBadge(
                     com.shankaravam.festival.core.audio.AudioRoute.WIRED -> DeepMaroon
                     com.shankaravam.festival.core.audio.AudioRoute.SPEAKER -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
-                modifier = Modifier.size(14.dp)
+                modifier = Modifier.size(13.dp)
             )
             Text(
                 text = when (route) {
-                    com.shankaravam.festival.core.audio.AudioRoute.BLUETOOTH -> "యాంప్లిఫైయర్ / Bluetooth Horn"
-                    com.shankaravam.festival.core.audio.AudioRoute.WIRED -> "హెడ్‌సెట్ / Wired Headset"
-                    com.shankaravam.festival.core.audio.AudioRoute.SPEAKER -> "ఫోన్ స్పీకర్ / Phone Speaker"
+                    com.shankaravam.festival.core.audio.AudioRoute.BLUETOOTH -> if (isTelugu) "బ్లూటూత్ Horn" else "Bluetooth Horn"
+                    com.shankaravam.festival.core.audio.AudioRoute.WIRED -> if (isTelugu) "హెడ్‌సెట్" else "Headset"
+                    com.shankaravam.festival.core.audio.AudioRoute.SPEAKER -> if (isTelugu) "స్పీకర్" else "Speaker"
                 },
                 maxLines = 1,
                 style = MaterialTheme.typography.labelSmall,
@@ -257,8 +267,9 @@ private fun VoiceSettingsCard(
     val nativeVoice by prefs.nativeTtsVoiceFlow.collectAsState()
     val hasKey by container.secureKeys.hasKeyFlow.collectAsState()
     val gatewayUrl by prefs.gatewayBaseUrlFlow.collectAsState()
+    val currentUser by container.authRepository.user.collectAsState()
     val hasGateway = gatewayUrl.isNotBlank()
-    val hasCloudActive = hasKey || hasGateway
+    val hasCloudActive = hasKey || (hasGateway && currentUser != null)
 
     var showKeyDialog by remember { mutableStateOf(false) }
     var pendingSpeaker by remember { mutableStateOf("shubh") }
@@ -309,65 +320,106 @@ private fun VoiceSettingsCard(
         showMenu = false
     }
 
+    val isTelugu = appStrings().languageCode == "te"
+
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(14.dp),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
     ) {
         Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // Header Row: Concise Title on Left, Audio Route & Cloud Indicator on Right
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier.weight(1f, fill = false),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.VolumeUp,
                         contentDescription = null,
-                        tint = com.shankaravam.festival.core.theme.TempleSaffron,
-                        modifier = Modifier.size(20.dp)
+                        tint = TempleSaffron,
+                        modifier = Modifier.size(17.dp)
                     )
-                    Text("Temple Voice / గొంతు ఎంపిక", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = if (isTelugu) "గొంతు ఎంపిక (Voice)" else "Temple Voice",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
 
                 Row(
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     AudioRouteBadge(route = route)
-                    if (hasGateway) {
-                        Text(
-                            "Gateway ✓",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color(0xFF2E7D32),
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                        )
+                    if (hasGateway && (currentUser != null || hasKey)) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color(0xFFE8F5E9)
+                        ) {
+                            Text(
+                                "Cloud ✓",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF2E7D32),
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                            )
+                        }
                     } else if (hasKey) {
-                        Text(
-                            "Cloud key ✓",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color(0xFF2E7D32),
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                        )
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color(0xFFE8F5E9)
+                        ) {
+                            Text(
+                                "Key ✓",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF2E7D32),
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                            )
+                        }
+                    } else if (hasGateway && currentUser == null) {
+                        TextButton(
+                            onClick = {
+                                pendingSpeaker = speaker
+                                showKeyDialog = true
+                            },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                            modifier = Modifier.height(26.dp)
+                        ) {
+                            Text(
+                                "Sign In / Key",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TempleSaffron,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     } else {
                         TextButton(
                             onClick = {
                                 pendingSpeaker = speaker
                                 showKeyDialog = true
                             },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                            modifier = Modifier.height(26.dp)
                         ) {
                             Text(
-                                "+ Connect",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = com.shankaravam.festival.core.theme.TempleSaffron,
+                                "+ Cloud",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TempleSaffron,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -375,120 +427,148 @@ private fun VoiceSettingsCard(
                 }
             }
 
-            // Dropdown Selector Button
-            Box {
-                OutlinedButton(
-                    onClick = { showMenu = true },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            // Unified Row: Voice Selector Dropdown (occupies remaining width) + Compact Test Button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Dropdown Selector Button
+                Box(modifier = Modifier.weight(1f)) {
+                    Surface(
+                        onClick = { showMenu = true },
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(38.dp)
                     ) {
-                        Text(config.displayLabel(), fontWeight = FontWeight.SemiBold, maxLines = 1)
-                        Icon(Icons.Filled.ArrowDropDown, contentDescription = "Select voice")
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = config.displayLabel(),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            Icon(
+                                imageVector = Icons.Filled.ArrowDropDown,
+                                contentDescription = "Select voice",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
-                }
 
-                DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = { showMenu = false }
-                ) {
-                    // Cloud Section (T0.5 lineup: Shubh default, Pooja
-                    // secondary — single order in Voice.kt).
-                    SARVAM_SPEAKER_ORDER.forEach { option ->
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false }
+                    ) {
+                        // Cloud Section (T0.5 lineup: Shubh default, Pooja
+                        // secondary — single order in Voice.kt).
+                        SARVAM_SPEAKER_ORDER.forEach { option ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(
+                                            sarvamPickerLabel(option) +
+                                                if (option == "shubh") " • Recommended" else "",
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            sarvamPickerSublabel(option),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                },
+                                onClick = { pickCloud(option) }
+                            )
+                        }
+
+                        HorizontalDivider()
+
+                        // Native Section
                         DropdownMenuItem(
                             text = {
                                 Column {
-                                    Text(
-                                        sarvamPickerLabel(option) +
-                                            if (option == "shubh") " • Recommended" else "",
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        sarvamPickerSublabel(option),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    Text("📱 System Default", fontWeight = FontWeight.SemiBold)
+                                    Text("Android Built-in • 100% Offline", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             },
-                            onClick = { pickCloud(option) }
+                            onClick = { pickNative(null) }
                         )
-                    }
 
-                    HorizontalDivider()
-
-                    // Native Section
-                    DropdownMenuItem(
-                        text = {
-                            Column {
-                                Text("📱 System Default", fontWeight = FontWeight.SemiBold)
-                                Text("Android Built-in • 100% Offline", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (nativeVoiceInfos.isNotEmpty()) {
+                            nativeVoiceInfos.forEach { info ->
+                                val vLabel = info.displayName.takeLast(10)
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text("📱 Android Telugu ($vLabel)", fontWeight = FontWeight.SemiBold)
+                                            Text("${info.badgeLabel} • ${info.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    },
+                                    onClick = { pickNative(info.name) }
+                                )
                             }
-                        },
-                        onClick = { pickNative(null) }
-                    )
+                        } else {
+                            nativeVoices.forEach { voiceName ->
+                                val vLabel = voiceName.substringAfterLast("-", voiceName.takeLast(8))
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text("📱 Android Telugu ($vLabel)", fontWeight = FontWeight.SemiBold)
+                                            Text("Device voice: $voiceName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    },
+                                    onClick = { pickNative(voiceName) }
+                                )
+                            }
+                        }
+                    }
+                }
 
-                    if (nativeVoiceInfos.isNotEmpty()) {
-                        nativeVoiceInfos.forEach { info ->
-                            val vLabel = info.displayName.takeLast(10)
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text("📱 Android Telugu ($vLabel)", fontWeight = FontWeight.SemiBold)
-                                        Text("${info.badgeLabel} • ${info.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                },
-                                onClick = { pickNative(info.name) }
-                            )
-                        }
+                // Compact Test Audio Button
+                Button(
+                    onClick = onTestAudio,
+                    enabled = !testingAudio,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = TempleSaffron),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    modifier = Modifier.height(38.dp)
+                ) {
+                    if (testingAudio) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = Color.White
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Testing…", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                     } else {
-                        nativeVoices.forEach { voiceName ->
-                            val vLabel = voiceName.substringAfterLast("-", voiceName.takeLast(8))
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text("📱 Android Telugu ($vLabel)", fontWeight = FontWeight.SemiBold)
-                                        Text("Device voice: $voiceName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                },
-                                onClick = { pickNative(voiceName) }
-                            )
-                        }
+                        Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (isTelugu) "పరీక్ష" else "Test", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                     }
                 }
             }
 
-            Button(
-                onClick = onTestAudio,
-                enabled = !testingAudio,
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = TempleSaffron
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (testingAudio) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = Color.White
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Testing Voice… / పరీక్షిస్తోంది…", fontWeight = FontWeight.Bold)
-                } else {
-                    Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Test Voice / గొంతు పరీక్షించు", fontWeight = FontWeight.Bold)
-                }
-            }
-
+            // Status micro-line
             Text(
                 text = config.statusLine(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -513,6 +593,14 @@ private fun VoiceSettingsCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (hasGateway && currentUser == null && !hasKey) {
+                        Text(
+                            "💡 Tip: Gateway is active. Sign in with Google (Settings ⚙️ → Cloud Sync) to use the shared gateway, or paste a direct Sarvam AI API key below to use without signing in.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = com.shankaravam.festival.core.theme.TempleSaffron,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                     OutlinedTextField(
                         value = keyInput,
                         onValueChange = {
@@ -622,7 +710,12 @@ private fun TransportCard(
 ) {
     var showSort by remember { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(
+            Modifier
+                .padding(14.dp)
+                .animateContentSize(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             state.current?.let { current ->
                 Text(
                     "${state.index + 1} / ${state.queue.size} • ${current.donorName}",
@@ -634,22 +727,32 @@ private fun TransportCard(
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold
             )
-            playbackError?.let { error ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        error,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = CrimsonRose,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(onClick = onClearError) { Text("Dismiss") }
+            AnimatedVisibility(
+                visible = playbackError != null,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                playbackError?.let { error ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = CrimsonRose,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onClearError) { Text("Dismiss") }
+                    }
                 }
             }
-            if (state.prefetchRemaining > 0) {
+            AnimatedVisibility(
+                visible = state.prefetchRemaining > 0,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
                 Text(
                     "Preparing cloud audio… (${state.prefetchRemaining} left, offline voice fills gaps)",
                     style = MaterialTheme.typography.bodySmall
@@ -657,7 +760,11 @@ private fun TransportCard(
             }
             // Phase 3 quota transparency (RC4): the pill explains WHY some rows
             // speak in the offline voice instead of silently flipping mid-queue.
-            if (state.quotaPill.isNotBlank()) {
+            AnimatedVisibility(
+                visible = state.quotaPill.isNotBlank(),
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
                 Text(
                     state.quotaPill,
                     style = MaterialTheme.typography.bodySmall,

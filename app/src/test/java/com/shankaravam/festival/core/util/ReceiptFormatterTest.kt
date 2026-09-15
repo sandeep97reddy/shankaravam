@@ -56,6 +56,16 @@ class ReceiptFormatterTest {
     }
 
     @Test
+    fun non_cash_receipt_deduplicates_embedded_qty_and_unit() {
+        val text = buildWhatsAppReceipt(
+            donation().copy(isNonCash = true, itemDescription = "50 kg rice bag", quantity = 50.0, unit = "kg"),
+            "E", "C"
+        )
+        assertTrue(text.contains("50 kg rice bag"))
+        assertFalse(text.contains("50 kg 50 kg"))
+    }
+
+    @Test
     fun honorific_and_blank_fields_degrade_gracefully() {
         val text = buildWhatsAppReceipt(
             donation(name = "  Lakshmi  ").copy(honorific = HONORIFIC_SRIMATI),

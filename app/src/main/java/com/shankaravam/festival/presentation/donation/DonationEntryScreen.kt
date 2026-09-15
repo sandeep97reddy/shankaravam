@@ -1,5 +1,6 @@
 package com.shankaravam.festival.presentation.donation
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -28,6 +29,8 @@ import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -63,10 +66,12 @@ import androidx.compose.ui.Modifier
 import com.shankaravam.festival.core.ui.haptics.LocalAppHaptics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shankaravam.festival.core.i18n.appStrings
 import com.shankaravam.festival.core.theme.TempleSaffron
+import com.shankaravam.festival.core.util.TeluguTransliterator
 import com.shankaravam.festival.core.util.formatInr
 import com.shankaravam.festival.domain.model.DonationStatus
 import com.shankaravam.festival.domain.model.HONORIFICS
@@ -95,6 +100,9 @@ fun DonationEntryScreen(
     val haptics = LocalAppHaptics.current
     val snackbar = remember { SnackbarHostState() }
     val strings = appStrings()
+    val transliteration = remember(form.donorName) {
+        TeluguTransliterator.transliterate(form.donorName)
+    }
 
     LaunchedEffect(form.saveState) {
         when (val s = form.saveState) {
@@ -205,18 +213,54 @@ fun DonationEntryScreen(
             // 2. Telugu Pronunciation (For speaker)
             ModernTextField(
                 value = form.pronunciation,
-                onValueChange = { v -> viewModel.update { it.copy(pronunciation = v) } },
+                onValueChange = { v -> viewModel.update { it.copy(pronunciation = v, pronunciationEdited = true) } },
                 label = strings.teluguPronunciationLabel,
                 placeholder = strings.pronunciationPlaceholder,
                 leadingIcon = Icons.Filled.RecordVoiceOver,
                 singleLine = true
             )
 
+            if (transliteration.isNotBlank() &&
+                transliteration.any { it in '\u0C00'..'\u0C7F' } &&
+                transliteration.trim() != form.donorName.trim() &&
+                transliteration != form.pronunciation &&
+                (!form.pronunciationEdited || form.pronunciation.isBlank())
+            ) {
+                AssistChip(
+                    onClick = {
+                        viewModel.update { it.copy(pronunciation = transliteration, pronunciationEdited = false) }
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.RecordVoiceOver,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = TempleSaffron
+                        )
+                    },
+                    label = {
+                        Text(
+                            "${strings.pronunciationSuggestion}$transliteration",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = TempleSaffron.copy(alpha = 0.08f),
+                        labelColor = MaterialTheme.colorScheme.onSurface
+                    ),
+                    border = BorderStroke(1.dp, TempleSaffron.copy(alpha = 0.3f)),
+                    shape = RoundedCornerShape(8.dp)
+                )
+            }
+
             // 3. Donation Type Toggle Chips (Cash/UPI vs Material/Item)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = !form.isNonCash,
-                    onClick = { viewModel.update { it.copy(isNonCash = false) } },
+                    onClick = { viewModel.update { it.copy(isNonCash = false, quantityText = "", unit = "") } },
                     label = { Text(strings.cashOrUpi, fontWeight = FontWeight.SemiBold) },
                     shape = RoundedCornerShape(12.dp),
                     colors = FilterChipDefaults.filterChipColors(
@@ -226,7 +270,7 @@ fun DonationEntryScreen(
                 )
                 FilterChip(
                     selected = form.isNonCash,
-                    onClick = { viewModel.update { it.copy(isNonCash = true) } },
+                    onClick = { viewModel.update { it.copy(isNonCash = true, quantityText = "", unit = "") } },
                     label = { Text(strings.itemOrService, fontWeight = FontWeight.SemiBold) },
                     shape = RoundedCornerShape(12.dp),
                     colors = FilterChipDefaults.filterChipColors(
@@ -266,37 +310,51 @@ fun DonationEntryScreen(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                 )
             } else {
+                // Quick suggestions for offerings
+                Text(
+                    text = if (strings.languageCode == "te") "త్వరిత ఎంపికలు / సూచనలు:" else "Quick Suggestions:",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val suggestions = if (strings.languageCode == "te") {
+                        listOf("బియ్యం బస్తా", "నూనె టిన్ను", "ఆవు నెయ్యి", "పట్టు వస్త్రాలు", "లడ్డు ప్రసాదం", "పూజా ద్రవ్యాలు")
+                    } else {
+                        listOf("Rice Bag", "Oil Tin", "Cow Ghee", "Silk Clothes", "Laddu Prasadam", "Puja Samagri")
+                    }
+                    suggestions.forEach { suggestion ->
+                        AssistChip(
+                            onClick = {
+                                viewModel.update { current ->
+                                    if (current.itemDescription.isBlank()) {
+                                        current.copy(itemDescription = suggestion)
+                                    } else {
+                                        current.copy(itemDescription = "${current.itemDescription.trim()}, $suggestion")
+                                    }
+                                }
+                            },
+                            label = { Text(suggestion, fontSize = 12.sp) },
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                    }
+                }
+
                 ModernTextField(
                     value = form.itemDescription,
                     onValueChange = { v -> viewModel.update { it.copy(itemDescription = v) } },
                     label = strings.itemDescriptionLabel,
                     isRequired = true,
-                    placeholder = if (strings.languageCode == "te") "ఉదా: 25 కేజీల బియ్యం బస్తా" else "e.g. 25 kg rice bag",
+                    placeholder = if (strings.languageCode == "te") "ఉదా: 50 కేజీల బియ్యం బస్తా, 2 డబ్బాల నూనె..." else "e.g. 50 kg rice bag, 2 oil tins...",
                     leadingIcon = Icons.Filled.Inventory2
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ModernTextField(
-                        value = form.quantityText,
-                        onValueChange = { v ->
-                            if (v.all { c -> c.isDigit() || c == '.' }) {
-                                viewModel.update { it.copy(quantityText = v) }
-                            }
-                        },
-                        label = strings.quantityLabel,
-                        leadingIcon = Icons.Filled.Scale,
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.weight(1f)
-                    )
-                    ModernTextField(
-                        value = form.unit,
-                        onValueChange = { v -> viewModel.update { it.copy(unit = v) } },
-                        label = strings.unitLabel,
-                        placeholder = "kg",
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                Text(
+                    text = if (strings.languageCode == "te") "💡 పరిమాణం మరియు వస్తువు పేరు ఇక్కడే కలిపి నమోదు చేయండి (ఉదా: 50 కేజీల బియ్యం)" else "💡 Enter quantity and item name naturally together (e.g. 50 kg rice)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
             // 5. Payment Method & Status Dropdowns

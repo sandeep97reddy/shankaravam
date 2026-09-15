@@ -31,6 +31,7 @@ sealed interface SaveState {
 data class DonationFormState(
     val donorName: String = "",
     val pronunciation: String = "",
+    val pronunciationEdited: Boolean = false,
     val honorific: String = HONORIFIC_SRI,
     val amountText: String = "",
     val isNonCash: Boolean = false,
@@ -182,8 +183,9 @@ class DonationEntryViewModel(private val container: AppContainer) : ViewModel() 
             // so peers' foreground listeners fire in ~seconds. Seat-first
             // syncEvent makes this safe for pending/viewers; the isCloudEvent
             // gate keeps unpublished local events fully offline (Gap-1).
+            // Coalesced (45 s window): a rapid counter reuses one sync run.
             if (result is com.shankaravam.festival.core.util.Outcome.Ok && prefs.cloudSyncEnabled && prefs.isCloudEvent(eventId)) {
-                launch { runCatching { container.syncService.syncEvent(eventId) } }
+                launch { runCatching { container.syncService.syncEventSoon(eventId) } }
             }
         }
     }

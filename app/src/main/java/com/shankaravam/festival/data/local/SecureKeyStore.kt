@@ -70,6 +70,10 @@ class SecureKeyStore(context: Context, private val fallback: SessionPrefs) {
 
     fun setSarvamKey(value: String) {
         val clean = sanitizeKey(value)
+        // Spend guard: identical writes must not bump keyVersion — it
+        // re-runs the announcement prefetch pass (worker invocations) and
+        // reloads voice pickers for zero change.
+        if (clean == _sarvamKeyFlow.value) return
         runCatching {
             secure?.edit()?.putString(KEY_SARVAM, clean)?.commit()
         }

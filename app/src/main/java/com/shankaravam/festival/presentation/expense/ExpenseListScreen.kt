@@ -412,6 +412,12 @@ private fun SharedReceiptImage(receiptUrl: String) {
             model = ImageRequest.Builder(context)
                 .data(url)
                 .addHeader("Authorization", "Bearer $token")
+                // Spend guard: Coil's default cache key folds headers in, and
+                // Firebase tokens rotate hourly — keying on headers alone
+                // would re-download every receipt (1 worker GET each) every
+                // hour. The URL path is already unguessable per expense.
+                .memoryCacheKey(url)
+                .diskCacheKey(url)
                 .crossfade(true)
                 .build(),
             contentDescription = "Shared receipt",

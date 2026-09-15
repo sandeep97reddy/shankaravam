@@ -19,8 +19,13 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.firestore
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
@@ -31,6 +36,16 @@ const val SYNC_FUDGE_MILLIS: Long = 120_000L
 
 /** F5 voice auto-pull throttle (owner ruling: 15 min ≈ <1% of Spark quota). */
 const val VOICE_PULL_THROTTLE_MILLIS: Long = 15L * 60L * 1000L
+
+/**
+ * Immediate-leg coalescing window: per-save pushes share one direct
+ * syncEvent per window per event. A busy counter saving every ~20 s would
+ * otherwise spend a full syncEvent (~8 reads + header/presence writes +
+ * voice pull) per row. Coalesced saves ride the next window, the REPLACE-
+ * coalesced syncNow queue, or the 15-min worker — never lost, only batched.
+ * Manual "Sync now" actions bypass this and call [syncEvent] directly.
+ */
+const val IMMEDIATE_SYNC_WINDOW_MILLIS: Long = 45_000L
 
 /**
  * Gap-2 batch ceiling: Firestore WriteBatch caps at 500 writes. 400 leaves
@@ -91,6 +106,44 @@ class FirestoreSyncService(
     private val secureKeys: SecureKeyStore? = null
 ) {
     private fun events() = Firebase.firestore.collection("events")
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Last direct immediate-leg run per event (see [IMMEDIATE_SYNC_WINDOW_MILLIS]). */
+    private val immediateSyncAt = mutableMapOf<String, Long>()
+    private val pendingTrailingSync = mutableMapOf<String, Job>()
+
+    /**
+     * Coalesced immediate leg for the per-save hot path (counter saves,
+     * receipt handoffs). Runs [syncEvent] immediately if outside the
+     * [IMMEDIATE_SYNC_WINDOW_MILLIS] window. If called inside the window,
+     * it schedules a trailing background sync so the batched saves are
+     * guaranteed to reach Firestore after the remaining window time without
+     * waiting for the 15-minute periodic worker.
+     */
+    suspend fun syncEventSoon(eventId: String): SyncOutcome {
+        val now = System.currentTimeMillis()
+        val last = synchronized(immediateSyncAt) { immediateSyncAt[eventId] ?: 0L }
+        if (now - last < IMMEDIATE_SYNC_WINDOW_MILLIS) {
+            synchronized(immediateSyncAt) {
+                pendingTrailingSync[eventId]?.cancel()
+                val delayMs = (IMMEDIATE_SYNC_WINDOW_MILLIS - (now - last)).coerceIn(5_000L, IMMEDIATE_SYNC_WINDOW_MILLIS)
+                pendingTrailingSync[eventId] = scope.launch {
+                    delay(delayMs)
+                    val outcome = syncEvent(eventId)
+                    if (outcome is SyncOutcome.Done) {
+                        synchronized(immediateSyncAt) { immediateSyncAt[eventId] = System.currentTimeMillis() }
+                    }
+                }
+            }
+            return SyncOutcome.Done(SyncResult(0, 0, 0))
+        }
+        val outcome = syncEvent(eventId)
+        if (outcome is SyncOutcome.Done) {
+            synchronized(immediateSyncAt) { immediateSyncAt[eventId] = System.currentTimeMillis() }
+        }
+        return outcome
+    }
 
     suspend fun syncEvent(eventId: String): SyncOutcome = withContext(Dispatchers.IO) {
         try {

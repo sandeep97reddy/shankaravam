@@ -8,8 +8,10 @@ import com.shankaravam.festival.domain.model.AudioStatus
 import com.shankaravam.festival.domain.model.Donation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import android.os.Handler
@@ -66,6 +68,13 @@ class DualTtsEngine(
     private var player: MediaPlayer? = null
     /** True while the 800 ms chime owns the player — pause() won't grab it. */
     @Volatile private var inChime = false
+    /**
+     * Single-flight on-demand JIT fetch (playBest/playRosterItem). Cancelled
+     * by [stopAll] so a fetch that outlives a user Stop can never start audio
+     * afterwards; superseded by the next playback. Guarded reads with
+     * `ensureActive()` before touching the player.
+     */
+    @Volatile private var jitJob: Job? = null
 
     val nativeReady: StateFlow<Boolean> = native.ready
 
@@ -200,8 +209,9 @@ class DualTtsEngine(
             if (cloud != null && !token.isNullOrBlank()) {
                 cloudAttempted = true
                 runCatching { onStatus(AudioStatus.PREPARING) }
+                val resolveEventId = donation.eventId.ifBlank { "test_event" }
                 when (val r = cloud.resolveAudio(
-                    token, donation.eventId, donation.id,
+                    token, resolveEventId, donation.id,
                     text, language.name, normSpeaker, roster, hash
                 )) {
                     is AudioCloudClient.AudioResolve.Ready -> {
@@ -323,7 +333,11 @@ class DualTtsEngine(
         onError: () -> Unit,
         speaker: String? = null,
         /** T0.2: post-correction spoken figure; null keeps the raw row. */
-        effectiveAmount: Double? = null
+        effectiveAmount: Double? = null,
+        /** M1: device-budget gate for the JIT leg (defaults: unmetered). */
+        takeSlot: () -> Boolean = { true },
+        onDeviceQuota: () -> Unit = {},
+        onServerQuota: () -> Unit = {}
     ) {
         withChime(onDone, onError) {
             runCatching {
@@ -351,6 +365,33 @@ class DualTtsEngine(
                             return@withChime
                         }
                     }
+                    // On-demand JIT synthesis/fetch when missing from disk.
+                    // Single-flight + cancellable: a user Stop (or the next
+                    // row) supersedes the fetch — never start audio afterwards.
+                    jitJob?.cancel()
+                    jitJob = engineScope.launch {
+                        val directKey = runCatching { keyProvider() }.getOrNull()?.trim().orEmpty()
+                        val file = ensureCached(
+                            donation = donation,
+                            eventName = eventName,
+                            language = language,
+                            apiKey = directKey,
+                            onStatus = {},
+                            roster = false,
+                            speaker = active,
+                            effectiveAmount = effectiveAmount,
+                            onServerQuota = { runCatching { onServerQuota() } },
+                            takeSlot = takeSlot,
+                            onDeviceQuota = { runCatching { onDeviceQuota() } }
+                        )
+                        ensureActive()
+                        if (file != null) {
+                            playFile(file, onDone, onError)
+                        } else {
+                            speakNative(text, onDone, onError)
+                        }
+                    }
+                    return@withChime
                 }
                 speakNative(text, onDone, onError)
             }.onFailure {
@@ -375,7 +416,11 @@ class DualTtsEngine(
         onError: () -> Unit,
         speaker: String? = null,
         /** T0.2: post-correction spoken figure; null keeps the raw row. */
-        effectiveAmount: Double? = null
+        effectiveAmount: Double? = null,
+        /** M1: device-budget gate for the JIT leg (defaults: unmetered). */
+        takeSlot: () -> Boolean = { true },
+        onDeviceQuota: () -> Unit = {},
+        onServerQuota: () -> Unit = {}
     ) {
         withChime(onDone, onError, chime = false) {
             runCatching {
@@ -414,6 +459,34 @@ class DualTtsEngine(
                         playFile(it, onDone, onError)
                         return@withChime
                     }
+                }
+                if (!offlineOnly) {
+                    // On-demand JIT synthesis/fetch when missing from disk.
+                    // Single-flight + cancellable (see playBest).
+                    jitJob?.cancel()
+                    jitJob = engineScope.launch {
+                        val directKey = runCatching { keyProvider() }.getOrNull()?.trim().orEmpty()
+                        val file = ensureCached(
+                            donation = donation,
+                            eventName = "",
+                            language = language,
+                            apiKey = directKey,
+                            onStatus = {},
+                            roster = true,
+                            speaker = active,
+                            effectiveAmount = effectiveAmount,
+                            onServerQuota = { runCatching { onServerQuota() } },
+                            takeSlot = takeSlot,
+                            onDeviceQuota = { runCatching { onDeviceQuota() } }
+                        )
+                        ensureActive()
+                        if (file != null) {
+                            playFile(file, onDone, onError)
+                        } else {
+                            speakNative(text, onDone, onError)
+                        }
+                    }
+                    return@withChime
                 }
                 speakNative(text, onDone, onError)
             }.onFailure {
@@ -577,6 +650,10 @@ class DualTtsEngine(
 
     fun stopAll() {
         inChime = false
+        // Supersede any in-flight JIT fetch — it must never start audio
+        // after this stop (ensureActive() is the second half of the guard).
+        runCatching { jitJob?.cancel() }
+        jitJob = null
         stopPlayback()
         runCatching { native.stop() }
         runCatching { audioFocus.abandon() }
